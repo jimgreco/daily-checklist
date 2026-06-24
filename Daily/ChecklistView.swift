@@ -72,13 +72,42 @@ struct ChecklistView: View {
     }
 
     private var header: some View {
-        HStack(alignment: .top) {
+        VStack(spacing: 14) {
+            HStack {
+                Button {
+                    withAnimation(.snappy) { store.moveSelectedDate(by: -1) }
+                } label: {
+                    Image(systemName: "chevron.left")
+                        .frame(width: 42, height: 42)
+                        .background(.white.opacity(0.8), in: Circle())
+                }
+                .accessibilityLabel("Previous day")
+
+                Spacer()
+
+                Button {
+                    withAnimation(.snappy) { store.moveSelectedDate(by: 1) }
+                } label: {
+                    Image(systemName: "chevron.right")
+                        .frame(width: 42, height: 42)
+                        .background(.white.opacity(0.8), in: Circle())
+                }
+                .accessibilityLabel("Next day")
+            }
+
+            HStack(alignment: .top) {
             VStack(alignment: .leading, spacing: 5) {
-                Text(Date.now.formatted(.dateTime.weekday(.wide).month(.wide).day()))
+                Text(store.selectedDate.formatted(.dateTime.weekday(.wide).month(.wide).day()))
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(accent)
                     .textCase(.uppercase)
                     .tracking(1.2)
+                if !store.isSelectedDateToday {
+                    Button("Back to today") {
+                        withAnimation(.snappy) { store.selectToday() }
+                    }
+                    .font(.system(size: 13, weight: .semibold))
+                }
                 Text("Daily")
                     .font(.system(size: 42, weight: .bold, design: .rounded))
                     .foregroundStyle(ink)
@@ -103,19 +132,23 @@ struct ChecklistView: View {
                         .background(.white.opacity(0.8), in: Circle())
                 }
             }
+            }
         }
         .padding(.top, 18)
     }
 
     private var summary: String {
         let count = store.todoItems.count
-        if count == 0 { return "You're all done." }
-        return count == 1 ? "One thing left today." : "\(count) things left today."
+        if count == 0 { return "Everything is checked off." }
+        let day = store.isSelectedDateToday ? "today" : "this day"
+        return count == 1 ? "One thing left \(day)." : "\(count) things left \(day)."
     }
 
     private var filter: some View {
         HStack(spacing: 4) {
-            filterButton("Today", selected: store.showingToday) { store.showingToday = true }
+            filterButton(store.isSelectedDateToday ? "Today" : "Scheduled", selected: store.showingToday) {
+                store.showingToday = true
+            }
             filterButton("All items", selected: !store.showingToday) { store.showingToday = false }
         }
         .padding(4)
@@ -180,7 +213,7 @@ struct ChecklistView: View {
                 if showsCompleteAll {
                     Button {
                         withAnimation(.snappy) {
-                            store.completeAllForToday()
+                            store.completeAllForSelectedDate()
                         }
                     } label: {
                         Label("Complete all", systemImage: "checkmark.circle.fill")
@@ -213,6 +246,7 @@ struct ChecklistView: View {
                         if store.sortMode == .manual {
                             ItemRow(
                                 item: item,
+                                date: store.selectedDate,
                                 showsDragHandle: true,
                                 onToggle: { store.toggle(item) },
                                 onEdit: { editingItem = item }
@@ -234,6 +268,7 @@ struct ChecklistView: View {
                         } else {
                             ItemRow(
                                 item: item,
+                                date: store.selectedDate,
                                 showsDragHandle: false,
                                 onToggle: { store.toggle(item) },
                                 onEdit: { editingItem = item }
@@ -248,11 +283,12 @@ struct ChecklistView: View {
 
 private struct ItemRow: View {
     let item: ChecklistItem
+    let date: Date
     let showsDragHandle: Bool
     let onToggle: () -> Void
     let onEdit: () -> Void
 
-    private var completed: Bool { item.isComplete(on: .now) }
+    private var completed: Bool { item.isComplete(on: date) }
 
     var body: some View {
         HStack(spacing: 14) {

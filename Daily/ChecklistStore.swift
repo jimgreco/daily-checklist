@@ -28,6 +28,7 @@ enum ChecklistSort: String, CaseIterable, Identifiable {
 final class ChecklistStore: ObservableObject {
     @Published private(set) var items: [ChecklistItem] = []
     @Published var showingToday = true
+    @Published var selectedDate = Calendar.current.startOfDay(for: .now)
     @Published var eveningReminderMinutes: Int? = 20 * 60
     @Published private(set) var syncState = "Saved locally"
     @Published var sortMode: ChecklistSort {
@@ -61,16 +62,29 @@ final class ChecklistStore: ObservableObject {
 
     var visibleItems: [ChecklistItem] {
         items
-            .filter { !showingToday || $0.occurs(on: .now) }
+            .filter { !showingToday || $0.occurs(on: selectedDate) }
             .sorted(by: sortPredicate)
     }
 
     var todoItems: [ChecklistItem] {
-        visibleItems.filter { !$0.isComplete(on: .now) }
+        visibleItems.filter { !$0.isComplete(on: selectedDate) }
     }
 
     var completedItems: [ChecklistItem] {
-        visibleItems.filter { $0.isComplete(on: .now) }
+        visibleItems.filter { $0.isComplete(on: selectedDate) }
+    }
+
+    var isSelectedDateToday: Bool {
+        Calendar.current.isDateInToday(selectedDate)
+    }
+
+    func moveSelectedDate(by days: Int) {
+        guard let date = Calendar.current.date(byAdding: .day, value: days, to: selectedDate) else { return }
+        selectedDate = Calendar.current.startOfDay(for: date)
+    }
+
+    func selectToday() {
+        selectedDate = Calendar.current.startOfDay(for: .now)
     }
 
     func start() async {
@@ -112,7 +126,7 @@ final class ChecklistStore: ObservableObject {
 
     func toggle(_ item: ChecklistItem) {
         guard let index = items.firstIndex(where: { $0.id == item.id }) else { return }
-        let key = DateKey.string(from: .now)
+        let key = DateKey.string(from: selectedDate)
         if items[index].completedDates.contains(key) {
             items[index].completedDates.remove(key)
         } else {
@@ -126,12 +140,12 @@ final class ChecklistStore: ObservableObject {
         persistAndSchedule()
     }
 
-    func completeAllForToday() {
-        let key = DateKey.string(from: .now)
+    func completeAllForSelectedDate() {
+        let key = DateKey.string(from: selectedDate)
         var completedItemIDs: [UUID] = []
 
         for index in items.indices {
-            guard items[index].occurs(on: .now),
+            guard items[index].occurs(on: selectedDate),
                   !items[index].completedDates.contains(key) else { continue }
             items[index].completedDates.insert(key)
             completedItemIDs.append(items[index].id)
