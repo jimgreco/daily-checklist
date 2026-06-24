@@ -22,8 +22,10 @@ struct ChecklistView: View {
                         header
                         filter
                             .padding(.top, 22)
+                        sortControl
+                            .padding(.top, 14)
                         section(title: "TO DO", items: store.todoItems, emptyText: "Nothing left for now")
-                            .padding(.top, 30)
+                            .padding(.top, 20)
                         section(title: "COMPLETED", items: store.completedItems, emptyText: nil)
                             .padding(.top, 32)
                             .opacity(store.completedItems.isEmpty ? 0 : 1)
@@ -115,6 +117,36 @@ struct ChecklistView: View {
         .background(Color.black.opacity(0.055), in: Capsule())
     }
 
+    private var sortControl: some View {
+        HStack {
+            Spacer()
+            Menu {
+                ForEach(ChecklistSort.allCases) { option in
+                    Button {
+                        withAnimation(.snappy) {
+                            store.sortMode = option
+                            draggingItemID = nil
+                        }
+                    } label: {
+                        Label(option.title, systemImage: option.icon)
+                    }
+                }
+            } label: {
+                HStack(spacing: 7) {
+                    Image(systemName: "arrow.up.arrow.down")
+                    Text(store.sortMode.title)
+                }
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(ink)
+                .padding(.horizontal, 13)
+                .padding(.vertical, 9)
+                .background(.white.opacity(0.78), in: Capsule())
+            }
+            .accessibilityLabel("Sort checklist")
+            .accessibilityValue(store.sortMode.title)
+        }
+    }
+
     private func filterButton(_ title: String, selected: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(title)
@@ -155,7 +187,13 @@ struct ChecklistView: View {
             } else {
                 VStack(spacing: 10) {
                     ForEach(items) { item in
-                        ItemRow(item: item, onToggle: { store.toggle(item) }, onEdit: { editingItem = item })
+                        if store.sortMode == .manual {
+                            ItemRow(
+                                item: item,
+                                showsDragHandle: true,
+                                onToggle: { store.toggle(item) },
+                                onEdit: { editingItem = item }
+                            )
                             .opacity(draggingItemID == item.id ? 0.55 : 1)
                             .onDrag {
                                 draggingItemID = item.id
@@ -170,6 +208,14 @@ struct ChecklistView: View {
                                     move: store.move
                                 )
                             )
+                        } else {
+                            ItemRow(
+                                item: item,
+                                showsDragHandle: false,
+                                onToggle: { store.toggle(item) },
+                                onEdit: { editingItem = item }
+                            )
+                        }
                     }
                 }
             }
@@ -179,6 +225,7 @@ struct ChecklistView: View {
 
 private struct ItemRow: View {
     let item: ChecklistItem
+    let showsDragHandle: Bool
     let onToggle: () -> Void
     let onEdit: () -> Void
 
@@ -216,11 +263,13 @@ private struct ItemRow: View {
                 .foregroundStyle(.secondary)
             }
             Spacer()
-            Image(systemName: "line.3.horizontal")
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(.secondary.opacity(0.75))
-                .frame(width: 24, height: 36)
-                .accessibilityHidden(true)
+            if showsDragHandle {
+                Image(systemName: "line.3.horizontal")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(.secondary.opacity(0.75))
+                    .frame(width: 24, height: 36)
+                    .accessibilityHidden(true)
+            }
             Button(action: onEdit) {
                 Image(systemName: "pencil")
                     .font(.system(size: 15, weight: .semibold))

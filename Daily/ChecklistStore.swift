@@ -1,11 +1,38 @@
 import Foundation
 
+enum ChecklistSort: String, CaseIterable, Identifiable {
+    case manual
+    case name
+    case reminderTime
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .manual: "Manual"
+        case .name: "Name"
+        case .reminderTime: "Reminder time"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .manual: "line.3.horizontal"
+        case .name: "textformat.abc"
+        case .reminderTime: "clock"
+        }
+    }
+}
+
 @MainActor
 final class ChecklistStore: ObservableObject {
     @Published private(set) var items: [ChecklistItem] = []
     @Published var showingToday = true
     @Published var eveningReminderMinutes: Int? = 20 * 60
     @Published private(set) var syncState = "Saved locally"
+    @Published var sortMode: ChecklistSort {
+        didSet { UserDefaults.standard.set(sortMode.rawValue, forKey: "checklistSortMode") }
+    }
 
     private let api = APIClient()
     private let notifications = NotificationManager()
@@ -13,6 +40,12 @@ final class ChecklistStore: ObservableObject {
     private var syncTask: Task<Void, Never>?
     private weak var authStore: AuthStore?
     private var activeAccountID: String = UserDefaults.standard.string(forKey: "activeAccountID") ?? "anonymous"
+
+    init() {
+        sortMode = ChecklistSort(
+            rawValue: UserDefaults.standard.string(forKey: "checklistSortMode") ?? ""
+        ) ?? .manual
+    }
     private var pendingMutations: [SyncMutation] = []
 
     private var deviceID: String {
@@ -29,7 +62,7 @@ final class ChecklistStore: ObservableObject {
     var visibleItems: [ChecklistItem] {
         items
             .filter { !showingToday || $0.occurs(on: .now) }
-            .sorted(by: Self.isOrderedBefore)
+            .sorted(by: sortPredicate)
     }
 
     var todoItems: [ChecklistItem] {
@@ -286,6 +319,30 @@ final class ChecklistStore: ObservableObject {
         default:
             if lhs.createdAt != rhs.createdAt { return lhs.createdAt < rhs.createdAt }
             return lhs.id.uuidString < rhs.id.uuidString
+        }
+    }
+
+    private func sortPredicate(_ lhs: ChecklistItem, _ rhs: ChecklistItem) -> Bool {
+        switch sortMode {
+        case .manual:
+            return Self.isOrderedBefore(lhs, rhs)
+        case .name:
+            let comparison = lhs.title.localizedCaseInsensitiveCompare(rhs.title)
+            if comparison != .orderedSame { return comparison == .orderedAscending }
+            return Self.isOrderedBefore(lhs, rhs)
+        case .reminderTime:
+            switch (lhs.reminderMinutes, rhs.reminderMinutes) {
+            case let (left?, right?) where left != right:
+                return left < right
+            case (_?, nil):
+                return true
+            case (nil, _?):
+                return false
+            default:
+                let comparison = lhs.title.localizedCaseInsensitiveCompare(rhs.title)
+                if comparison != .orderedSame { return comparison == .orderedAscending }
+                return Self.isOrderedBefore(lhs, rhs)
+            }
         }
     }
 }
