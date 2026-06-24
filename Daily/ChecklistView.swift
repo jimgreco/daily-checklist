@@ -289,6 +289,7 @@ private struct ItemRow: View {
     let onEdit: () -> Void
 
     private var completed: Bool { item.isComplete(on: date) }
+    private var missedDays: Int { item.consecutiveMissedDays(asOf: date) }
 
     var body: some View {
         HStack(spacing: 14) {
@@ -316,6 +317,22 @@ private struct ItemRow: View {
                     Label(item.scheduleSummary, systemImage: "repeat")
                     if let minutes = item.reminderMinutes {
                         Label(timeString(minutes), systemImage: "bell.fill")
+                    }
+                    if missedDays > 0 {
+                        HStack(spacing: 4) {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 8, weight: .bold))
+                            Text("\(missedDays) \(missedDays == 1 ? "day" : "days")")
+                        }
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(Color(red: 0.72, green: 0.22, blue: 0.20))
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 4)
+                        .background(
+                            Color(red: 0.72, green: 0.22, blue: 0.20).opacity(0.1),
+                            in: Capsule()
+                        )
+                        .accessibilityLabel("\(missedDays) consecutive missed \(missedDays == 1 ? "day" : "days")")
                     }
                 }
                 .font(.system(size: 12, weight: .medium))

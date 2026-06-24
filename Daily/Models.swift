@@ -65,6 +65,29 @@ struct ChecklistItem: Identifiable, Codable, Hashable {
         completedDates.contains(DateKey.string(from: date))
     }
 
+    func consecutiveMissedDays(asOf date: Date, calendar: Calendar = .current) -> Int {
+        let today = calendar.startOfDay(for: .now)
+        var cursor = min(calendar.startOfDay(for: date), today)
+        let firstEligibleDate = calendar.startOfDay(for: createdAt)
+        var missedDays = 0
+
+        while cursor >= firstEligibleDate {
+            if occurs(on: cursor, calendar: calendar) {
+                if isComplete(on: cursor) {
+                    break
+                }
+                missedDays += 1
+            }
+
+            guard let previousDay = calendar.date(byAdding: .day, value: -1, to: cursor) else {
+                break
+            }
+            cursor = previousDay
+        }
+
+        return missedDays
+    }
+
     var scheduleSummary: String {
         guard schedule == .custom else { return schedule.title }
         let symbols = Calendar.current.veryShortWeekdaySymbols
