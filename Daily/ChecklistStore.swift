@@ -126,6 +126,24 @@ final class ChecklistStore: ObservableObject {
         persistAndSchedule()
     }
 
+    func completeAllForToday() {
+        let key = DateKey.string(from: .now)
+        var completedItemIDs: [UUID] = []
+
+        for index in items.indices {
+            guard items[index].occurs(on: .now),
+                  !items[index].completedDates.contains(key) else { continue }
+            items[index].completedDates.insert(key)
+            completedItemIDs.append(items[index].id)
+        }
+
+        guard !completedItemIDs.isEmpty else { return }
+        pendingMutations.append(contentsOf: completedItemIDs.map {
+            .completion(itemID: $0, date: key, completed: true)
+        })
+        persistAndSchedule()
+    }
+
     func save(_ item: ChecklistItem) {
         var item = item
         if let index = items.firstIndex(where: { $0.id == item.id }) {

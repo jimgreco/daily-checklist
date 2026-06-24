@@ -24,7 +24,12 @@ struct ChecklistView: View {
                             .padding(.top, 22)
                         sortControl
                             .padding(.top, 14)
-                        section(title: "TO DO", items: store.todoItems, emptyText: "Nothing left for now")
+                        section(
+                            title: "TO DO",
+                            items: store.todoItems,
+                            emptyText: "Nothing left for now",
+                            showsCompleteAll: store.showingToday && !store.todoItems.isEmpty
+                        )
                             .padding(.top, 20)
                         section(title: "COMPLETED", items: store.completedItems, emptyText: nil)
                             .padding(.top, 32)
@@ -159,7 +164,12 @@ struct ChecklistView: View {
         }
     }
 
-    private func section(title: String, items: [ChecklistItem], emptyText: String?) -> some View {
+    private func section(
+        title: String,
+        items: [ChecklistItem],
+        emptyText: String?,
+        showsCompleteAll: Bool = false
+    ) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Text(title)
@@ -167,6 +177,19 @@ struct ChecklistView: View {
                     .tracking(1.4)
                     .foregroundStyle(.secondary)
                 Spacer()
+                if showsCompleteAll {
+                    Button {
+                        withAnimation(.snappy) {
+                            store.completeAllForToday()
+                        }
+                    } label: {
+                        Label("Complete all", systemImage: "checkmark.circle.fill")
+                            .font(.system(size: 12, weight: .semibold))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(accent)
+                    .accessibilityHint("Marks every task scheduled for today as complete")
+                }
                 Text("\(items.count)")
                     .font(.system(size: 12, weight: .bold, design: .rounded))
                     .foregroundStyle(.secondary)
