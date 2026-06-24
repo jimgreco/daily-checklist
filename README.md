@@ -33,3 +33,19 @@ Provider tokens are exchanged for Daily's own short-lived access token and rotat
 The local cache is authoritative while offline. Every add, edit, completion, deletion, and evening-alert change is appended to a durable mutation queue. After authentication and whenever connectivity returns, queued mutations are uploaded.
 
 The server merges item fields independently using timestamp plus device-ID ordering, merges completion state separately for each calendar date, deduplicates mutations, and keeps deletion tombstones so a stale device cannot recreate deleted tasks.
+
+## Publishing
+
+Every push to `main` runs `.github/workflows/publish.yml`:
+
+- tests and container-builds the Node server;
+- deploys `server/` to the shared EC2 host and rebuilds the `daily` Docker Compose service;
+- builds the iOS app, creates a current App Store provisioning profile, archives, and uploads to TestFlight.
+
+Repository secrets required:
+
+- EC2: `EC2_HOST`, `EC2_USER`, `EC2_SSH_KEY`, `EC2_SSH_KNOWN_HOSTS`, `DAILY_SESSION_SECRET`
+- OAuth/runtime: `GOOGLE_IOS_CLIENT_ID`, `GOOGLE_IOS_REVERSED_CLIENT_ID`, `IOS_API_BASE_URL`
+- Apple delivery: `APP_STORE_CONNECT_KEY_ID`, `APP_STORE_CONNECT_ISSUER_ID`, `APP_STORE_CONNECT_API_KEY`, `IOS_DIST_CERT_P12`, `IOS_DIST_CERT_PASSWORD`, `KEYCHAIN_PASSWORD`
+
+Before the first upload, create the Daily app record in App Store Connect for bundle ID `com.jimgreco.dailychecklist`. The workflow can register the bundle ID and provisioning profile, but Apple does not expose app-record creation through the same provisioning API.

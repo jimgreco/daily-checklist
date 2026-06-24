@@ -1,0 +1,332 @@
+name: Publish
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify-server:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+
+      - name: Install dependencies
+        working-directory: server
+        run: npm ci
+
+      - name: Test server
+        working-directory: server
+        run: npm test
+
+      - name: Audit production dependencies
+        working-directory: server
+        run: npm audit --omit=dev
+
+      - name: Build server image
+        run: docker build -t daily-server-ci server
+
+  deploy-server:
+    needs: verify-server
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Validate deployment configuration
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+          EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+          EC2_SSH_KNOWN_HOSTS: ${{ secrets.EC2_SSH_KNOWN_HOSTS }}
+          SESSION_SECRET: ${{ secrets.DAILY_SESSION_SECRET }}
+          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_IOS_CLIENT_ID }}
+        run: |
+          set -euo pipefail
+          for name in EC2_HOST EC2_USER EC2_SSH_KEY EC2_SSH_KNOWN_HOSTS SESSION_SECRET GOOGLE_CLIENT_ID; do
+            test -n "${!name}" || { echo "Missing required secret: $name"; exit 1; }
+          done
+          test "${#SESSION_SECRET}" -ge 32 || { echo "DAILY_SESSION_SECRET must be at least 32 characters."; exit 1; }
+
+      - name: Prepare SSH
+        env:
+          EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+          EC2_SSH_KNOWN_HOSTS: ${{ secrets.EC2_SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.ssh"
+          printf '%s' "$EC2_SSH_KEY" > "$HOME/.ssh/daily"
+          printf '%s\n' "$EC2_SSH_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/daily" "$HOME/.ssh/known_hosts"
+
+      - name: Transfer server to EC2
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+        run: |
+          set -euo pipefail
+          rsync -avz --delete \
+            -e "ssh -i $HOME/.ssh/daily -o UserKnownHostsFile=$HOME/.ssh/known_hosts -o StrictHostKeyChecking=yes" \
+            --exclude node_modules \
+            --exclude data \
+            --exclude '.env*' \
+            server/ "$EC2_USER@$EC2_HOST:~/daily-checklist/server/"
+
+      - name: Rebuild Daily service
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+          DAILY_SESSION_SECRET: ${{ secrets.DAILY_SESSION_SECRET }}
+          GOOGLE_IOS_CLIENT_ID: ${{ secrets.GOOGLE_IOS_CLIENT_ID }}
+        run: |
+          set -euo pipefail
+          ssh -i "$HOME/.ssh/daily" \
+            -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+            -o StrictHostKeyChecking=yes \
+            "$EC2_USER@$EC2_HOST" \
+            "DAILY_SESSION_SECRET='$DAILY_SESSION_SECRET' DAILY_GOOGLE_CLIENT_ID='$GOOGLE_IOS_CLIENT_ID' bash -se" <<'REMOTE'
+          set -euo pipefail
+          cd "$HOME/deploy"
+
+          update_env() {
+            key="$1"
+            value="$2"
+            tmp="$(mktemp)"
+            if [ -f .env ]; then
+              awk -v key="$key" -v value="$value" '
+                BEGIN { replaced = 0 }
+                index($0, key "=") == 1 { print key "=" value; replaced = 1; next }
+                { print }
+                END { if (!replaced) print key "=" value }
+              ' .env > "$tmp"
+            else
+              printf '%s=%s\n' "$key" "$value" > "$tmp"
+            fi
+            mv "$tmp" .env
+          }
+
+          update_env DAILY_SESSION_SECRET "$DAILY_SESSION_SECRET"
+          update_env DAILY_GOOGLE_CLIENT_ID "$DAILY_GOOGLE_CLIENT_ID"
+          update_env DAILY_APPLE_BUNDLE_ID "com.jimgreco.dailychecklist"
+
+          docker-compose --profile daily up -d --build daily
+          for attempt in $(seq 1 60); do
+            if docker-compose --profile daily exec -T daily node -e \
+              'fetch("http://127.0.0.1:8787/health").then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))'; then
+              echo "Daily server is healthy."
+              docker system prune -f
+              exit 0
+            fi
+            sleep 2
+          done
+          docker-compose --profile daily ps daily || true
+          docker-compose --profile daily logs --tail=100 daily || true
+          exit 1
+          REMOTE
+
+  testflight:
+    runs-on: macos-latest
+    timeout-minutes: 45
+    environment: production
+    env:
+      APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID || 'V6JPQCD336' }}
+      IOS_BUNDLE_ID: com.jimgreco.dailychecklist
+      IOS_PROFILE_NAME: Daily App Store ${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Select Xcode
+        run: |
+          set -euo pipefail
+          for path in /Applications/Xcode_26.2.app /Applications/Xcode_26.1.app /Applications/Xcode_26.0.app /Applications/Xcode_26.app /Applications/Xcode.app; do
+            if [ -d "$path" ]; then
+              sudo xcode-select -s "$path/Contents/Developer"
+              break
+            fi
+          done
+          xcodebuild -version
+
+      - name: Validate release configuration
+        env:
+          API_BASE_URL: ${{ secrets.IOS_API_BASE_URL }}
+          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_IOS_CLIENT_ID }}
+          GOOGLE_REVERSED_CLIENT_ID: ${{ secrets.GOOGLE_IOS_REVERSED_CLIENT_ID }}
+          CERT_P12: ${{ secrets.IOS_DIST_CERT_P12 }}
+          CERT_PASSWORD: ${{ secrets.IOS_DIST_CERT_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          ASC_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          ASC_API_KEY: ${{ secrets.APP_STORE_CONNECT_API_KEY }}
+        run: |
+          set -euo pipefail
+          for name in API_BASE_URL GOOGLE_CLIENT_ID GOOGLE_REVERSED_CLIENT_ID CERT_P12 CERT_PASSWORD KEYCHAIN_PASSWORD ASC_KEY_ID ASC_ISSUER_ID ASC_API_KEY; do
+            test -n "${!name}" || { echo "Missing required secret: $name"; exit 1; }
+          done
+          case "$API_BASE_URL" in
+            https://*/*) echo "IOS_API_BASE_URL must not include a path or trailing slash."; exit 1 ;;
+            https://*) ;;
+            *) echo "IOS_API_BASE_URL must be a production HTTPS origin."; exit 1 ;;
+          esac
+          [[ "$GOOGLE_CLIENT_ID" != *YOUR_* ]] || exit 1
+          [[ "$GOOGLE_REVERSED_CLIENT_ID" == com.googleusercontent.apps.* ]] || exit 1
+
+      - name: Build simulator app
+        env:
+          API_BASE_URL: ${{ secrets.IOS_API_BASE_URL }}
+          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_IOS_CLIENT_ID }}
+          GOOGLE_REVERSED_CLIENT_ID: ${{ secrets.GOOGLE_IOS_REVERSED_CLIENT_ID }}
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project Daily.xcodeproj \
+            -scheme Daily \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO \
+            API_BASE_URL="$API_BASE_URL" \
+            GOOGLE_CLIENT_ID="$GOOGLE_CLIENT_ID" \
+            GOOGLE_REVERSED_CLIENT_ID="$GOOGLE_REVERSED_CLIENT_ID" \
+            build
+
+      - name: Configure App Store Connect API key
+        env:
+          KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          API_KEY: ${{ secrets.APP_STORE_CONNECT_API_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.appstoreconnect/private_keys"
+          KEY_PATH="$HOME/.appstoreconnect/private_keys/AuthKey_${KEY_ID}.p8"
+          export KEY_PATH API_KEY
+          python3 - <<'PY'
+          import base64
+          import os
+
+          key = os.environ["API_KEY"].strip()
+          if "\\n" in key and "\n" not in key:
+              key = key.replace("\\n", "\n")
+          if "BEGIN PRIVATE KEY" not in key:
+              try:
+                  decoded = base64.b64decode(key).decode("utf-8")
+                  if "BEGIN PRIVATE KEY" in decoded:
+                      key = decoded
+              except Exception:
+                  pass
+          with open(os.environ["KEY_PATH"], "w", encoding="utf-8") as output:
+              output.write(key.rstrip() + "\n")
+          PY
+          chmod 600 "$KEY_PATH"
+          echo "APP_STORE_CONNECT_API_KEY_PATH=$KEY_PATH" >> "$GITHUB_ENV"
+          echo "APP_STORE_CONNECT_KEY_ID=$KEY_ID" >> "$GITHUB_ENV"
+          echo "APP_STORE_CONNECT_ISSUER_ID=${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}" >> "$GITHUB_ENV"
+
+      - name: Import signing certificate and create profile
+        env:
+          CERT_P12: ${{ secrets.IOS_DIST_CERT_P12 }}
+          CERT_PASSWORD: ${{ secrets.IOS_DIST_CERT_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          set -euo pipefail
+          KEYCHAIN="$RUNNER_TEMP/daily-signing.keychain-db"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | sed 's/"//g')
+          security default-keychain -s "$KEYCHAIN"
+
+          printf '%s' "$CERT_P12" | base64 -d > "$RUNNER_TEMP/distribution.p12"
+          openssl pkcs12 -in "$RUNNER_TEMP/distribution.p12" -noout -passin pass:"$CERT_PASSWORD"
+          openssl pkcs12 -in "$RUNNER_TEMP/distribution.p12" -clcerts -nokeys \
+            -passin pass:"$CERT_PASSWORD" -out "$RUNNER_TEMP/distribution.pem"
+          openssl x509 -in "$RUNNER_TEMP/distribution.pem" -outform DER -out "$RUNNER_TEMP/distribution.der"
+          security import "$RUNNER_TEMP/distribution.p12" -k "$KEYCHAIN" -P "$CERT_PASSWORD" \
+            -T /usr/bin/codesign -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+
+          node .github/scripts/ensure-app-store-profile.mjs \
+            --bundle-id "$IOS_BUNDLE_ID" \
+            --profile-name "$IOS_PROFILE_NAME" \
+            --certificate-der "$RUNNER_TEMP/distribution.der" \
+            --output "$RUNNER_TEMP/daily.mobileprovision"
+
+          mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
+          PROFILE_UUID="$(security cms -D -i "$RUNNER_TEMP/daily.mobileprovision" | plutil -extract UUID raw -o - -)"
+          cp "$RUNNER_TEMP/daily.mobileprovision" "$HOME/Library/MobileDevice/Provisioning Profiles/$PROFILE_UUID.mobileprovision"
+          echo "KEYCHAIN_PATH=$KEYCHAIN" >> "$GITHUB_ENV"
+
+      - name: Archive
+        env:
+          API_BASE_URL: ${{ secrets.IOS_API_BASE_URL }}
+          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_IOS_CLIENT_ID }}
+          GOOGLE_REVERSED_CLIENT_ID: ${{ secrets.GOOGLE_IOS_REVERSED_CLIENT_ID }}
+        run: |
+          set -euo pipefail
+          BUILD_NUMBER="$(git rev-list HEAD --count)"
+          xcodebuild archive \
+            -project Daily.xcodeproj \
+            -scheme Daily \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/Daily.xcarchive" \
+            DEVELOPMENT_TEAM="$APPLE_TEAM_ID" \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="Apple Distribution" \
+            PROVISIONING_PROFILE_SPECIFIER="$IOS_PROFILE_NAME" \
+            CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
+            API_BASE_URL="$API_BASE_URL" \
+            GOOGLE_CLIENT_ID="$GOOGLE_CLIENT_ID" \
+            GOOGLE_REVERSED_CLIENT_ID="$GOOGLE_REVERSED_CLIENT_ID" \
+            archive
+
+      - name: Export IPA
+        run: |
+          set -euo pipefail
+          cat > "$RUNNER_TEMP/ExportOptions.plist" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>teamID</key><string>${APPLE_TEAM_ID}</string>
+            <key>signingStyle</key><string>manual</string>
+            <key>signingCertificate</key><string>Apple Distribution</string>
+            <key>provisioningProfiles</key>
+            <dict><key>${IOS_BUNDLE_ID}</key><string>${IOS_PROFILE_NAME}</string></dict>
+            <key>stripSwiftSymbols</key><true/>
+            <key>uploadSymbols</key><true/>
+          </dict></plist>
+          EOF
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/Daily.xcarchive" \
+            -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist" \
+            -exportPath "$RUNNER_TEMP/export" \
+            -authenticationKeyPath "$APP_STORE_CONNECT_API_KEY_PATH" \
+            -authenticationKeyID "$APP_STORE_CONNECT_KEY_ID" \
+            -authenticationKeyIssuerID "$APP_STORE_CONNECT_ISSUER_ID"
+
+      - name: Upload to TestFlight
+        run: |
+          set -euo pipefail
+          IPA="$(find "$RUNNER_TEMP/export" -name '*.ipa' -print -quit)"
+          test -n "$IPA"
+          xcrun altool --upload-app --type ios --file "$IPA" \
+            --apiKey "$APP_STORE_CONNECT_KEY_ID" \
+            --apiIssuer "$APP_STORE_CONNECT_ISSUER_ID"
+
+      - name: Cleanup keychain
+        if: always()
+        run: |
+          if [ -n "${KEYCHAIN_PATH:-}" ]; then
+            security delete-keychain "$KEYCHAIN_PATH" || true
+          fi
