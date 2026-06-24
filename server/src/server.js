@@ -122,7 +122,7 @@ function stampWins(incoming, current) {
   return incoming.deviceID > current.deviceID;
 }
 
-const itemFields = ["title", "notes", "schedule", "customWeekdays", "reminderMinutes", "createdAt"];
+const itemFields = ["title", "notes", "schedule", "customWeekdays", "reminderMinutes", "createdAt", "sortOrder"];
 
 function applyMutation(account, mutation, deviceID) {
   if (!mutation?.id || !mutation.kind || !mutation.stamp) return false;
@@ -194,11 +194,20 @@ function materializeAccount(account) {
         schedule: value.schedule || "everyDay",
         customWeekdays: value.customWeekdays || [],
         reminderMinutes: value.reminderMinutes,
+        sortOrder: value.sortOrder,
         completedDates: Object.entries(record.completions || {})
           .filter(([, state]) => state.value)
           .map(([date]) => date),
         createdAt: value.createdAt || new Date().toISOString()
       };
+    })
+    .sort((left, right) => {
+      if (left.sortOrder != null && right.sortOrder != null && left.sortOrder !== right.sortOrder) {
+        return left.sortOrder - right.sortOrder;
+      }
+      if (left.sortOrder != null) return -1;
+      if (right.sortOrder != null) return 1;
+      return left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id);
     });
   return {
     items,

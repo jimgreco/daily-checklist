@@ -27,6 +27,7 @@ struct ChecklistItem: Identifiable, Codable, Hashable {
     var reminderMinutes: Int?
     var completedDates: Set<String>
     var createdAt: Date
+    var sortOrder: Double?
 
     init(
         id: UUID = UUID(),
@@ -36,7 +37,8 @@ struct ChecklistItem: Identifiable, Codable, Hashable {
         customWeekdays: Set<Int> = [],
         reminderMinutes: Int? = nil,
         completedDates: Set<String> = [],
-        createdAt: Date = .now
+        createdAt: Date = .now,
+        sortOrder: Double? = nil
     ) {
         self.id = id
         self.title = title
@@ -46,6 +48,7 @@ struct ChecklistItem: Identifiable, Codable, Hashable {
         self.reminderMinutes = reminderMinutes
         self.completedDates = completedDates
         self.createdAt = createdAt
+        self.sortOrder = sortOrder
     }
 
     func occurs(on date: Date, calendar: Calendar = .current) -> Bool {
@@ -91,6 +94,7 @@ struct ItemPayload: Codable {
     var customWeekdays: Set<Int>
     var reminderMinutes: Int?
     var createdAt: Date
+    var sortOrder: Double?
 }
 
 struct SyncMutation: Identifiable, Codable {
@@ -124,7 +128,8 @@ struct SyncMutation: Identifiable, Codable {
                 schedule: item.schedule,
                 customWeekdays: item.customWeekdays,
                 reminderMinutes: item.reminderMinutes,
-                createdAt: item.createdAt
+                createdAt: item.createdAt,
+                sortOrder: item.sortOrder
             )
         )
     }

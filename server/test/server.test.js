@@ -122,3 +122,19 @@ test("equal timestamps use device ID as deterministic tie breaker", () => {
     true
   );
 });
+
+test("manual order is merged and materialized consistently", () => {
+  const state = account();
+  for (const [id, title, order] of [["a", "Second", 1], ["b", "First", 0]]) {
+    applyMutation(state, {
+      id: `create-${id}`,
+      itemID: id,
+      kind: "upsert",
+      stamp: `2026-06-24T10:00:0${order}.000Z`,
+      changedFields: ["title", "sortOrder"],
+      item: { title, sortOrder: order }
+    }, "device-a");
+  }
+
+  assert.deepEqual(materializeAccount(state).items.map((item) => item.title), ["First", "Second"]);
+});

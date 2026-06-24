@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 let ink = Color(red: 0.10, green: 0.12, blue: 0.16)
 let accent = Color(red: 0.38, green: 0.33, blue: 0.92)
@@ -10,6 +11,7 @@ struct ChecklistView: View {
     @State private var showingNewItem = false
     @State private var showingSettings = false
     @State private var showingAccount = false
+    @State private var draggingItemID: UUID?
 
     var body: some View {
         NavigationStack {
@@ -154,6 +156,20 @@ struct ChecklistView: View {
                 VStack(spacing: 10) {
                     ForEach(items) { item in
                         ItemRow(item: item, onToggle: { store.toggle(item) }, onEdit: { editingItem = item })
+                            .opacity(draggingItemID == item.id ? 0.55 : 1)
+                            .onDrag {
+                                draggingItemID = item.id
+                                return NSItemProvider(object: item.id.uuidString as NSString)
+                            }
+                            .onDrop(
+                                of: [UTType.text],
+                                delegate: ChecklistItemDropDelegate(
+                                    targetID: item.id,
+                                    sectionIDs: items.map(\.id),
+                                    draggingItemID: $draggingItemID,
+                                    move: store.move
+                                )
+                            )
                     }
                 }
             }
@@ -200,6 +216,11 @@ private struct ItemRow: View {
                 .foregroundStyle(.secondary)
             }
             Spacer()
+            Image(systemName: "line.3.horizontal")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(.secondary.opacity(0.75))
+                .frame(width: 24, height: 36)
+                .accessibilityHidden(true)
             Button(action: onEdit) {
                 Image(systemName: "pencil")
                     .font(.system(size: 15, weight: .semibold))
@@ -211,6 +232,27 @@ private struct ItemRow: View {
         }
         .padding(16)
         .background(.white.opacity(completed ? 0.5 : 0.88), in: RoundedRectangle(cornerRadius: 20))
+    }
+}
+
+private struct ChecklistItemDropDelegate: DropDelegate {
+    let targetID: UUID
+    let sectionIDs: [UUID]
+    @Binding var draggingItemID: UUID?
+    let move: (UUID, UUID, [UUID]) -> Void
+
+    func dropEntered(info: DropInfo) {
+        guard let draggingItemID, draggingItemID != targetID else { return }
+        move(draggingItemID, targetID, sectionIDs)
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        draggingItemID = nil
+        return true
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        DropProposal(operation: .move)
     }
 }
 

@@ -29,7 +29,7 @@ final class ChecklistStore: ObservableObject {
     var visibleItems: [ChecklistItem] {
         items
             .filter { !showingToday || $0.occurs(on: .now) }
-            .sorted { $0.createdAt < $1.createdAt }
+            .sorted(by: Self.isOrderedBefore)
     }
 
     var todoItems: [ChecklistItem] {
@@ -94,6 +94,7 @@ final class ChecklistStore: ObservableObject {
     }
 
     func save(_ item: ChecklistItem) {
+        var item = item
         if let index = items.firstIndex(where: { $0.id == item.id }) {
             let changedFields = Self.changedFields(from: items[index], to: item)
             items[index] = item
@@ -101,9 +102,52 @@ final class ChecklistStore: ObservableObject {
                 pendingMutations.append(.upsert(item: item, changedFields: changedFields))
             }
         } else {
+            item.sortOrder = (items.compactMap(\.sortOrder).max() ?? Double(items.count - 1)) + 1
             items.append(item)
             pendingMutations.append(.upsert(item: item, changedFields: Self.allFields))
         }
+        persistAndSchedule()
+    }
+
+    func move(_ itemID: UUID, before targetID: UUID, within sectionIDs: [UUID]) {
+        guard itemID != targetID,
+              let sourceIndex = sectionIDs.firstIndex(of: itemID),
+              let targetIndex = sectionIDs.firstIndex(of: targetID) else { return }
+
+        var reorderedSection = sectionIDs
+        let movedID = reorderedSection.remove(at: sourceIndex)
+        reorderedSection.insert(movedID, at: min(targetIndex, reorderedSection.count))
+
+        var orderedAll = items.sorted(by: Self.isOrderedBefore)
+        let sectionSet = Set(sectionIDs)
+        let sectionSlots = orderedAll.indices.filter { sectionSet.contains(orderedAll[$0].id) }
+        guard sectionSlots.count == reorderedSection.count else { return }
+
+        let lookup = Dictionary(uniqueKeysWithValues: items.map { ($0.id, $0) })
+        for (slot, reorderedID) in zip(sectionSlots, reorderedSection) {
+            guard let replacement = lookup[reorderedID] else { return }
+            orderedAll[slot] = replacement
+        }
+
+        var changedItems: [ChecklistItem] = []
+        for index in orderedAll.indices {
+            let order = Double(index)
+            guard orderedAll[index].sortOrder != order else { continue }
+            orderedAll[index].sortOrder = order
+            changedItems.append(orderedAll[index])
+        }
+        guard !changedItems.isEmpty else { return }
+
+        items = orderedAll
+        let changedIDs = Set(changedItems.map(\.id))
+        pendingMutations.removeAll {
+            $0.kind == .upsert
+                && $0.changedFields == ["sortOrder"]
+                && $0.itemID.map(changedIDs.contains) == true
+        }
+        pendingMutations.append(contentsOf: changedItems.map {
+            .upsert(item: $0, changedFields: ["sortOrder"])
+        })
         persistAndSchedule()
     }
 
@@ -217,7 +261,7 @@ final class ChecklistStore: ObservableObject {
     }
 
     static let allFields: Set<String> = [
-        "title", "notes", "schedule", "customWeekdays", "reminderMinutes", "createdAt"
+        "title", "notes", "schedule", "customWeekdays", "reminderMinutes", "createdAt", "sortOrder"
     ]
 
     private static func changedFields(from old: ChecklistItem, to new: ChecklistItem) -> Set<String> {
@@ -227,6 +271,21 @@ final class ChecklistStore: ObservableObject {
         if old.schedule != new.schedule { changed.insert("schedule") }
         if old.customWeekdays != new.customWeekdays { changed.insert("customWeekdays") }
         if old.reminderMinutes != new.reminderMinutes { changed.insert("reminderMinutes") }
+        if old.sortOrder != new.sortOrder { changed.insert("sortOrder") }
         return changed
+    }
+
+    private static func isOrderedBefore(_ lhs: ChecklistItem, _ rhs: ChecklistItem) -> Bool {
+        switch (lhs.sortOrder, rhs.sortOrder) {
+        case let (left?, right?) where left != right:
+            return left < right
+        case (_?, nil):
+            return true
+        case (nil, _?):
+            return false
+        default:
+            if lhs.createdAt != rhs.createdAt { return lhs.createdAt < rhs.createdAt }
+            return lhs.id.uuidString < rhs.id.uuidString
+        }
     }
 }
