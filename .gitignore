@@ -1,0 +1,27 @@
+.DS_Store
+
+# Xcode
+DerivedData/
+build/
+*.xcworkspace/xcuserdata/
+*.xcodeproj/xcuserdata/
+*.xcuserstate
+xcuserdata/
+
+# Swift Package Manager
+.build/
+.swiftpm/
+
+# Node
+node_modules/
+npm-debug.log*
+
+# Local configuration and data
+.env
+.env.*
+!.env.example
+server/data/
+
+# Local tooling
+.idea/
+.vscode/

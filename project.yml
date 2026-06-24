@@ -1,0 +1,35 @@
+name: Daily
+options:
+  bundleIdPrefix: com.example
+  deploymentTarget:
+    iOS: "17.0"
+packages:
+  GoogleSignIn:
+    url: https://github.com/google/GoogleSignIn-iOS
+    from: 7.1.0
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    DEVELOPMENT_TEAM: ""
+targets:
+  Daily:
+    type: application
+    platform: iOS
+    sources:
+      - path: Daily
+    dependencies:
+      - package: GoogleSignIn
+        product: GoogleSignIn
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.jimgreco.dailychecklist
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: Daily/Info.plist
+        API_BASE_URL: http://127.0.0.1:8787
+        GOOGLE_CLIENT_ID: YOUR_GOOGLE_IOS_CLIENT_ID.apps.googleusercontent.com
+        GOOGLE_REVERSED_CLIENT_ID: com.googleusercontent.apps.YOUR_GOOGLE_IOS_CLIENT_ID
+        CODE_SIGN_ENTITLEMENTS: Daily/Daily.entitlements
+        TARGETED_DEVICE_FAMILY: "1"
+        SUPPORTS_MACCATALYST: NO
+    scheme:
+      testTargets: []

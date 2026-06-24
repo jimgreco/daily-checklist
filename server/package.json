@@ -1,0 +1,17 @@
+{
+  "name": "daily-checklist-server",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "apple-signin-auth": "^1.7.3",
+    "google-auth-library": "^10.6.2",
+    "jsonwebtoken": "^9.0.2"
+  }
+}

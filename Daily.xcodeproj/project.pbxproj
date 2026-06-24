@@ -1,0 +1,369 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		0340C91C2259FB5C2DC28209 /* GoogleSignIn in Frameworks */ = {isa = PBXBuildFile; productRef = 4E5FB660DD8A8B7D85B6024B /* GoogleSignIn */; };
+		0A48FA099729AE1C4FD897A4 /* DailyApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 662D254436332CA222BB53DA /* DailyApp.swift */; };
+		2E15F5B24FA39D0B30EC8BD4 /* AccountView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4162467A71517BA6F53716B1 /* AccountView.swift */; };
+		2FFC471A6EE71358BDF7E534 /* ChecklistStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5249D5CADB178F98244A2F6C /* ChecklistStore.swift */; };
+		3DE80678325E1D0817A04EA7 /* ItemEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5451BA5CFBB1BB1D77988B59 /* ItemEditor.swift */; };
+		4403380735BDEBE57A870733 /* ChecklistView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CEEFE571E0BAFE77D62FD109 /* ChecklistView.swift */; };
+		8935C1F6072250846C42A8E8 /* AuthStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6296E6DE360FB5DBF00638A4 /* AuthStore.swift */; };
+		CE6DEE12289CF5C63E2D2E1D /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 56B43CDEAB88147B7130CE27 /* Models.swift */; };
+		FDF8B9215945601581232C91 /* NotificationManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = D2E003FC6837E3D09EE90157 /* NotificationManager.swift */; };
+		FF5727462EEE699A4E91792F /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F795026AC3D729773F4B309 /* APIClient.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		218EDB48D27B308A527774CD /* Daily.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Daily.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		380B7E82D3FC05CCA571C320 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		4162467A71517BA6F53716B1 /* AccountView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountView.swift; sourceTree = "<group>"; };
+		5249D5CADB178F98244A2F6C /* ChecklistStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChecklistStore.swift; sourceTree = "<group>"; };
+		5451BA5CFBB1BB1D77988B59 /* ItemEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ItemEditor.swift; sourceTree = "<group>"; };
+		56B43CDEAB88147B7130CE27 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		6296E6DE360FB5DBF00638A4 /* AuthStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthStore.swift; sourceTree = "<group>"; };
+		662D254436332CA222BB53DA /* DailyApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DailyApp.swift; sourceTree = "<group>"; };
+		6F795026AC3D729773F4B309 /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
+		CEEFE571E0BAFE77D62FD109 /* ChecklistView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChecklistView.swift; sourceTree = "<group>"; };
+		D2E003FC6837E3D09EE90157 /* NotificationManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationManager.swift; sourceTree = "<group>"; };
+		E1440B860E7836764524A860 /* Daily.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Daily.entitlements; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		F2C1EA614C355B5520CB92AB /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				0340C91C2259FB5C2DC28209 /* GoogleSignIn in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		4CC5E57BA278CCCD08C43AC4 /* Daily */ = {
+			isa = PBXGroup;
+			children = (
+				4162467A71517BA6F53716B1 /* AccountView.swift */,
+				6F795026AC3D729773F4B309 /* APIClient.swift */,
+				6296E6DE360FB5DBF00638A4 /* AuthStore.swift */,
+				5249D5CADB178F98244A2F6C /* ChecklistStore.swift */,
+				CEEFE571E0BAFE77D62FD109 /* ChecklistView.swift */,
+				E1440B860E7836764524A860 /* Daily.entitlements */,
+				662D254436332CA222BB53DA /* DailyApp.swift */,
+				380B7E82D3FC05CCA571C320 /* Info.plist */,
+				5451BA5CFBB1BB1D77988B59 /* ItemEditor.swift */,
+				56B43CDEAB88147B7130CE27 /* Models.swift */,
+				D2E003FC6837E3D09EE90157 /* NotificationManager.swift */,
+			);
+			path = Daily;
+			sourceTree = "<group>";
+		};
+		7F1E51F85354B9375BA0B4EE = {
+			isa = PBXGroup;
+			children = (
+				4CC5E57BA278CCCD08C43AC4 /* Daily */,
+				B93FEC9B7E07899A92846908 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		B93FEC9B7E07899A92846908 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				218EDB48D27B308A527774CD /* Daily.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		CE715FA2773048DAE25E7252 /* Daily */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 410AFE56BAD5DEE44DA90776 /* Build configuration list for PBXNativeTarget "Daily" */;
+			buildPhases = (
+				70C823522867D176CB19FA6F /* Sources */,
+				F2C1EA614C355B5520CB92AB /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = Daily;
+			packageProductDependencies = (
+				4E5FB660DD8A8B7D85B6024B /* GoogleSignIn */,
+			);
+			productName = Daily;
+			productReference = 218EDB48D27B308A527774CD /* Daily.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		1E8050E2EBF4B3BCFF5AF9D5 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					CE715FA2773048DAE25E7252 = {
+						DevelopmentTeam = "";
+					};
+				};
+			};
+			buildConfigurationList = A44BFB2ED6C04BB88C116CC5 /* Build configuration list for PBXProject "Daily" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 7F1E51F85354B9375BA0B4EE;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				D09D64EC510A47320710F1C4 /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = B93FEC9B7E07899A92846908 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				CE715FA2773048DAE25E7252 /* Daily */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXSourcesBuildPhase section */
+		70C823522867D176CB19FA6F /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				FF5727462EEE699A4E91792F /* APIClient.swift in Sources */,
+				2E15F5B24FA39D0B30EC8BD4 /* AccountView.swift in Sources */,
+				8935C1F6072250846C42A8E8 /* AuthStore.swift in Sources */,
+				2FFC471A6EE71358BDF7E534 /* ChecklistStore.swift in Sources */,
+				4403380735BDEBE57A870733 /* ChecklistView.swift in Sources */,
+				0A48FA099729AE1C4FD897A4 /* DailyApp.swift in Sources */,
+				3DE80678325E1D0817A04EA7 /* ItemEditor.swift in Sources */,
+				CE6DEE12289CF5C63E2D2E1D /* Models.swift in Sources */,
+				FDF8B9215945601581232C91 /* NotificationManager.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		00CE66CC6ED41BE4C1025A1E /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				API_BASE_URL = "http://127.0.0.1:8787";
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = Daily/Daily.entitlements;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				GENERATE_INFOPLIST_FILE = NO;
+				GOOGLE_CLIENT_ID = YOUR_GOOGLE_IOS_CLIENT_ID.apps.googleusercontent.com;
+				GOOGLE_REVERSED_CLIENT_ID = com.googleusercontent.apps.YOUR_GOOGLE_IOS_CLIENT_ID;
+				INFOPLIST_FILE = Daily/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.jimgreco.dailychecklist;
+				SDKROOT = iphoneos;
+				SUPPORTS_MACCATALYST = NO;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+		9223AAC982552A1D3D92EB67 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = "";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		F1F79BEF58FB6054378B374D /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		F6BF9F57701F94DCE35133BE /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				API_BASE_URL = "http://127.0.0.1:8787";
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = Daily/Daily.entitlements;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				GENERATE_INFOPLIST_FILE = NO;
+				GOOGLE_CLIENT_ID = YOUR_GOOGLE_IOS_CLIENT_ID.apps.googleusercontent.com;
+				GOOGLE_REVERSED_CLIENT_ID = com.googleusercontent.apps.YOUR_GOOGLE_IOS_CLIENT_ID;
+				INFOPLIST_FILE = Daily/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.jimgreco.dailychecklist;
+				SDKROOT = iphoneos;
+				SUPPORTS_MACCATALYST = NO;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		410AFE56BAD5DEE44DA90776 /* Build configuration list for PBXNativeTarget "Daily" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				F6BF9F57701F94DCE35133BE /* Debug */,
+				00CE66CC6ED41BE4C1025A1E /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		A44BFB2ED6C04BB88C116CC5 /* Build configuration list for PBXProject "Daily" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				F1F79BEF58FB6054378B374D /* Debug */,
+				9223AAC982552A1D3D92EB67 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		D09D64EC510A47320710F1C4 /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/google/GoogleSignIn-iOS";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 7.1.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		4E5FB660DD8A8B7D85B6024B /* GoogleSignIn */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = D09D64EC510A47320710F1C4 /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */;
+			productName = GoogleSignIn;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = 1E8050E2EBF4B3BCFF5AF9D5 /* Project object */;
+}
