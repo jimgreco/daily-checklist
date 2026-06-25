@@ -143,7 +143,7 @@ async function main() {
   const authToken = token();
 
   const bundle = await ensureBundle(authToken, bundleIdentifier);
-  await ensureCapability(authToken, bundle.id, 'SIGN_IN_WITH_APPLE');
+  await ensureCapability(authToken, bundle.id, 'APPLE_ID_AUTH');
   const certificate = await matchingCertificate(authToken, certificatePath);
   const profile = await createProfile(authToken, profileName, bundle.id, certificate.id);
   const content = profile.attributes?.profileContent;
