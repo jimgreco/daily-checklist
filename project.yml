@@ -33,5 +33,10 @@ targets:
         CODE_SIGN_ENTITLEMENTS: Daily/Daily.entitlements
         TARGETED_DEVICE_FAMILY: "1"
         SUPPORTS_MACCATALYST: NO
+      configs:
+        Release:
+          CODE_SIGN_STYLE: Manual
+          CODE_SIGN_IDENTITY: Apple Distribution
+          PROVISIONING_PROFILE_SPECIFIER: "$(IOS_PROFILE_NAME)"
     scheme:
       testTargets: []
