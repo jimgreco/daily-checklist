@@ -152,11 +152,15 @@ final class ChecklistStore: ObservableObject {
     }
 
     func completeAllForSelectedDate() {
+        completeAll(itemIDs: Set(todoItems.map(\.id)))
+    }
+
+    func completeAll(itemIDs: Set<UUID>) {
         let key = DateKey.string(from: selectedDate)
         var completedItemIDs: [UUID] = []
 
         for index in items.indices {
-            guard items[index].occurs(on: selectedDate),
+            guard itemIDs.contains(items[index].id),
                   !items[index].completedDates.contains(key) else { continue }
             items[index].completedDates.insert(key)
             completedItemIDs.append(items[index].id)

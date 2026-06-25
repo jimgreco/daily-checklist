@@ -27,10 +27,16 @@ struct ChecklistView: View {
                             title: "TO DO",
                             items: store.todoItems,
                             emptyText: "Nothing left for now",
-                            showsCompleteAll: store.showingToday && !store.todoItems.isEmpty
+                            showsCompleteAll: store.showingToday && !store.todoItems.isEmpty,
+                            isCompletedSection: false
                         )
                             .padding(.top, 28)
-                        section(title: "COMPLETED", items: store.completedItems, emptyText: nil)
+                        section(
+                            title: "COMPLETED",
+                            items: store.completedItems,
+                            emptyText: nil,
+                            isCompletedSection: true
+                        )
                             .padding(.top, 32)
                             .opacity(store.completedItems.isEmpty ? 0 : 1)
                         Spacer(minLength: 120)
@@ -213,7 +219,8 @@ struct ChecklistView: View {
         title: String,
         items: [ChecklistItem],
         emptyText: String?,
-        showsCompleteAll: Bool = false
+        showsCompleteAll: Bool = false,
+        isCompletedSection: Bool
     ) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
@@ -253,13 +260,13 @@ struct ChecklistView: View {
                 .padding(.vertical, 30)
                 .background(.white.opacity(0.62), in: RoundedRectangle(cornerRadius: 22))
             } else {
-                groupedItems(items)
+                groupedItems(items, isCompletedSection: isCompletedSection)
             }
         }
     }
 
     @ViewBuilder
-    private func groupedItems(_ items: [ChecklistItem]) -> some View {
+    private func groupedItems(_ items: [ChecklistItem], isCompletedSection: Bool) -> some View {
         let knownGroupIDs = Set(store.groups.map(\.id))
         let ungrouped = items.filter { $0.groupID == nil || $0.groupID.map(knownGroupIDs.contains) == false }
 
@@ -267,15 +274,29 @@ struct ChecklistView: View {
             itemStack(ungrouped, groupID: nil)
         } else {
             VStack(alignment: .leading, spacing: 18) {
-                groupBlock(title: "Ungrouped", groupID: nil, items: ungrouped, isRealGroup: false)
-                ForEach(store.orderedGroups) { group in
-                    let groupItems = items.filter { $0.groupID == group.id }
+                if !ungrouped.isEmpty {
                     groupBlock(
-                        title: group.name,
-                        groupID: group.id,
-                        items: groupItems,
-                        isRealGroup: true
+                        title: "Ungrouped",
+                        groupID: nil,
+                        items: ungrouped,
+                        isRealGroup: false,
+                        showsCompleteAll: false
                     )
+                }
+                ForEach(store.orderedGroups) { group in
+                    let groupItems = store.visibleItems.filter { $0.groupID == group.id }
+                    let groupIsComplete = !groupItems.isEmpty
+                        && groupItems.allSatisfy { $0.isComplete(on: store.selectedDate) }
+                    if groupIsComplete == isCompletedSection {
+                        groupBlock(
+                            title: group.name,
+                            groupID: group.id,
+                            items: groupItems,
+                            isRealGroup: true,
+                            showsCompleteAll: !isCompletedSection
+                                && groupItems.contains { !$0.isComplete(on: store.selectedDate) }
+                        )
+                    }
                 }
             }
         }
@@ -285,10 +306,22 @@ struct ChecklistView: View {
         title: String,
         groupID: UUID?,
         items: [ChecklistItem],
-        isRealGroup: Bool
+        isRealGroup: Bool,
+        showsCompleteAll: Bool
     ) -> some View {
         VStack(alignment: .leading, spacing: 9) {
-            groupHeader(title: title, groupID: groupID, count: items.count, isRealGroup: isRealGroup)
+            groupHeader(
+                title: title,
+                groupID: groupID,
+                count: items.count,
+                isRealGroup: isRealGroup,
+                showsCompleteAll: showsCompleteAll,
+                completeAll: {
+                    withAnimation(.snappy) {
+                        store.completeAll(itemIDs: Set(items.map(\.id)))
+                    }
+                }
+            )
             if items.isEmpty {
                 if store.sortMode == .manual {
                     Text("Drop tasks here")
@@ -300,22 +333,15 @@ struct ChecklistView: View {
                             Color.white.opacity(0.35),
                             in: RoundedRectangle(cornerRadius: 16)
                         )
+                        .onDrop(
+                            of: [UTType.text],
+                            delegate: groupDropDelegate(groupID: groupID, isRealGroup: isRealGroup)
+                        )
                 }
             } else {
                 itemStack(items, groupID: groupID)
             }
         }
-        .onDrop(
-            of: [UTType.text],
-            delegate: ChecklistGroupDropDelegate(
-                targetGroupID: groupID,
-                targetRealGroupID: isRealGroup ? groupID : nil,
-                draggingItemID: $draggingItemID,
-                draggingGroupID: $draggingGroupID,
-                moveItem: store.move(_:toGroup:),
-                moveGroup: store.moveGroup
-            )
-        )
     }
 
     @ViewBuilder
@@ -323,7 +349,9 @@ struct ChecklistView: View {
         title: String,
         groupID: UUID?,
         count: Int,
-        isRealGroup: Bool
+        isRealGroup: Bool,
+        showsCompleteAll: Bool,
+        completeAll: @escaping () -> Void
     ) -> some View {
         let header = HStack(spacing: 8) {
             Image(systemName: isRealGroup ? "folder.fill" : "tray.fill")
@@ -336,6 +364,15 @@ struct ChecklistView: View {
                 .font(.system(size: 11, weight: .bold, design: .rounded))
                 .foregroundStyle(.secondary)
             Spacer()
+            if showsCompleteAll {
+                Button(action: completeAll) {
+                    Label("Complete all", systemImage: "checkmark.circle.fill")
+                        .font(.system(size: 11, weight: .semibold))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(accent)
+                .accessibilityHint("Marks every task in \(title) as complete")
+            }
             if isRealGroup, store.sortMode == .manual {
                 Image(systemName: "line.3.horizontal")
                     .font(.system(size: 13, weight: .semibold))
@@ -352,9 +389,28 @@ struct ChecklistView: View {
                     draggingItemID = nil
                     return NSItemProvider(object: "group:\(groupID.uuidString)" as NSString)
                 }
+                .onDrop(
+                    of: [UTType.text],
+                    delegate: groupDropDelegate(groupID: groupID, isRealGroup: true)
+                )
         } else {
             header
+                .onDrop(
+                    of: [UTType.text],
+                    delegate: groupDropDelegate(groupID: groupID, isRealGroup: isRealGroup)
+                )
         }
+    }
+
+    private func groupDropDelegate(groupID: UUID?, isRealGroup: Bool) -> ChecklistGroupDropDelegate {
+        ChecklistGroupDropDelegate(
+            targetGroupID: groupID,
+            targetRealGroupID: isRealGroup ? groupID : nil,
+            draggingItemID: $draggingItemID,
+            draggingGroupID: $draggingGroupID,
+            moveItem: store.move(_:toGroup:),
+            moveGroup: store.moveGroup
+        )
     }
 
     private func itemStack(_ items: [ChecklistItem], groupID: UUID?) -> some View {
