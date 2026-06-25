@@ -7,6 +7,7 @@ COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
 
 COPY src ./src
+COPY web ./web
 
 RUN mkdir -p /data && chown -R node:node /app /data
 USER node

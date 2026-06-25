@@ -7,6 +7,37 @@ const {
   stampWins
 } = require("../src/server");
 
+let listener;
+let baseURL;
+
+test.before(async () => {
+  const { server } = require("../src/server");
+  await new Promise((resolve) => {
+    listener = server.listen(0, "127.0.0.1", () => {
+      baseURL = `http://127.0.0.1:${listener.address().port}`;
+      resolve();
+    });
+  });
+});
+
+test.after(async () => {
+  if (listener) await new Promise((resolve) => listener.close(resolve));
+});
+
+test("serves the mobile website and public auth configuration", async () => {
+  const page = await fetch(`${baseURL}/`);
+  assert.equal(page.status, 200);
+  assert.match(page.headers.get("content-type"), /^text\/html/);
+  assert.match(await page.text(), /Daily Checklist/);
+
+  const config = await fetch(`${baseURL}/auth/config`);
+  assert.equal(config.status, 200);
+  assert.deepEqual(await config.json(), {
+    google_client_id: null,
+    apple_client_id: null
+  });
+});
+
 function account() {
   return { items: {}, appliedMutations: {}, eveningReminder: null };
 }

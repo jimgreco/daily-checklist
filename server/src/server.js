@@ -10,6 +10,7 @@ const port = Number(process.env.PORT || 8787);
 const dataFile = process.env.DATA_FILE || path.join(__dirname, "..", "data", "database.json");
 const sessionSecret = process.env.SESSION_SECRET || "daily-local-development-secret-change-me";
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+const webRoot = path.join(__dirname, "..", "web");
 let writeQueue = Promise.resolve();
 
 function emptyDatabase() {
@@ -45,6 +46,32 @@ function send(response, status, body) {
     "cache-control": "no-store"
   });
   response.end(body === undefined ? "" : JSON.stringify(body));
+}
+
+const contentTypes = {
+  ".css": "text/css; charset=utf-8",
+  ".html": "text/html; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".webmanifest": "application/manifest+json; charset=utf-8"
+};
+
+async function sendWebFile(response, relativePath) {
+  const resolved = path.resolve(webRoot, relativePath);
+  if (!resolved.startsWith(`${path.resolve(webRoot)}${path.sep}`)) return false;
+  try {
+    const body = await fs.readFile(resolved);
+    response.writeHead(200, {
+      "content-type": contentTypes[path.extname(resolved)] || "application/octet-stream",
+      "cache-control": path.basename(resolved) === "index.html" ? "no-cache" : "public, max-age=300",
+      "x-content-type-options": "nosniff"
+    });
+    response.end(body);
+    return true;
+  } catch (error) {
+    if (error.code === "ENOENT") return false;
+    throw error;
+  }
 }
 
 async function readJSON(request) {
@@ -254,6 +281,13 @@ function validSyncRequest(body) {
 async function handleAuth(request, response, pathname) {
   const body = request.method === "POST" ? await readJSON(request) : {};
 
+  if (pathname === "/auth/config" && request.method === "GET") {
+    return send(response, 200, {
+      google_client_id: process.env.GOOGLE_WEB_CLIENT_ID?.trim() || null,
+      apple_client_id: process.env.APPLE_WEB_CLIENT_ID?.trim() || null
+    });
+  }
+
   if (pathname === "/auth/dev" && request.method === "POST") {
     if (process.env.NODE_ENV === "production") return send(response, 404, { error: "Not found" });
     const auth = await updateDatabase((database) => {
@@ -355,6 +389,10 @@ const server = http.createServer(async (request, response) => {
         return { ...materializeAccount(account), acceptedMutationIDs };
       });
       return send(response, 200, result);
+    }
+    if (request.method === "GET") {
+      const relativePath = pathname === "/" ? "index.html" : pathname.slice(1);
+      if (await sendWebFile(response, relativePath)) return;
     }
     return send(response, 404, { error: "Not found" });
   } catch (error) {
