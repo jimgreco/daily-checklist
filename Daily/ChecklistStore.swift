@@ -62,6 +62,7 @@ final class ChecklistStore: ObservableObject {
 
     var visibleItems: [ChecklistItem] {
         items
+            .filter { $0.isActive(on: selectedDate) }
             .filter { !showingToday || $0.occurs(on: selectedDate) }
             .sorted(by: sortPredicate)
     }
@@ -217,8 +218,9 @@ final class ChecklistStore: ObservableObject {
     }
 
     func delete(_ item: ChecklistItem) {
-        items.removeAll { $0.id == item.id }
-        pendingMutations.append(.delete(itemID: item.id))
+        guard let index = items.firstIndex(where: { $0.id == item.id }) else { return }
+        items[index].endedAt = Calendar.current.startOfDay(for: .now)
+        pendingMutations.append(.upsert(item: items[index], changedFields: ["endedAt"]))
         persistAndSchedule()
     }
 
@@ -326,7 +328,7 @@ final class ChecklistStore: ObservableObject {
     }
 
     static let allFields: Set<String> = [
-        "title", "notes", "schedule", "customWeekdays", "reminderMinutes", "createdAt", "sortOrder"
+        "title", "notes", "schedule", "customWeekdays", "reminderMinutes", "createdAt", "endedAt", "sortOrder"
     ]
 
     private static func changedFields(from old: ChecklistItem, to new: ChecklistItem) -> Set<String> {
@@ -336,6 +338,7 @@ final class ChecklistStore: ObservableObject {
         if old.schedule != new.schedule { changed.insert("schedule") }
         if old.customWeekdays != new.customWeekdays { changed.insert("customWeekdays") }
         if old.reminderMinutes != new.reminderMinutes { changed.insert("reminderMinutes") }
+        if old.endedAt != new.endedAt { changed.insert("endedAt") }
         if old.sortOrder != new.sortOrder { changed.insert("sortOrder") }
         return changed
     }

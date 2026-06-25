@@ -27,6 +27,7 @@ struct ChecklistItem: Identifiable, Codable, Hashable {
     var reminderMinutes: Int?
     var completedDates: Set<String>
     var createdAt: Date
+    var endedAt: Date?
     var sortOrder: Double?
 
     init(
@@ -38,6 +39,7 @@ struct ChecklistItem: Identifiable, Codable, Hashable {
         reminderMinutes: Int? = nil,
         completedDates: Set<String> = [],
         createdAt: Date = .now,
+        endedAt: Date? = nil,
         sortOrder: Double? = nil
     ) {
         self.id = id
@@ -48,10 +50,19 @@ struct ChecklistItem: Identifiable, Codable, Hashable {
         self.reminderMinutes = reminderMinutes
         self.completedDates = completedDates
         self.createdAt = createdAt
+        self.endedAt = endedAt
         self.sortOrder = sortOrder
     }
 
+    func isActive(on date: Date, calendar: Calendar = .current) -> Bool {
+        let day = calendar.startOfDay(for: date)
+        guard day >= calendar.startOfDay(for: createdAt) else { return false }
+        guard let endedAt else { return true }
+        return day < calendar.startOfDay(for: endedAt)
+    }
+
     func occurs(on date: Date, calendar: Calendar = .current) -> Bool {
+        guard isActive(on: date, calendar: calendar) else { return false }
         let weekday = calendar.component(.weekday, from: date)
         switch schedule {
         case .everyDay: return true
@@ -70,6 +81,14 @@ struct ChecklistItem: Identifiable, Codable, Hashable {
         var cursor = min(calendar.startOfDay(for: date), today)
         let firstEligibleDate = calendar.startOfDay(for: createdAt)
         var missedDays = 0
+
+        // The current day is still in progress, so it cannot be considered missed yet.
+        if cursor >= today {
+            guard let previousDay = calendar.date(byAdding: .day, value: -1, to: cursor) else {
+                return 0
+            }
+            cursor = previousDay
+        }
 
         while cursor >= firstEligibleDate {
             if occurs(on: cursor, calendar: calendar) {
@@ -117,6 +136,7 @@ struct ItemPayload: Codable {
     var customWeekdays: Set<Int>
     var reminderMinutes: Int?
     var createdAt: Date
+    var endedAt: Date?
     var sortOrder: Double?
 }
 
@@ -152,6 +172,7 @@ struct SyncMutation: Identifiable, Codable {
                 customWeekdays: item.customWeekdays,
                 reminderMinutes: item.reminderMinutes,
                 createdAt: item.createdAt,
+                endedAt: item.endedAt,
                 sortOrder: item.sortOrder
             )
         )

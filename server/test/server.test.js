@@ -113,6 +113,33 @@ test("deletion tombstones prevent stale-device resurrection", () => {
   assert.equal(materializeAccount(state).items.length, 0);
 });
 
+test("ending an item preserves it for historical dates", () => {
+  const state = account();
+  applyMutation(state, {
+    id: "create",
+    itemID: "item-1",
+    kind: "upsert",
+    stamp: "2026-06-24T10:00:00.000Z",
+    changedFields: ["title", "createdAt"],
+    item: {
+      title: "Pills",
+      createdAt: "2026-06-20T09:00:00.000Z"
+    }
+  }, "device-a");
+  applyMutation(state, {
+    id: "end",
+    itemID: "item-1",
+    kind: "upsert",
+    stamp: "2026-06-25T10:00:00.000Z",
+    changedFields: ["endedAt"],
+    item: { endedAt: "2026-06-25T04:00:00.000Z" }
+  }, "device-a");
+
+  const item = materializeAccount(state).items[0];
+  assert.equal(item.title, "Pills");
+  assert.equal(item.endedAt, "2026-06-25T04:00:00.000Z");
+});
+
 test("equal timestamps use device ID as deterministic tie breaker", () => {
   assert.equal(
     stampWins(

@@ -122,7 +122,7 @@ function stampWins(incoming, current) {
   return incoming.deviceID > current.deviceID;
 }
 
-const itemFields = ["title", "notes", "schedule", "customWeekdays", "reminderMinutes", "createdAt", "sortOrder"];
+const itemFields = ["title", "notes", "schedule", "customWeekdays", "reminderMinutes", "createdAt", "endedAt", "sortOrder"];
 
 function applyMutation(account, mutation, deviceID) {
   if (!mutation?.id || !mutation.kind || !mutation.stamp) return false;
@@ -194,6 +194,7 @@ function materializeAccount(account) {
         schedule: value.schedule || "everyDay",
         customWeekdays: value.customWeekdays || [],
         reminderMinutes: value.reminderMinutes,
+        endedAt: value.endedAt,
         sortOrder: value.sortOrder,
         completedDates: Object.entries(record.completions || {})
           .filter(([, state]) => state.value)

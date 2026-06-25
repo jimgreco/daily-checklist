@@ -22,15 +22,13 @@ struct ChecklistView: View {
                         header
                         filter
                             .padding(.top, 22)
-                        sortControl
-                            .padding(.top, 14)
                         section(
                             title: "TO DO",
                             items: store.todoItems,
                             emptyText: "Nothing left for now",
                             showsCompleteAll: store.showingToday && !store.todoItems.isEmpty
                         )
-                            .padding(.top, 20)
+                            .padding(.top, 28)
                         section(title: "COMPLETED", items: store.completedItems, emptyText: nil)
                             .padding(.top, 32)
                             .opacity(store.completedItems.isEmpty ? 0 : 1)
@@ -95,43 +93,47 @@ struct ChecklistView: View {
                 .accessibilityLabel("Next day")
             }
 
-            HStack(alignment: .top) {
-            VStack(alignment: .leading, spacing: 5) {
-                Text(store.selectedDate.formatted(.dateTime.weekday(.wide).month(.wide).day()))
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(accent)
-                    .textCase(.uppercase)
-                    .tracking(1.2)
-                if !store.isSelectedDateToday {
-                    Button("Back to today") {
-                        withAnimation(.snappy) { store.selectToday() }
+            HStack(alignment: .bottom) {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(store.selectedDate.formatted(.dateTime.weekday(.wide).month(.wide).day()))
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(accent)
+                        .textCase(.uppercase)
+                        .tracking(1.2)
+                    if !store.isSelectedDateToday {
+                        Button("Back to today") {
+                            withAnimation(.snappy) { store.selectToday() }
+                        }
+                        .font(.system(size: 13, weight: .semibold))
                     }
-                    .font(.system(size: 13, weight: .semibold))
-                }
-                Text("Daily")
-                    .font(.system(size: 42, weight: .bold, design: .rounded))
-                    .foregroundStyle(ink)
-                Text(summary)
-                    .font(.system(size: 16))
-                    .foregroundStyle(.secondary)
-            }
-            Spacer()
-            HStack(spacing: 10) {
-                Button { showingAccount = true } label: {
-                    Image(systemName: "person.crop.circle")
-                        .font(.system(size: 19, weight: .semibold))
+                    Text("Daily")
+                        .font(.system(size: 42, weight: .bold, design: .rounded))
                         .foregroundStyle(ink)
-                        .frame(width: 44, height: 44)
-                        .background(.white.opacity(0.8), in: Circle())
+                    Text(summary)
+                        .font(.system(size: 16))
+                        .foregroundStyle(.secondary)
                 }
-                Button { showingSettings = true } label: {
-                    Image(systemName: "bell")
-                        .font(.system(size: 18, weight: .semibold))
-                        .foregroundStyle(ink)
-                        .frame(width: 44, height: 44)
-                        .background(.white.opacity(0.8), in: Circle())
+                Spacer()
+                VStack(alignment: .trailing) {
+                    HStack(spacing: 10) {
+                        Button { showingAccount = true } label: {
+                            Image(systemName: "person.crop.circle")
+                                .font(.system(size: 19, weight: .semibold))
+                                .foregroundStyle(ink)
+                                .frame(width: 44, height: 44)
+                                .background(.white.opacity(0.8), in: Circle())
+                        }
+                        Button { showingSettings = true } label: {
+                            Image(systemName: "bell")
+                                .font(.system(size: 18, weight: .semibold))
+                                .foregroundStyle(ink)
+                                .frame(width: 44, height: 44)
+                                .background(.white.opacity(0.8), in: Circle())
+                        }
+                    }
+                    Spacer(minLength: 10)
+                    sortControl
                 }
-            }
             }
         }
         .padding(.top, 18)
@@ -156,33 +158,30 @@ struct ChecklistView: View {
     }
 
     private var sortControl: some View {
-        HStack {
-            Spacer()
-            Menu {
-                ForEach(ChecklistSort.allCases) { option in
-                    Button {
-                        withAnimation(.snappy) {
-                            store.sortMode = option
-                            draggingItemID = nil
-                        }
-                    } label: {
-                        Label(option.title, systemImage: option.icon)
+        Menu {
+            ForEach(ChecklistSort.allCases) { option in
+                Button {
+                    withAnimation(.snappy) {
+                        store.sortMode = option
+                        draggingItemID = nil
                     }
+                } label: {
+                    Label(option.title, systemImage: option.icon)
                 }
-            } label: {
-                HStack(spacing: 7) {
-                    Image(systemName: "arrow.up.arrow.down")
-                    Text(store.sortMode.title)
-                }
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(ink)
-                .padding(.horizontal, 13)
-                .padding(.vertical, 9)
-                .background(.white.opacity(0.78), in: Capsule())
             }
-            .accessibilityLabel("Sort checklist")
-            .accessibilityValue(store.sortMode.title)
+        } label: {
+            HStack(spacing: 7) {
+                Image(systemName: "arrow.up.arrow.down")
+                Text(store.sortMode.title)
+            }
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundStyle(ink)
+            .padding(.horizontal, 13)
+            .padding(.vertical, 9)
+            .background(.white.opacity(0.78), in: Capsule())
         }
+        .accessibilityLabel("Sort checklist")
+        .accessibilityValue(store.sortMode.title)
     }
 
     private func filterButton(_ title: String, selected: Bool, action: @escaping () -> Void) -> some View {
@@ -309,19 +308,17 @@ private struct ItemRow: View {
             .accessibilityLabel(completed ? "Mark incomplete" : "Mark complete")
 
             VStack(alignment: .leading, spacing: 5) {
-                Text(item.title)
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(completed ? .secondary : ink)
-                    .strikethrough(completed, color: .secondary)
                 HStack(spacing: 8) {
-                    Label(item.scheduleSummary, systemImage: "repeat")
-                    if let minutes = item.reminderMinutes {
-                        Label(timeString(minutes), systemImage: "bell.fill")
-                    }
+                    Text(item.title)
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(completed ? .secondary : ink)
+                        .strikethrough(completed, color: .secondary)
+                        .lineLimit(1)
+                        .layoutPriority(1)
                     if missedDays > 0 {
                         HStack(spacing: 4) {
-                            Image(systemName: "xmark")
-                                .font(.system(size: 8, weight: .bold))
+                            Image(systemName: "calendar.badge.exclamationmark")
+                                .font(.system(size: 10, weight: .bold))
                             Text("\(missedDays) \(missedDays == 1 ? "day" : "days")")
                         }
                         .font(.system(size: 11, weight: .bold))
@@ -332,11 +329,25 @@ private struct ItemRow: View {
                             Color(red: 0.72, green: 0.22, blue: 0.20).opacity(0.1),
                             in: Capsule()
                         )
+                        .fixedSize()
                         .accessibilityLabel("\(missedDays) consecutive missed \(missedDays == 1 ? "day" : "days")")
+                    }
+                }
+                HStack(spacing: 8) {
+                    Label(item.scheduleSummary, systemImage: "repeat")
+                    if let minutes = item.reminderMinutes {
+                        Label(timeString(minutes), systemImage: "bell.fill")
                     }
                 }
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(.secondary)
+                if !item.notes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Text(item.notes)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .strikethrough(completed, color: .secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             Spacer()
             if showsDragHandle {
