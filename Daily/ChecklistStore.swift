@@ -27,6 +27,7 @@ enum ChecklistSort: String, CaseIterable, Identifiable {
 @MainActor
 final class ChecklistStore: ObservableObject {
     @Published private(set) var items: [ChecklistItem] = []
+    @Published private(set) var groups: [ChecklistGroup] = []
     @Published var showingToday = true
     @Published var selectedDate = Calendar.current.startOfDay(for: .now)
     @Published var eveningReminderMinutes: Int? = 20 * 60
@@ -67,6 +68,13 @@ final class ChecklistStore: ObservableObject {
             .sorted(by: sortPredicate)
     }
 
+    var orderedGroups: [ChecklistGroup] {
+        groups.sorted {
+            if $0.sortOrder != $1.sortOrder { return $0.sortOrder < $1.sortOrder }
+            return $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+        }
+    }
+
     var todoItems: [ChecklistItem] {
         visibleItems.filter { !$0.isComplete(on: selectedDate) }
     }
@@ -102,6 +110,8 @@ final class ChecklistStore: ObservableObject {
                 .upsert(item: dog, changedFields: Self.allFields)
             ]
             persistAndSchedule()
+        } else {
+            await notifications.reschedule(items: items, eveningMinutes: eveningReminderMinutes)
         }
     }
 
@@ -162,57 +172,112 @@ final class ChecklistStore: ObservableObject {
     func save(_ item: ChecklistItem) {
         var item = item
         if let index = items.firstIndex(where: { $0.id == item.id }) {
+            if items[index].groupID != item.groupID {
+                item.sortOrder = nextItemSortOrder(in: item.groupID)
+            }
             let changedFields = Self.changedFields(from: items[index], to: item)
             items[index] = item
             if !changedFields.isEmpty {
                 pendingMutations.append(.upsert(item: item, changedFields: changedFields))
             }
         } else {
-            item.sortOrder = (items.compactMap(\.sortOrder).max() ?? Double(items.count - 1)) + 1
+            item.sortOrder = nextItemSortOrder(in: item.groupID)
             items.append(item)
             pendingMutations.append(.upsert(item: item, changedFields: Self.allFields))
         }
         persistAndSchedule()
     }
 
-    func move(_ itemID: UUID, before targetID: UUID, within sectionIDs: [UUID]) {
-        guard itemID != targetID,
-              let sourceIndex = sectionIDs.firstIndex(of: itemID),
-              let targetIndex = sectionIDs.firstIndex(of: targetID) else { return }
-
-        var reorderedSection = sectionIDs
-        let movedID = reorderedSection.remove(at: sourceIndex)
-        reorderedSection.insert(movedID, at: min(targetIndex, reorderedSection.count))
-
-        var orderedAll = items.sorted(by: Self.isOrderedBefore)
-        let sectionSet = Set(sectionIDs)
-        let sectionSlots = orderedAll.indices.filter { sectionSet.contains(orderedAll[$0].id) }
-        guard sectionSlots.count == reorderedSection.count else { return }
-
-        let lookup = Dictionary(uniqueKeysWithValues: items.map { ($0.id, $0) })
-        for (slot, reorderedID) in zip(sectionSlots, reorderedSection) {
-            guard let replacement = lookup[reorderedID] else { return }
-            orderedAll[slot] = replacement
+    @discardableResult
+    func createGroup(named name: String) -> ChecklistGroup? {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        if let existing = groups.first(where: { $0.name.caseInsensitiveCompare(trimmed) == .orderedSame }) {
+            return existing
         }
+        let group = ChecklistGroup(
+            name: trimmed,
+            sortOrder: (groups.map(\.sortOrder).max() ?? -1) + 1
+        )
+        groups.append(group)
+        pendingMutations.append(.upsert(group: group, changedFields: Self.allGroupFields))
+        persistAndSchedule()
+        return group
+    }
 
-        var changedItems: [ChecklistItem] = []
-        for index in orderedAll.indices {
+    func moveGroup(_ groupID: UUID, before targetID: UUID) {
+        guard groupID != targetID else { return }
+        var reordered = orderedGroups
+        guard let sourceIndex = reordered.firstIndex(where: { $0.id == groupID }),
+              let targetIndex = reordered.firstIndex(where: { $0.id == targetID }) else { return }
+        let moved = reordered.remove(at: sourceIndex)
+        reordered.insert(moved, at: min(targetIndex, reordered.count))
+
+        var changedGroups: [ChecklistGroup] = []
+        for index in reordered.indices {
             let order = Double(index)
-            guard orderedAll[index].sortOrder != order else { continue }
-            orderedAll[index].sortOrder = order
-            changedItems.append(orderedAll[index])
+            guard reordered[index].sortOrder != order else { continue }
+            reordered[index].sortOrder = order
+            changedGroups.append(reordered[index])
         }
-        guard !changedItems.isEmpty else { return }
+        guard !changedGroups.isEmpty else { return }
+        groups = reordered
+        let changedIDs = Set(changedGroups.map(\.id))
+        pendingMutations.removeAll {
+            $0.kind == .groupUpsert
+                && $0.changedFields == ["sortOrder"]
+                && $0.groupID.map(changedIDs.contains) == true
+        }
+        pendingMutations.append(contentsOf: changedGroups.map {
+            .upsert(group: $0, changedFields: ["sortOrder"])
+        })
+        persistAndSchedule()
+    }
 
-        items = orderedAll
+    func move(_ itemID: UUID, before targetID: UUID, toGroup groupID: UUID?) {
+        guard itemID != targetID,
+              let itemIndex = items.firstIndex(where: { $0.id == itemID }),
+              let target = items.first(where: { $0.id == targetID }) else { return }
+        let sourceGroupID = items[itemIndex].groupID
+        let destinationGroupID = groupID ?? target.groupID
+        items[itemIndex].groupID = destinationGroupID
+
+        var destinationIDs = orderedItemIDs(in: destinationGroupID).filter { $0 != itemID }
+        guard let targetIndex = destinationIDs.firstIndex(of: targetID) else { return }
+        destinationIDs.insert(itemID, at: targetIndex)
+        let changedItems = normalizeItemOrder(
+            orderedIDs: destinationIDs,
+            alsoNormalizeGroup: sourceGroupID == destinationGroupID ? nil : sourceGroupID,
+            movedItemID: itemID
+        )
+        queueItemOrderingChanges(changedItems)
+    }
+
+    func move(_ itemID: UUID, toGroup groupID: UUID?) {
+        guard let itemIndex = items.firstIndex(where: { $0.id == itemID }) else { return }
+        let sourceGroupID = items[itemIndex].groupID
+        guard sourceGroupID != groupID else { return }
+        items[itemIndex].groupID = groupID
+        var destinationIDs = orderedItemIDs(in: groupID).filter { $0 != itemID }
+        destinationIDs.append(itemID)
+        let changedItems = normalizeItemOrder(
+            orderedIDs: destinationIDs,
+            alsoNormalizeGroup: sourceGroupID,
+            movedItemID: itemID
+        )
+        queueItemOrderingChanges(changedItems)
+    }
+
+    private func queueItemOrderingChanges(_ changedItems: [ChecklistItem]) {
+        guard !changedItems.isEmpty else { return }
         let changedIDs = Set(changedItems.map(\.id))
         pendingMutations.removeAll {
             $0.kind == .upsert
-                && $0.changedFields == ["sortOrder"]
+                && ($0.changedFields == ["sortOrder"] || $0.changedFields == ["groupID", "sortOrder"])
                 && $0.itemID.map(changedIDs.contains) == true
         }
         pendingMutations.append(contentsOf: changedItems.map {
-            .upsert(item: $0, changedFields: ["sortOrder"])
+            .upsert(item: $0, changedFields: ["groupID", "sortOrder"])
         })
         persistAndSchedule()
     }
@@ -249,6 +314,7 @@ final class ChecklistStore: ObservableObject {
             let accepted = Set(response.acceptedMutationIDs)
             pendingMutations.removeAll { accepted.contains($0.id) }
             items = response.items
+            groups = response.groups ?? groups
             eveningReminderMinutes = response.eveningReminderMinutes
             persistAndSchedule()
             syncState = pendingMutations.isEmpty ? "Synced" : "Changes pending"
@@ -268,12 +334,14 @@ final class ChecklistStore: ObservableObject {
         decoder.dateDecodingStrategy = .iso8601
         if let envelope = try? decoder.decode(LocalEnvelope.self, from: data) {
             items = envelope.items
+            groups = envelope.groups ?? []
             eveningReminderMinutes = envelope.eveningReminderMinutes
             pendingMutations = envelope.pendingMutations
             return
         }
         if let legacy = try? decoder.decode(LegacyEnvelope.self, from: data) {
             items = legacy.items
+            groups = []
             eveningReminderMinutes = legacy.eveningReminderMinutes
             pendingMutations = legacy.items.map { .upsert(item: $0, changedFields: Self.allFields) }
             if let minutes = legacy.eveningReminderMinutes {
@@ -285,6 +353,7 @@ final class ChecklistStore: ObservableObject {
     private func persistAndSchedule() {
         let envelope = LocalEnvelope(
             items: items,
+            groups: groups,
             eveningReminderMinutes: eveningReminderMinutes,
             pendingMutations: pendingMutations
         )
@@ -312,6 +381,7 @@ final class ChecklistStore: ObservableObject {
         activeAccountID = accountID
         UserDefaults.standard.set(accountID, forKey: "activeAccountID")
         items = []
+        groups = []
         pendingMutations = []
         eveningReminderMinutes = 20 * 60
         loadCache()
@@ -319,7 +389,7 @@ final class ChecklistStore: ObservableObject {
     }
 
     private func clearAnonymousCache() {
-        let empty = LocalEnvelope(items: [], eveningReminderMinutes: 20 * 60, pendingMutations: [])
+        let empty = LocalEnvelope(items: [], groups: [], eveningReminderMinutes: 20 * 60, pendingMutations: [])
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         guard let data = try? encoder.encode(empty) else { return }
@@ -328,8 +398,9 @@ final class ChecklistStore: ObservableObject {
     }
 
     static let allFields: Set<String> = [
-        "title", "notes", "schedule", "customWeekdays", "reminderMinutes", "createdAt", "endedAt", "sortOrder"
+        "title", "notes", "schedule", "customWeekdays", "reminderMinutes", "createdAt", "startDate", "endedAt", "groupID", "sortOrder"
     ]
+    static let allGroupFields: Set<String> = ["name", "sortOrder"]
 
     private static func changedFields(from old: ChecklistItem, to new: ChecklistItem) -> Set<String> {
         var changed: Set<String> = []
@@ -338,7 +409,9 @@ final class ChecklistStore: ObservableObject {
         if old.schedule != new.schedule { changed.insert("schedule") }
         if old.customWeekdays != new.customWeekdays { changed.insert("customWeekdays") }
         if old.reminderMinutes != new.reminderMinutes { changed.insert("reminderMinutes") }
+        if old.startDate != new.startDate { changed.insert("startDate") }
         if old.endedAt != new.endedAt { changed.insert("endedAt") }
+        if old.groupID != new.groupID { changed.insert("groupID") }
         if old.sortOrder != new.sortOrder { changed.insert("sortOrder") }
         return changed
     }
@@ -379,5 +452,37 @@ final class ChecklistStore: ObservableObject {
                 return Self.isOrderedBefore(lhs, rhs)
             }
         }
+    }
+
+    private func nextItemSortOrder(in groupID: UUID?) -> Double {
+        let orders = items.filter { $0.groupID == groupID }.compactMap(\.sortOrder)
+        return (orders.max() ?? -1) + 1
+    }
+
+    private func orderedItemIDs(in groupID: UUID?) -> [UUID] {
+        items.filter { $0.groupID == groupID }.sorted(by: Self.isOrderedBefore).map(\.id)
+    }
+
+    private func normalizeItemOrder(
+        orderedIDs: [UUID],
+        alsoNormalizeGroup groupID: UUID?,
+        movedItemID: UUID
+    ) -> [ChecklistItem] {
+        var changed: [ChecklistItem] = []
+        var orderings: [(UUID, Double)] = orderedIDs.enumerated().map { ($0.element, Double($0.offset)) }
+        if let groupID {
+            orderings += orderedItemIDs(in: groupID).enumerated().map { ($0.element, Double($0.offset)) }
+        }
+        for (id, order) in orderings {
+            guard let index = items.firstIndex(where: { $0.id == id }),
+                  items[index].sortOrder != order || id == movedItemID else { continue }
+            items[index].sortOrder = order
+            changed.append(items[index])
+        }
+        if let index = items.firstIndex(where: { $0.id == movedItemID }),
+           !changed.contains(where: { $0.id == movedItemID }) {
+            changed.append(items[index])
+        }
+        return changed
     }
 }

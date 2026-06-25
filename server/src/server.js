@@ -122,7 +122,8 @@ function stampWins(incoming, current) {
   return incoming.deviceID > current.deviceID;
 }
 
-const itemFields = ["title", "notes", "schedule", "customWeekdays", "reminderMinutes", "createdAt", "endedAt", "sortOrder"];
+const itemFields = ["title", "notes", "schedule", "customWeekdays", "reminderMinutes", "createdAt", "startDate", "endedAt", "groupID", "sortOrder"];
+const groupFields = ["name", "sortOrder"];
 
 function applyMutation(account, mutation, deviceID) {
   if (!mutation?.id || !mutation.kind || !mutation.stamp) return false;
@@ -137,6 +138,22 @@ function applyMutation(account, mutation, deviceID) {
       deviceID
     };
     if (stampWins(incoming, account.eveningReminder)) account.eveningReminder = incoming;
+    return true;
+  }
+
+  if (mutation.kind === "groupUpsert" && mutation.groupID && mutation.group) {
+    account.groups ||= {};
+    const record = account.groups[mutation.groupID] ||= { id: mutation.groupID, fields: {} };
+    const changed = new Set(mutation.changedFields || groupFields);
+    for (const field of groupFields) {
+      if (!changed.has(field)) continue;
+      const incoming = {
+        value: mutation.group[field] ?? null,
+        stamp: mutation.stamp,
+        deviceID
+      };
+      if (stampWins(incoming, record.fields[field])) record.fields[field] = incoming;
+    }
     return true;
   }
 
@@ -194,7 +211,9 @@ function materializeAccount(account) {
         schedule: value.schedule || "everyDay",
         customWeekdays: value.customWeekdays || [],
         reminderMinutes: value.reminderMinutes,
+        startDate: value.startDate,
         endedAt: value.endedAt,
+        groupID: value.groupID,
         sortOrder: value.sortOrder,
         completedDates: Object.entries(record.completions || {})
           .filter(([, state]) => state.value)
@@ -210,8 +229,16 @@ function materializeAccount(account) {
       if (right.sortOrder != null) return 1;
       return left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id);
     });
+  const groups = Object.values(account.groups || {})
+    .map((record) => ({
+      id: record.id,
+      name: record.fields.name?.value || "Untitled group",
+      sortOrder: record.fields.sortOrder?.value ?? 0
+    }))
+    .sort((left, right) => left.sortOrder - right.sortOrder || left.name.localeCompare(right.name));
   return {
     items,
+    groups,
     eveningReminderMinutes: account.eveningReminder?.value ?? 1200
   };
 }
@@ -317,6 +344,7 @@ const server = http.createServer(async (request, response) => {
       const result = await updateDatabase((database) => {
         const account = database.accounts[claims.userId] ||= {
           items: {},
+          groups: {},
           appliedMutations: {},
           eveningReminder: null
         };

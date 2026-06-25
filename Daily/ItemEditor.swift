@@ -5,17 +5,42 @@ struct ItemEditor: View {
     @State private var item: ChecklistItem
     @State private var reminderEnabled: Bool
     @State private var reminderTime: Date
+    @State private var startDateEnabled: Bool
+    @State private var startDate: Date
+    @State private var endDateEnabled: Bool
+    @State private var endDate: Date
+    @State private var showingNewGroup = false
+    @State private var newGroupName = ""
+    @State private var availableGroups: [ChecklistGroup]
     let onSave: (ChecklistItem) -> Void
+    let onCreateGroup: (String) -> ChecklistGroup?
     var onDelete: ((ChecklistItem) -> Void)?
 
-    init(item: ChecklistItem, onSave: @escaping (ChecklistItem) -> Void, onDelete: ((ChecklistItem) -> Void)? = nil) {
+    init(
+        item: ChecklistItem,
+        groups: [ChecklistGroup],
+        onSave: @escaping (ChecklistItem) -> Void,
+        onCreateGroup: @escaping (String) -> ChecklistGroup?,
+        onDelete: ((ChecklistItem) -> Void)? = nil
+    ) {
+        let calendar = Calendar.current
         _item = State(initialValue: item)
         _reminderEnabled = State(initialValue: item.reminderMinutes != nil)
         var components = DateComponents()
         components.hour = (item.reminderMinutes ?? 9 * 60) / 60
         components.minute = (item.reminderMinutes ?? 9 * 60) % 60
-        _reminderTime = State(initialValue: Calendar.current.date(from: components) ?? .now)
+        _reminderTime = State(initialValue: calendar.date(from: components) ?? .now)
+        _startDateEnabled = State(initialValue: item.startDate != nil)
+        _startDate = State(initialValue: calendar.startOfDay(for: item.startDate ?? item.createdAt))
+        _endDateEnabled = State(initialValue: item.endedAt != nil)
+        _endDate = State(
+            initialValue: item.endedAt.flatMap {
+                calendar.date(byAdding: .day, value: -1, to: calendar.startOfDay(for: $0))
+            } ?? calendar.startOfDay(for: .now)
+        )
+        _availableGroups = State(initialValue: groups)
         self.onSave = onSave
+        self.onCreateGroup = onCreateGroup
         self.onDelete = onDelete
     }
 
@@ -27,6 +52,32 @@ struct ItemEditor: View {
                         .font(.headline)
                     TextField("Notes (optional)", text: $item.notes, axis: .vertical)
                         .lineLimit(2...5)
+                    Menu {
+                        Button {
+                            item.groupID = nil
+                        } label: {
+                            Label("No group", systemImage: item.groupID == nil ? "checkmark" : "tray")
+                        }
+                        ForEach(availableGroups) { group in
+                            Button {
+                                item.groupID = group.id
+                            } label: {
+                                Label(
+                                    group.name,
+                                    systemImage: item.groupID == group.id ? "checkmark" : "folder"
+                                )
+                            }
+                        }
+                        Divider()
+                        Button {
+                            newGroupName = ""
+                            showingNewGroup = true
+                        } label: {
+                            Label("New group…", systemImage: "plus")
+                        }
+                    } label: {
+                        LabeledContent("Group", value: selectedGroupName)
+                    }
                 }
 
                 Section("Repeats") {
@@ -40,6 +91,26 @@ struct ItemEditor: View {
                     }
                 }
 
+                Section {
+                    Toggle("Start date", isOn: $startDateEnabled)
+                    if startDateEnabled {
+                        DatePicker("Starts", selection: $startDate, displayedComponents: .date)
+                    }
+                    Toggle("End date", isOn: $endDateEnabled)
+                    if endDateEnabled {
+                        DatePicker(
+                            "Ends",
+                            selection: $endDate,
+                            in: minimumEndDate...Date.distantFuture,
+                            displayedComponents: .date
+                        )
+                    }
+                } header: {
+                    Text("Active dates")
+                } footer: {
+                    Text("The task appears from its start date through its end date. Leave either date off when there is no limit.")
+                }
+
                 Section("Reminder") {
                     Toggle("Remind me", isOn: $reminderEnabled)
                     if reminderEnabled {
@@ -49,10 +120,12 @@ struct ItemEditor: View {
 
                 if let onDelete {
                     Section {
-                        Button("Delete item", role: .destructive) {
+                        Button("End item today", role: .destructive) {
                             onDelete(item)
                             dismiss()
                         }
+                    } footer: {
+                        Text("Stops showing this task today while keeping its previous history.")
                     }
                 }
             }
@@ -73,6 +146,14 @@ struct ItemEditor: View {
                         if item.schedule == .custom, item.customWeekdays.isEmpty {
                             item.customWeekdays = [Calendar.current.component(.weekday, from: .now)]
                         }
+                        let calendar = Calendar.current
+                        item.startDate = startDateEnabled ? calendar.startOfDay(for: startDate) : nil
+                        if endDateEnabled {
+                            let lastDay = max(calendar.startOfDay(for: endDate), minimumEndDate)
+                            item.endedAt = calendar.date(byAdding: .day, value: 1, to: lastDay)
+                        } else {
+                            item.endedAt = nil
+                        }
                         item.title = item.title.trimmingCharacters(in: .whitespacesAndNewlines)
                         onSave(item)
                         dismiss()
@@ -81,7 +162,42 @@ struct ItemEditor: View {
                     .fontWeight(.semibold)
                 }
             }
+            .onChange(of: startDate) { _, newValue in
+                if endDateEnabled, endDate < newValue {
+                    endDate = newValue
+                }
+            }
+            .onChange(of: startDateEnabled) { _, enabled in
+                if enabled, endDateEnabled, endDate < startDate {
+                    endDate = startDate
+                }
+            }
+            .alert("New Group", isPresented: $showingNewGroup) {
+                TextField("Group name", text: $newGroupName)
+                Button("Cancel", role: .cancel) {}
+                Button("Create") {
+                    if let group = onCreateGroup(newGroupName) {
+                        if !availableGroups.contains(where: { $0.id == group.id }) {
+                            availableGroups.append(group)
+                            availableGroups.sort { $0.sortOrder < $1.sortOrder }
+                        }
+                        item.groupID = group.id
+                    }
+                }
+                .disabled(newGroupName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            } message: {
+                Text("Create a group and assign this task to it.")
+            }
         }
+    }
+
+    private var selectedGroupName: String {
+        guard let groupID = item.groupID else { return "No group" }
+        return availableGroups.first(where: { $0.id == groupID })?.name ?? "No group"
+    }
+
+    private var minimumEndDate: Date {
+        Calendar.current.startOfDay(for: startDateEnabled ? startDate : item.createdAt)
     }
 
     private var weekdayPicker: some View {
@@ -157,4 +273,3 @@ struct EveningReminderView: View {
         }
     }
 }
-

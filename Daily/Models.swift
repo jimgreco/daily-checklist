@@ -18,6 +18,18 @@ enum ScheduleKind: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+struct ChecklistGroup: Identifiable, Codable, Hashable {
+    var id: UUID
+    var name: String
+    var sortOrder: Double
+
+    init(id: UUID = UUID(), name: String, sortOrder: Double = 0) {
+        self.id = id
+        self.name = name
+        self.sortOrder = sortOrder
+    }
+}
+
 struct ChecklistItem: Identifiable, Codable, Hashable {
     var id: UUID
     var title: String
@@ -27,7 +39,9 @@ struct ChecklistItem: Identifiable, Codable, Hashable {
     var reminderMinutes: Int?
     var completedDates: Set<String>
     var createdAt: Date
+    var startDate: Date?
     var endedAt: Date?
+    var groupID: UUID?
     var sortOrder: Double?
 
     init(
@@ -39,7 +53,9 @@ struct ChecklistItem: Identifiable, Codable, Hashable {
         reminderMinutes: Int? = nil,
         completedDates: Set<String> = [],
         createdAt: Date = .now,
+        startDate: Date? = nil,
         endedAt: Date? = nil,
+        groupID: UUID? = nil,
         sortOrder: Double? = nil
     ) {
         self.id = id
@@ -50,13 +66,16 @@ struct ChecklistItem: Identifiable, Codable, Hashable {
         self.reminderMinutes = reminderMinutes
         self.completedDates = completedDates
         self.createdAt = createdAt
+        self.startDate = startDate
         self.endedAt = endedAt
+        self.groupID = groupID
         self.sortOrder = sortOrder
     }
 
     func isActive(on date: Date, calendar: Calendar = .current) -> Bool {
         let day = calendar.startOfDay(for: date)
-        guard day >= calendar.startOfDay(for: createdAt) else { return false }
+        let firstDay = calendar.startOfDay(for: startDate ?? createdAt)
+        guard day >= firstDay else { return false }
         guard let endedAt else { return true }
         return day < calendar.startOfDay(for: endedAt)
     }
@@ -79,7 +98,7 @@ struct ChecklistItem: Identifiable, Codable, Hashable {
     func consecutiveMissedDays(asOf date: Date, calendar: Calendar = .current) -> Int {
         let today = calendar.startOfDay(for: .now)
         var cursor = min(calendar.startOfDay(for: date), today)
-        let firstEligibleDate = calendar.startOfDay(for: createdAt)
+        let firstEligibleDate = calendar.startOfDay(for: startDate ?? createdAt)
         var missedDays = 0
 
         // The current day is still in progress, so it cannot be considered missed yet.
@@ -119,6 +138,7 @@ struct ChecklistItem: Identifiable, Codable, Hashable {
 
 struct LocalEnvelope: Codable {
     var items: [ChecklistItem]
+    var groups: [ChecklistGroup]?
     var eveningReminderMinutes: Int?
     var pendingMutations: [SyncMutation]
 }
@@ -136,8 +156,15 @@ struct ItemPayload: Codable {
     var customWeekdays: Set<Int>
     var reminderMinutes: Int?
     var createdAt: Date
+    var startDate: Date?
     var endedAt: Date?
+    var groupID: UUID?
     var sortOrder: Double?
+}
+
+struct GroupPayload: Codable {
+    var name: String
+    var sortOrder: Double
 }
 
 struct SyncMutation: Identifiable, Codable {
@@ -146,14 +173,17 @@ struct SyncMutation: Identifiable, Codable {
         case delete
         case completion
         case eveningReminder
+        case groupUpsert
     }
 
     var id: UUID
     var itemID: UUID?
+    var groupID: UUID?
     var kind: Kind
     var stamp: String
     var changedFields: Set<String>?
     var item: ItemPayload?
+    var group: GroupPayload?
     var completionDate: String?
     var completed: Bool?
     var eveningReminderMinutes: Int?
@@ -172,9 +202,22 @@ struct SyncMutation: Identifiable, Codable {
                 customWeekdays: item.customWeekdays,
                 reminderMinutes: item.reminderMinutes,
                 createdAt: item.createdAt,
+                startDate: item.startDate,
                 endedAt: item.endedAt,
+                groupID: item.groupID,
                 sortOrder: item.sortOrder
             )
+        )
+    }
+
+    static func upsert(group: ChecklistGroup, changedFields: Set<String>) -> SyncMutation {
+        SyncMutation(
+            id: UUID(),
+            groupID: group.id,
+            kind: .groupUpsert,
+            stamp: SyncStamp.now,
+            changedFields: changedFields,
+            group: GroupPayload(name: group.name, sortOrder: group.sortOrder)
         )
     }
 
@@ -210,6 +253,7 @@ struct SyncRequest: Codable {
 
 struct SyncResponse: Codable {
     var items: [ChecklistItem]
+    var groups: [ChecklistGroup]?
     var eveningReminderMinutes: Int?
     var acceptedMutationIDs: [UUID]
 }

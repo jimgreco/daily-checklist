@@ -12,6 +12,7 @@ struct ChecklistView: View {
     @State private var showingSettings = false
     @State private var showingAccount = false
     @State private var draggingItemID: UUID?
+    @State private var draggingGroupID: UUID?
 
     var body: some View {
         NavigationStack {
@@ -52,10 +53,21 @@ struct ChecklistView: View {
             }
             .toolbar(.hidden, for: .navigationBar)
             .sheet(isPresented: $showingNewItem) {
-                ItemEditor(item: ChecklistItem(title: "")) { store.save($0) }
+                ItemEditor(
+                    item: ChecklistItem(title: ""),
+                    groups: store.orderedGroups,
+                    onSave: { store.save($0) },
+                    onCreateGroup: { store.createGroup(named: $0) }
+                )
             }
             .sheet(item: $editingItem) { item in
-                ItemEditor(item: item, onSave: { store.save($0) }, onDelete: { store.delete($0) })
+                ItemEditor(
+                    item: item,
+                    groups: store.orderedGroups,
+                    onSave: { store.save($0) },
+                    onCreateGroup: { store.createGroup(named: $0) },
+                    onDelete: { store.delete($0) }
+                )
             }
             .sheet(isPresented: $showingSettings) {
                 EveningReminderView()
@@ -164,6 +176,7 @@ struct ChecklistView: View {
                     withAnimation(.snappy) {
                         store.sortMode = option
                         draggingItemID = nil
+                        draggingGroupID = nil
                     }
                 } label: {
                     Label(option.title, systemImage: option.icon)
@@ -240,40 +253,144 @@ struct ChecklistView: View {
                 .padding(.vertical, 30)
                 .background(.white.opacity(0.62), in: RoundedRectangle(cornerRadius: 22))
             } else {
-                VStack(spacing: 10) {
-                    ForEach(items) { item in
-                        if store.sortMode == .manual {
-                            ItemRow(
-                                item: item,
-                                date: store.selectedDate,
-                                showsDragHandle: true,
-                                onToggle: { store.toggle(item) },
-                                onEdit: { editingItem = item }
-                            )
-                            .opacity(draggingItemID == item.id ? 0.55 : 1)
-                            .onDrag {
-                                draggingItemID = item.id
-                                return NSItemProvider(object: item.id.uuidString as NSString)
-                            }
-                            .onDrop(
-                                of: [UTType.text],
-                                delegate: ChecklistItemDropDelegate(
-                                    targetID: item.id,
-                                    sectionIDs: items.map(\.id),
-                                    draggingItemID: $draggingItemID,
-                                    move: store.move
-                                )
-                            )
-                        } else {
-                            ItemRow(
-                                item: item,
-                                date: store.selectedDate,
-                                showsDragHandle: false,
-                                onToggle: { store.toggle(item) },
-                                onEdit: { editingItem = item }
-                            )
-                        }
+                groupedItems(items)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func groupedItems(_ items: [ChecklistItem]) -> some View {
+        let knownGroupIDs = Set(store.groups.map(\.id))
+        let ungrouped = items.filter { $0.groupID == nil || $0.groupID.map(knownGroupIDs.contains) == false }
+
+        if store.groups.isEmpty {
+            itemStack(ungrouped, groupID: nil)
+        } else {
+            VStack(alignment: .leading, spacing: 18) {
+                groupBlock(title: "Ungrouped", groupID: nil, items: ungrouped, isRealGroup: false)
+                ForEach(store.orderedGroups) { group in
+                    let groupItems = items.filter { $0.groupID == group.id }
+                    groupBlock(
+                        title: group.name,
+                        groupID: group.id,
+                        items: groupItems,
+                        isRealGroup: true
+                    )
+                }
+            }
+        }
+    }
+
+    private func groupBlock(
+        title: String,
+        groupID: UUID?,
+        items: [ChecklistItem],
+        isRealGroup: Bool
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 9) {
+            groupHeader(title: title, groupID: groupID, count: items.count, isRealGroup: isRealGroup)
+            if items.isEmpty {
+                if store.sortMode == .manual {
+                    Text("Drop tasks here")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.tertiary)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 14)
+                        .background(
+                            Color.white.opacity(0.35),
+                            in: RoundedRectangle(cornerRadius: 16)
+                        )
+                }
+            } else {
+                itemStack(items, groupID: groupID)
+            }
+        }
+        .onDrop(
+            of: [UTType.text],
+            delegate: ChecklistGroupDropDelegate(
+                targetGroupID: groupID,
+                targetRealGroupID: isRealGroup ? groupID : nil,
+                draggingItemID: $draggingItemID,
+                draggingGroupID: $draggingGroupID,
+                moveItem: store.move(_:toGroup:),
+                moveGroup: store.moveGroup
+            )
+        )
+    }
+
+    @ViewBuilder
+    private func groupHeader(
+        title: String,
+        groupID: UUID?,
+        count: Int,
+        isRealGroup: Bool
+    ) -> some View {
+        let header = HStack(spacing: 8) {
+            Image(systemName: isRealGroup ? "folder.fill" : "tray.fill")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(accent.opacity(0.75))
+            Text(title)
+                .font(.system(size: 13, weight: .bold))
+                .foregroundStyle(ink.opacity(0.78))
+            Text("\(count)")
+                .font(.system(size: 11, weight: .bold, design: .rounded))
+                .foregroundStyle(.secondary)
+            Spacer()
+            if isRealGroup, store.sortMode == .manual {
+                Image(systemName: "line.3.horizontal")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.horizontal, 4)
+
+        if isRealGroup, store.sortMode == .manual, let groupID {
+            header
+                .opacity(draggingGroupID == groupID ? 0.55 : 1)
+                .onDrag {
+                    draggingGroupID = groupID
+                    draggingItemID = nil
+                    return NSItemProvider(object: "group:\(groupID.uuidString)" as NSString)
+                }
+        } else {
+            header
+        }
+    }
+
+    private func itemStack(_ items: [ChecklistItem], groupID: UUID?) -> some View {
+        VStack(spacing: 10) {
+            ForEach(items) { item in
+                if store.sortMode == .manual {
+                    ItemRow(
+                        item: item,
+                        date: store.selectedDate,
+                        showsDragHandle: true,
+                        onToggle: { store.toggle(item) },
+                        onEdit: { editingItem = item }
+                    )
+                    .opacity(draggingItemID == item.id ? 0.55 : 1)
+                    .onDrag {
+                        draggingItemID = item.id
+                        draggingGroupID = nil
+                        return NSItemProvider(object: "item:\(item.id.uuidString)" as NSString)
                     }
+                    .onDrop(
+                        of: [UTType.text],
+                        delegate: ChecklistItemDropDelegate(
+                            targetID: item.id,
+                            targetGroupID: groupID,
+                            draggingItemID: $draggingItemID,
+                            move: store.move(_:before:toGroup:)
+                        )
+                    )
+                } else {
+                    ItemRow(
+                        item: item,
+                        date: store.selectedDate,
+                        showsDragHandle: false,
+                        onToggle: { store.toggle(item) },
+                        onEdit: { editingItem = item }
+                    )
                 }
             }
         }
@@ -373,17 +490,44 @@ private struct ItemRow: View {
 
 private struct ChecklistItemDropDelegate: DropDelegate {
     let targetID: UUID
-    let sectionIDs: [UUID]
+    let targetGroupID: UUID?
     @Binding var draggingItemID: UUID?
-    let move: (UUID, UUID, [UUID]) -> Void
+    let move: (UUID, UUID, UUID?) -> Void
 
     func dropEntered(info: DropInfo) {
         guard let draggingItemID, draggingItemID != targetID else { return }
-        move(draggingItemID, targetID, sectionIDs)
+        move(draggingItemID, targetID, targetGroupID)
     }
 
     func performDrop(info: DropInfo) -> Bool {
         draggingItemID = nil
+        return true
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        DropProposal(operation: .move)
+    }
+}
+
+private struct ChecklistGroupDropDelegate: DropDelegate {
+    let targetGroupID: UUID?
+    let targetRealGroupID: UUID?
+    @Binding var draggingItemID: UUID?
+    @Binding var draggingGroupID: UUID?
+    let moveItem: (UUID, UUID?) -> Void
+    let moveGroup: (UUID, UUID) -> Void
+
+    func dropEntered(info: DropInfo) {
+        if let draggingGroupID, let targetRealGroupID, draggingGroupID != targetRealGroupID {
+            moveGroup(draggingGroupID, targetRealGroupID)
+        } else if let draggingItemID {
+            moveItem(draggingItemID, targetGroupID)
+        }
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        draggingItemID = nil
+        draggingGroupID = nil
         return true
     }
 

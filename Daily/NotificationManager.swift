@@ -15,30 +15,37 @@ struct NotificationManager {
         }
         center.removePendingNotificationRequests(withIdentifiers: managed)
 
-        for item in items {
-            guard let minutes = item.reminderMinutes else { continue }
-            for weekday in weekdays(for: item) {
-                let content = UNMutableNotificationContent()
-                content.title = item.title
-                content.body = item.notes.isEmpty ? "Time for your daily task." : item.notes
-                content.sound = .default
-
-                var components = DateComponents()
-                components.weekday = weekday
-                components.hour = minutes / 60
-                components.minute = minutes % 60
-                let trigger = UNCalendarNotificationTrigger(dateMatching: components, repeats: true)
-                let request = UNNotificationRequest(
-                    identifier: "daily.item.\(item.id).\(weekday)",
-                    content: content,
-                    trigger: trigger
-                )
-                try? await center.add(request)
+        let calendar = Calendar.current
+        var itemReminders: [(date: Date, item: ChecklistItem)] = []
+        for dayOffset in 0..<60 {
+            guard let date = calendar.date(byAdding: .day, value: dayOffset, to: .now) else { continue }
+            for item in items {
+                guard let minutes = item.reminderMinutes, item.occurs(on: date) else { continue }
+                var fireDate = calendar.dateComponents([.year, .month, .day], from: date)
+                fireDate.hour = minutes / 60
+                fireDate.minute = minutes % 60
+                guard let scheduledDate = calendar.date(from: fireDate), scheduledDate > .now else { continue }
+                itemReminders.append((scheduledDate, item))
             }
         }
 
+        for reminder in itemReminders.sorted(by: { $0.date < $1.date }).prefix(50) {
+            let content = UNMutableNotificationContent()
+            content.title = reminder.item.title
+            content.body = reminder.item.notes.isEmpty ? "Time for your daily task." : reminder.item.notes
+            content.sound = .default
+            let trigger = UNCalendarNotificationTrigger(
+                dateMatching: calendar.dateComponents([.year, .month, .day, .hour, .minute], from: reminder.date),
+                repeats: false
+            )
+            try? await center.add(UNNotificationRequest(
+                identifier: "daily.item.\(reminder.item.id).\(DateKey.string(from: reminder.date))",
+                content: content,
+                trigger: trigger
+            ))
+        }
+
         guard let eveningMinutes else { return }
-        let calendar = Calendar.current
         for dayOffset in 0..<7 {
             guard let date = calendar.date(byAdding: .day, value: dayOffset, to: .now) else { continue }
             let remaining = items.filter { $0.occurs(on: date) && !$0.isComplete(on: date) }.count
@@ -61,14 +68,4 @@ struct NotificationManager {
             ))
         }
     }
-
-    private func weekdays(for item: ChecklistItem) -> [Int] {
-        switch item.schedule {
-        case .everyDay: Array(1...7)
-        case .weekdays: Array(2...6)
-        case .weekends: [1, 7]
-        case .custom: item.customWeekdays.sorted()
-        }
-    }
 }
-

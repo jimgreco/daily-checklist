@@ -140,6 +140,59 @@ test("ending an item preserves it for historical dates", () => {
   assert.equal(item.endedAt, "2026-06-25T04:00:00.000Z");
 });
 
+test("optional active dates sync with the item", () => {
+  const state = account();
+  applyMutation(state, {
+    id: "create-dated",
+    itemID: "item-dated",
+    kind: "upsert",
+    stamp: "2026-06-25T10:00:00.000Z",
+    changedFields: ["title", "createdAt", "startDate", "endedAt"],
+    item: {
+      title: "Physical therapy",
+      createdAt: "2026-06-25T09:00:00.000Z",
+      startDate: "2026-07-01T04:00:00.000Z",
+      endedAt: "2026-07-15T04:00:00.000Z"
+    }
+  }, "device-a");
+
+  const item = materializeAccount(state).items[0];
+  assert.equal(item.startDate, "2026-07-01T04:00:00.000Z");
+  assert.equal(item.endedAt, "2026-07-15T04:00:00.000Z");
+});
+
+test("groups and item membership are synced and ordered", () => {
+  const state = account();
+  applyMutation(state, {
+    id: "group-home",
+    groupID: "group-home",
+    kind: "groupUpsert",
+    stamp: "2026-06-25T10:00:00.000Z",
+    changedFields: ["name", "sortOrder"],
+    group: { name: "Home", sortOrder: 1 }
+  }, "device-a");
+  applyMutation(state, {
+    id: "group-morning",
+    groupID: "group-morning",
+    kind: "groupUpsert",
+    stamp: "2026-06-25T10:01:00.000Z",
+    changedFields: ["name", "sortOrder"],
+    group: { name: "Morning", sortOrder: 0 }
+  }, "device-a");
+  applyMutation(state, {
+    id: "grouped-item",
+    itemID: "item-1",
+    kind: "upsert",
+    stamp: "2026-06-25T10:02:00.000Z",
+    changedFields: ["title", "groupID", "sortOrder"],
+    item: { title: "Take vitamins", groupID: "group-morning", sortOrder: 0 }
+  }, "device-a");
+
+  const materialized = materializeAccount(state);
+  assert.deepEqual(materialized.groups.map((group) => group.name), ["Morning", "Home"]);
+  assert.equal(materialized.items[0].groupID, "group-morning");
+});
+
 test("equal timestamps use device ID as deterministic tie breaker", () => {
   assert.equal(
     stampWins(
