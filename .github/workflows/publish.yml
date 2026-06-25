@@ -124,6 +124,8 @@ jobs:
           update_env DAILY_GOOGLE_CLIENT_ID "$DAILY_GOOGLE_CLIENT_ID"
           update_env DAILY_APPLE_BUNDLE_ID "com.jimgreco.dailychecklist"
 
+          sudo mkdir -p daily-data
+          sudo chown -R 1000:1000 daily-data
           docker-compose --profile daily up -d --build daily
           for attempt in $(seq 1 60); do
             if docker-compose --profile daily exec -T daily node -e \
