@@ -313,7 +313,8 @@ struct ChecklistView: View {
             groupHeader(
                 title: title,
                 groupID: groupID,
-                count: items.count,
+                completedCount: items.filter { $0.isComplete(on: store.selectedDate) }.count,
+                totalCount: items.count,
                 isRealGroup: isRealGroup,
                 showsCompleteAll: showsCompleteAll,
                 completeAll: {
@@ -348,7 +349,8 @@ struct ChecklistView: View {
     private func groupHeader(
         title: String,
         groupID: UUID?,
-        count: Int,
+        completedCount: Int,
+        totalCount: Int,
         isRealGroup: Bool,
         showsCompleteAll: Bool,
         completeAll: @escaping () -> Void
@@ -360,7 +362,7 @@ struct ChecklistView: View {
             Text(title)
                 .font(.system(size: 13, weight: .bold))
                 .foregroundStyle(ink.opacity(0.78))
-            Text("\(count)")
+            Text(completedCount == totalCount ? "\(totalCount)" : "\(completedCount)/\(totalCount)")
                 .font(.system(size: 11, weight: .bold, design: .rounded))
                 .foregroundStyle(.secondary)
             Spacer()
