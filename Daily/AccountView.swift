@@ -46,12 +46,9 @@ struct AccountView: View {
                     .padding(.horizontal)
 
                     VStack(spacing: 12) {
-                        Button(action: googleSignIn) {
-                            Label("Continue with Google", systemImage: "globe")
-                                .frame(maxWidth: .infinity)
-                                .frame(height: 48)
-                        }
-                        .buttonStyle(.bordered)
+                        GoogleBrandedSignInButton(action: googleSignIn)
+                            .frame(height: 48)
+                            .accessibilityLabel("Continue with Google")
 
                         SignInWithAppleButton(.continue) { request in
                             request.requestedScopes = [.fullName, .email]
@@ -146,6 +143,40 @@ struct AccountView: View {
                 }
                 await store.sync(using: authStore)
             }
+        }
+    }
+}
+
+private struct GoogleBrandedSignInButton: UIViewRepresentable {
+    @Environment(\.colorScheme) private var colorScheme
+    let action: () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(action: action)
+    }
+
+    func makeUIView(context: Context) -> GIDSignInButton {
+        let button = GIDSignInButton()
+        button.addTarget(context.coordinator, action: #selector(Coordinator.didTap), for: .touchUpInside)
+        return button
+    }
+
+    func updateUIView(_ button: GIDSignInButton, context: Context) {
+        button.style = .wide
+        button.colorScheme = colorScheme == .dark
+            ? .dark
+            : .light
+    }
+
+    final class Coordinator: NSObject {
+        let action: () -> Void
+
+        init(action: @escaping () -> Void) {
+            self.action = action
+        }
+
+        @objc func didTap() {
+            action()
         }
     }
 }

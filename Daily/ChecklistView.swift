@@ -149,16 +149,16 @@ struct ChecklistView: View {
                 Spacer()
                 VStack(alignment: .trailing) {
                     HStack(spacing: 10) {
-                        Button { showingAccount = true } label: {
-                            Image(systemName: "person.crop.circle")
-                                .font(.system(size: 19, weight: .semibold))
+                        Button { showingSettings = true } label: {
+                            Image(systemName: "bell")
+                                .font(.system(size: 18, weight: .semibold))
                                 .foregroundStyle(ink)
                                 .frame(width: 44, height: 44)
                                 .background(controlSurface, in: Circle())
                         }
-                        Button { showingSettings = true } label: {
-                            Image(systemName: "bell")
-                                .font(.system(size: 18, weight: .semibold))
+                        Button { showingAccount = true } label: {
+                            Image(systemName: "person.crop.circle")
+                                .font(.system(size: 19, weight: .semibold))
                                 .foregroundStyle(ink)
                                 .frame(width: 44, height: 44)
                                 .background(controlSurface, in: Circle())
