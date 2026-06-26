@@ -1,9 +1,24 @@
 import SwiftUI
+import UIKit
 import UniformTypeIdentifiers
 
-let ink = Color(red: 0.10, green: 0.12, blue: 0.16)
-let accent = Color(red: 0.38, green: 0.33, blue: 0.92)
-let canvas = Color(red: 0.965, green: 0.958, blue: 0.94)
+private func adaptiveColor(
+    light: (Double, Double, Double),
+    dark: (Double, Double, Double)
+) -> Color {
+    Color(uiColor: UIColor { traits in
+        let values = traits.userInterfaceStyle == .dark ? dark : light
+        return UIColor(red: values.0, green: values.1, blue: values.2, alpha: 1)
+    })
+}
+
+let ink = adaptiveColor(light: (0.10, 0.12, 0.16), dark: (0.94, 0.95, 0.98))
+let accent = adaptiveColor(light: (0.38, 0.33, 0.92), dark: (0.56, 0.51, 1.00))
+let canvas = adaptiveColor(light: (0.965, 0.958, 0.94), dark: (0.055, 0.060, 0.072))
+let surface = adaptiveColor(light: (1.00, 1.00, 1.00), dark: (0.13, 0.14, 0.16))
+let softSurface = adaptiveColor(light: (0.985, 0.982, 0.965), dark: (0.10, 0.11, 0.13))
+let controlSurface = adaptiveColor(light: (1.00, 1.00, 1.00), dark: (0.18, 0.19, 0.22))
+let subtleFill = adaptiveColor(light: (0.91, 0.90, 0.87), dark: (0.19, 0.20, 0.23))
 
 struct ChecklistView: View {
     @EnvironmentObject private var store: ChecklistStore
@@ -95,7 +110,7 @@ struct ChecklistView: View {
                 } label: {
                     Image(systemName: "chevron.left")
                         .frame(width: 42, height: 42)
-                        .background(.white.opacity(0.8), in: Circle())
+                        .background(controlSurface, in: Circle())
                 }
                 .accessibilityLabel("Previous day")
 
@@ -106,7 +121,7 @@ struct ChecklistView: View {
                 } label: {
                     Image(systemName: "chevron.right")
                         .frame(width: 42, height: 42)
-                        .background(.white.opacity(0.8), in: Circle())
+                        .background(controlSurface, in: Circle())
                 }
                 .accessibilityLabel("Next day")
             }
@@ -139,14 +154,14 @@ struct ChecklistView: View {
                                 .font(.system(size: 19, weight: .semibold))
                                 .foregroundStyle(ink)
                                 .frame(width: 44, height: 44)
-                                .background(.white.opacity(0.8), in: Circle())
+                                .background(controlSurface, in: Circle())
                         }
                         Button { showingSettings = true } label: {
                             Image(systemName: "bell")
                                 .font(.system(size: 18, weight: .semibold))
                                 .foregroundStyle(ink)
                                 .frame(width: 44, height: 44)
-                                .background(.white.opacity(0.8), in: Circle())
+                                .background(controlSurface, in: Circle())
                         }
                     }
                     Spacer(minLength: 10)
@@ -172,7 +187,7 @@ struct ChecklistView: View {
             filterButton("All items", selected: !store.showingToday) { store.showingToday = false }
         }
         .padding(4)
-        .background(Color.black.opacity(0.055), in: Capsule())
+        .background(subtleFill, in: Capsule())
     }
 
     private var sortControl: some View {
@@ -197,7 +212,7 @@ struct ChecklistView: View {
             .foregroundStyle(ink)
             .padding(.horizontal, 13)
             .padding(.vertical, 9)
-            .background(.white.opacity(0.78), in: Capsule())
+            .background(controlSurface, in: Capsule())
         }
         .accessibilityLabel("Sort checklist")
         .accessibilityValue(store.sortMode.title)
@@ -210,7 +225,7 @@ struct ChecklistView: View {
                 .foregroundStyle(selected ? ink : .secondary)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 10)
-                .background(selected ? Color.white : Color.clear, in: Capsule())
+                .background(selected ? controlSurface : Color.clear, in: Capsule())
                 .shadow(color: selected ? .black.opacity(0.06) : .clear, radius: 8, y: 3)
         }
     }
@@ -258,7 +273,7 @@ struct ChecklistView: View {
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 30)
-                .background(.white.opacity(0.62), in: RoundedRectangle(cornerRadius: 22))
+                .background(softSurface, in: RoundedRectangle(cornerRadius: 22))
             } else {
                 groupedItems(items, isCompletedSection: isCompletedSection)
             }
@@ -331,7 +346,7 @@ struct ChecklistView: View {
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 14)
                         .background(
-                            Color.white.opacity(0.35),
+                            softSurface,
                             in: RoundedRectangle(cornerRadius: 16)
                         )
                         .onDrop(
@@ -470,7 +485,7 @@ private struct ItemRow: View {
             Button(action: onToggle) {
                 ZStack {
                     Circle()
-                        .stroke(completed ? accent : Color.black.opacity(0.18), lineWidth: 2)
+                        .stroke(completed ? accent : Color.primary.opacity(0.22), lineWidth: 2)
                         .frame(width: 28, height: 28)
                     if completed {
                         Circle().fill(accent).frame(width: 28, height: 28)
@@ -537,12 +552,15 @@ private struct ItemRow: View {
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(.secondary)
                     .frame(width: 36, height: 36)
-                    .background(Color.black.opacity(0.045), in: Circle())
+                    .background(subtleFill, in: Circle())
             }
             .accessibilityLabel("Edit \(item.title)")
         }
         .padding(16)
-        .background(.white.opacity(completed ? 0.5 : 0.88), in: RoundedRectangle(cornerRadius: 20))
+        .background(
+            (completed ? softSurface : surface),
+            in: RoundedRectangle(cornerRadius: 20)
+        )
     }
 }
 
