@@ -321,7 +321,7 @@
       <h1>Keep your day in sync</h1>
       <p>Sign in to see the same checklists on the web and your phone. Your changes are cached for spotty connections.</p>
       <div class="auth-options">
-        ${state.googleClientId ? `<div class="provider" data-google-host></div>` : ""}
+        ${state.googleClientId ? `<div class="google-provider" data-google-host></div>` : ""}
         ${state.appleClientId ? `<button class="provider apple" data-action="apple">&nbsp; Continue with Apple</button>` : ""}
         ${local ? `<button class="dev-button" data-action="dev">Local dev sign in</button>` : ""}
       </div>
@@ -412,9 +412,10 @@
     const host = document.querySelector("[data-google-host]");
     if (!host || !state.googleClientId || !window.google?.accounts?.id) return;
     window.google.accounts.id.initialize({ client_id: state.googleClientId, callback: googleCredential });
+    const width = Math.max(260, Math.round(host.getBoundingClientRect().width || 400));
     window.google.accounts.id.renderButton(host, {
       theme: "outline", size: "large", shape: "rectangular", text: "continue_with",
-      logo_alignment: "center", width: Math.max(260, Math.round(host.clientWidth || 320)),
+      logo_alignment: "center", width,
     });
   }
 
