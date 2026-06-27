@@ -9,18 +9,25 @@ final class AuthStore: ObservableObject {
     @Published var errorMessage: String?
 
     private let api = APIClient()
+    private let cachedUserKey = "cachedAuthUser"
+    private var refreshTask: Task<AuthResponse, Error>?
 
-    var isAuthenticated: Bool { user != nil && accessToken != nil }
+    var isAuthenticated: Bool { user != nil && (accessToken != nil || refreshToken != nil) }
     var accessToken: String? { KeychainStore.read("accessToken") }
     private var refreshToken: String? { KeychainStore.read("refreshToken") }
 
     func restore() async {
+        if let cachedUser {
+            user = cachedUser
+        }
         guard accessToken != nil || refreshToken != nil else { return }
         isLoading = true
         defer { isLoading = false }
         do {
             if let accessToken {
-                user = try await api.currentUser(token: accessToken)
+                let restoredUser = try await api.currentUser(token: accessToken)
+                user = restoredUser
+                cache(restoredUser)
                 return
             }
         } catch {}
@@ -63,6 +70,7 @@ final class AuthStore: ObservableObject {
     func signOut() {
         KeychainStore.delete("accessToken")
         KeychainStore.delete("refreshToken")
+        UserDefaults.standard.removeObject(forKey: cachedUserKey)
         user = nil
     }
 
@@ -80,17 +88,39 @@ final class AuthStore: ObservableObject {
 
     private func refreshSession() async {
         guard let refreshToken else { return }
+        if let refreshTask {
+            do {
+                complete(try await refreshTask.value)
+            } catch {
+                KeychainStore.delete("accessToken")
+            }
+            return
+        }
+        let task = Task { try await api.refresh(refreshToken: refreshToken) }
+        refreshTask = task
+        defer { refreshTask = nil }
         do {
-            complete(try await api.refresh(refreshToken: refreshToken))
+            complete(try await task.value)
         } catch {
-            signOut()
+            KeychainStore.delete("accessToken")
         }
     }
 
     private func complete(_ response: AuthResponse) {
         KeychainStore.write(response.token, key: "accessToken")
         KeychainStore.write(response.refreshToken, key: "refreshToken")
+        cache(response.user)
         user = response.user
+    }
+
+    private var cachedUser: AppUser? {
+        guard let data = UserDefaults.standard.data(forKey: cachedUserKey) else { return nil }
+        return try? JSONDecoder().decode(AppUser.self, from: data)
+    }
+
+    private func cache(_ user: AppUser) {
+        guard let data = try? JSONEncoder().encode(user) else { return }
+        UserDefaults.standard.set(data, forKey: cachedUserKey)
     }
 }
 

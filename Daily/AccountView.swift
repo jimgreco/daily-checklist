@@ -46,27 +46,31 @@ struct AccountView: View {
                     .padding(.horizontal)
 
                     VStack(spacing: 12) {
-                        GoogleBrandedSignInButton(action: googleSignIn)
-                            .frame(height: 48)
+                        ProviderSignInButton(provider: .google, action: googleSignIn)
                             .accessibilityLabel("Continue with Google")
 
-                        SignInWithAppleButton(.continue) { request in
-                            request.requestedScopes = [.fullName, .email]
-                        } onCompletion: { result in
-                            guard case .success(let authorization) = result,
-                                  let credential = authorization.credential as? ASAuthorizationAppleIDCredential else {
-                                return
-                            }
-                            Task {
-                                await authStore.signInWithApple(credential)
-                                if let userID = authStore.user?.id {
-                                    store.activateAuthenticatedAccount(userID)
+                        ProviderSignInButton(provider: .apple) {}
+                            .accessibilityHidden(true)
+                            .overlay {
+                                SignInWithAppleButton(.continue) { request in
+                                    request.requestedScopes = [.fullName, .email]
+                                } onCompletion: { result in
+                                    guard case .success(let authorization) = result,
+                                          let credential = authorization.credential as? ASAuthorizationAppleIDCredential else {
+                                        return
+                                    }
+                                    Task {
+                                        await authStore.signInWithApple(credential)
+                                        if let userID = authStore.user?.id {
+                                            store.activateAuthenticatedAccount(userID)
+                                        }
+                                        await store.sync(using: authStore)
+                                    }
                                 }
-                                await store.sync(using: authStore)
+                                .signInWithAppleButtonStyle(.black)
+                                .opacity(0.01)
                             }
-                        }
-                        .signInWithAppleButtonStyle(.black)
-                        .frame(height: 50)
+                            .accessibilityLabel("Continue with Apple")
 
                         #if DEBUG
                         Button("Local development sign in") {
@@ -147,36 +151,76 @@ struct AccountView: View {
     }
 }
 
-private struct GoogleBrandedSignInButton: UIViewRepresentable {
-    @Environment(\.colorScheme) private var colorScheme
-    let action: () -> Void
+private struct ProviderSignInButton: View {
+    enum Provider {
+        case google
+        case apple
 
-    func makeCoordinator() -> Coordinator {
-        Coordinator(action: action)
-    }
-
-    func makeUIView(context: Context) -> GIDSignInButton {
-        let button = GIDSignInButton()
-        button.addTarget(context.coordinator, action: #selector(Coordinator.didTap), for: .touchUpInside)
-        return button
-    }
-
-    func updateUIView(_ button: GIDSignInButton, context: Context) {
-        button.style = .wide
-        button.colorScheme = colorScheme == .dark
-            ? .dark
-            : .light
-    }
-
-    final class Coordinator: NSObject {
-        let action: () -> Void
-
-        init(action: @escaping () -> Void) {
-            self.action = action
+        var title: String {
+            switch self {
+            case .google: return "Continue with Google"
+            case .apple: return "Continue with Apple"
+            }
         }
 
-        @objc func didTap() {
-            action()
+        var foreground: Color {
+            switch self {
+            case .google: return Color(red: 0.23, green: 0.23, blue: 0.23)
+            case .apple: return .white
+            }
+        }
+
+        var background: Color {
+            switch self {
+            case .google: return .white
+            case .apple: return .black
+            }
+        }
+
+        var border: Color {
+            switch self {
+            case .google: return Color.black.opacity(0.18)
+            case .apple: return .black
+            }
+        }
+    }
+
+    let provider: Provider
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            ZStack {
+                brandMark
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.leading, 20)
+                Text(provider.title)
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(provider.foreground)
+                    .frame(maxWidth: .infinity)
+            }
+            .frame(maxWidth: .infinity)
+            .frame(height: 50)
+            .background(provider.background, in: RoundedRectangle(cornerRadius: 7))
+            .overlay {
+                RoundedRectangle(cornerRadius: 7)
+                    .stroke(provider.border, lineWidth: 1)
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private var brandMark: some View {
+        switch provider {
+        case .google:
+            Text("G")
+                .font(.system(size: 22, weight: .bold))
+                .foregroundStyle(Color(red: 0.26, green: 0.52, blue: 0.96))
+        case .apple:
+            Image(systemName: "apple.logo")
+                .font(.system(size: 21, weight: .semibold))
+                .foregroundStyle(.white)
         }
     }
 }
