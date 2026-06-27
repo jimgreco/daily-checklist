@@ -49,28 +49,31 @@ struct AccountView: View {
                         ProviderSignInButton(provider: .google, action: googleSignIn)
                             .accessibilityLabel("Continue with Google")
 
-                        ProviderSignInButton(provider: .apple) {}
-                            .accessibilityHidden(true)
-                            .overlay {
-                                SignInWithAppleButton(.continue) { request in
-                                    request.requestedScopes = [.fullName, .email]
-                                } onCompletion: { result in
-                                    guard case .success(let authorization) = result,
-                                          let credential = authorization.credential as? ASAuthorizationAppleIDCredential else {
-                                        return
-                                    }
-                                    Task {
-                                        await authStore.signInWithApple(credential)
-                                        if let userID = authStore.user?.id {
-                                            store.activateAuthenticatedAccount(userID)
-                                        }
-                                        await store.sync(using: authStore)
-                                    }
+                        SignInWithAppleButton(.continue) { request in
+                            request.requestedScopes = [.fullName, .email]
+                        } onCompletion: { result in
+                            switch result {
+                            case .success(let authorization):
+                                guard let credential = authorization.credential as? ASAuthorizationAppleIDCredential else {
+                                    authStore.errorMessage = "Apple did not return a valid credential."
+                                    return
                                 }
-                                .signInWithAppleButtonStyle(.black)
-                                .opacity(0.01)
+                                Task {
+                                    await authStore.signInWithApple(credential)
+                                    if let userID = authStore.user?.id {
+                                        store.activateAuthenticatedAccount(userID)
+                                    }
+                                    await store.sync(using: authStore)
+                                }
+                            case .failure(let error):
+                                authStore.errorMessage = error.localizedDescription
                             }
-                            .accessibilityLabel("Continue with Apple")
+                        }
+                        .signInWithAppleButtonStyle(.black)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 50)
+                        .clipShape(RoundedRectangle(cornerRadius: 7))
+                        .accessibilityLabel("Continue with Apple")
 
                         #if DEBUG
                         Button("Local development sign in") {
