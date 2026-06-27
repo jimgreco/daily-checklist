@@ -94,14 +94,18 @@ jobs:
           DAILY_SESSION_SECRET: ${{ secrets.DAILY_SESSION_SECRET }}
           GOOGLE_IOS_CLIENT_ID: ${{ secrets.GOOGLE_IOS_CLIENT_ID }}
           GOOGLE_WEB_CLIENT_ID: ${{ secrets.GOOGLE_WEB_CLIENT_ID }}
+          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID || 'V6JPQCD336' }}
           APPLE_WEB_CLIENT_ID: ${{ secrets.APPLE_WEB_CLIENT_ID }}
+          APPLE_WEB_KEY_ID: ${{ secrets.APPLE_WEB_KEY_ID }}
+          APPLE_WEB_PRIVATE_KEY_BASE64: ${{ secrets.APPLE_WEB_PRIVATE_KEY_BASE64 }}
+          APPLE_WEB_REDIRECT_URI: ${{ secrets.APPLE_WEB_REDIRECT_URI || 'https://daily-checklist.jim-greco.com' }}
         run: |
           set -euo pipefail
           ssh -i "$HOME/.ssh/daily" \
             -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
             -o StrictHostKeyChecking=yes \
             "$EC2_USER@$EC2_HOST" \
-            "DAILY_SESSION_SECRET='$DAILY_SESSION_SECRET' DAILY_GOOGLE_CLIENT_ID='$GOOGLE_IOS_CLIENT_ID' DAILY_GOOGLE_WEB_CLIENT_ID='$GOOGLE_WEB_CLIENT_ID' DAILY_APPLE_WEB_CLIENT_ID='$APPLE_WEB_CLIENT_ID' bash -se" <<'REMOTE'
+            "DAILY_SESSION_SECRET='$DAILY_SESSION_SECRET' DAILY_GOOGLE_CLIENT_ID='$GOOGLE_IOS_CLIENT_ID' DAILY_GOOGLE_WEB_CLIENT_ID='$GOOGLE_WEB_CLIENT_ID' DAILY_APPLE_TEAM_ID='$APPLE_TEAM_ID' DAILY_APPLE_WEB_CLIENT_ID='$APPLE_WEB_CLIENT_ID' DAILY_APPLE_WEB_KEY_ID='$APPLE_WEB_KEY_ID' DAILY_APPLE_WEB_PRIVATE_KEY_BASE64='$APPLE_WEB_PRIVATE_KEY_BASE64' DAILY_APPLE_WEB_REDIRECT_URI='$APPLE_WEB_REDIRECT_URI' bash -se" <<'REMOTE'
           set -euo pipefail
           cd "$HOME/deploy"
 
@@ -126,7 +130,11 @@ jobs:
           update_env DAILY_GOOGLE_CLIENT_ID "$DAILY_GOOGLE_CLIENT_ID"
           update_env DAILY_GOOGLE_WEB_CLIENT_ID "$DAILY_GOOGLE_WEB_CLIENT_ID"
           update_env DAILY_APPLE_BUNDLE_ID "com.jimgreco.dailychecklist"
+          update_env DAILY_APPLE_TEAM_ID "$DAILY_APPLE_TEAM_ID"
           update_env DAILY_APPLE_WEB_CLIENT_ID "$DAILY_APPLE_WEB_CLIENT_ID"
+          update_env DAILY_APPLE_WEB_KEY_ID "$DAILY_APPLE_WEB_KEY_ID"
+          update_env DAILY_APPLE_WEB_PRIVATE_KEY_BASE64 "$DAILY_APPLE_WEB_PRIVATE_KEY_BASE64"
+          update_env DAILY_APPLE_WEB_REDIRECT_URI "$DAILY_APPLE_WEB_REDIRECT_URI"
 
           sudo mkdir -p daily-data
           sudo chown -R 1000:1000 daily-data

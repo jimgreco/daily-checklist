@@ -27,7 +27,7 @@ The authentication contract mirrors CubbyLog:
 - Google: create an iOS OAuth client for bundle ID `com.jimgreco.dailychecklist`. Set `GOOGLE_CLIENT_ID` and `GOOGLE_REVERSED_CLIENT_ID` in `project.yml`, and set the same client ID as `GOOGLE_CLIENT_ID` on the server.
 - Apple: enable Sign in with Apple for `com.jimgreco.dailychecklist` in the Apple Developer portal and set `APPLE_BUNDLE_ID=com.jimgreco.dailychecklist` on the server.
 - Web Google: create a Web OAuth client with `https://daily-checklist.jim-greco.com` as an Authorized JavaScript origin and set `GOOGLE_WEB_CLIENT_ID`. This is separate from the iOS client.
-- Web Apple: create a Sign in with Apple Services ID for `daily-checklist.jim-greco.com`, configure `https://daily-checklist.jim-greco.com` as its return URL, and set `APPLE_WEB_CLIENT_ID`.
+- Web Apple: create a Sign in with Apple Services ID for `daily-checklist.jim-greco.com`, configure `https://daily-checklist.jim-greco.com` as its return URL, and set `APPLE_WEB_CLIENT_ID`, `APPLE_TEAM_ID`, `APPLE_WEB_KEY_ID`, and `APPLE_WEB_PRIVATE_KEY_BASE64`.
 - Set a strong, persistent `SESSION_SECRET` on the server. See `server/.env.example`.
 
 Provider tokens are exchanged for Daily's own short-lived access token and rotating refresh token. Refresh tokens are stored in the iOS Keychain.
@@ -49,7 +49,7 @@ Every push to `main` runs `.github/workflows/publish.yml`:
 Repository secrets required:
 
 - EC2: `EC2_HOST`, `EC2_USER`, `EC2_SSH_KEY`, `EC2_SSH_KNOWN_HOSTS`, `DAILY_SESSION_SECRET`
-- OAuth/runtime: `GOOGLE_IOS_CLIENT_ID`, `GOOGLE_IOS_REVERSED_CLIENT_ID`, `GOOGLE_WEB_CLIENT_ID`, `APPLE_WEB_CLIENT_ID`, `IOS_API_BASE_URL`
+- OAuth/runtime: `GOOGLE_IOS_CLIENT_ID`, `GOOGLE_IOS_REVERSED_CLIENT_ID`, `GOOGLE_WEB_CLIENT_ID`, `APPLE_WEB_CLIENT_ID`, `APPLE_WEB_KEY_ID`, `APPLE_WEB_PRIVATE_KEY_BASE64`, `IOS_API_BASE_URL`
 - Apple delivery: `APP_STORE_CONNECT_KEY_ID`, `APP_STORE_CONNECT_ISSUER_ID`, `APP_STORE_CONNECT_API_KEY`, `IOS_DIST_CERT_P12`, `IOS_DIST_CERT_PASSWORD`, `KEYCHAIN_PASSWORD`
 
 Before the first upload, create the Daily app record in App Store Connect for bundle ID `com.jimgreco.dailychecklist`. The workflow can register the bundle ID and provisioning profile, but Apple does not expose app-record creation through the same provisioning API.

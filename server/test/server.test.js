@@ -2,6 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
   applyMutation,
+  appleWebAuthConfigured,
   materializeAccount,
   validSyncRequest,
   stampWins
@@ -35,6 +36,20 @@ test("serves the mobile website and public auth configuration", async () => {
   assert.deepEqual(await config.json(), {
     google_client_id: null,
     apple_client_id: null
+  });
+});
+
+test("Apple web authorization code sign-in requires server credentials", async () => {
+  assert.equal(appleWebAuthConfigured(), false);
+  const response = await fetch(`${baseURL}/auth/apple`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ authorizationCode: "test-code" })
+  });
+
+  assert.equal(response.status, 503);
+  assert.deepEqual(await response.json(), {
+    error: "Apple web sign-in is not configured"
   });
 });
 

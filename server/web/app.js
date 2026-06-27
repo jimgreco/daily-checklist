@@ -434,12 +434,13 @@
       clientId: state.appleClientId, scope: "name email", redirectURI: location.origin, usePopup: true
     });
     const response = await window.AppleID.auth.signIn();
-    const token = response?.authorization?.id_token;
+    const authorization = response?.authorization || {};
     const name = response?.user?.name || {};
     const auth = await request("/auth/apple", {
       method: "POST",
       body: JSON.stringify({
-        identityToken: token,
+        identityToken: authorization.id_token || null,
+        authorizationCode: authorization.code || null,
         fullName: { givenName: name.firstName || null, familyName: name.lastName || null }
       })
     }, false);

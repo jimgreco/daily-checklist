@@ -143,6 +143,60 @@ function authenticate(request) {
   }
 }
 
+function envValue(name) {
+  return process.env[name]?.trim() || "";
+}
+
+function appleWebPrivateKey() {
+  const privateKey = envValue("APPLE_WEB_PRIVATE_KEY");
+  if (privateKey) return privateKey.replace(/\\n/g, "\n");
+  const encoded = envValue("APPLE_WEB_PRIVATE_KEY_BASE64");
+  if (!encoded) return "";
+  try {
+    return Buffer.from(encoded, "base64").toString("utf8").trim();
+  } catch {
+    return "";
+  }
+}
+
+function appleWebConfig() {
+  return {
+    clientID: envValue("APPLE_WEB_CLIENT_ID"),
+    teamID: envValue("APPLE_TEAM_ID"),
+    keyIdentifier: envValue("APPLE_WEB_KEY_ID"),
+    privateKey: appleWebPrivateKey(),
+    redirectUri: envValue("APPLE_WEB_REDIRECT_URI") || "https://daily-checklist.jim-greco.com"
+  };
+}
+
+function appleWebAuthConfigured() {
+  const config = appleWebConfig();
+  return Boolean(config.clientID && config.teamID && config.keyIdentifier && config.privateKey);
+}
+
+async function exchangeAppleAuthorizationCode(code) {
+  const config = appleWebConfig();
+  if (!appleWebAuthConfigured()) {
+    throw Object.assign(new Error("Apple web sign-in is not configured"), { status: 503, quiet: true });
+  }
+  const clientSecret = appleSignin.getClientSecret({
+    clientID: config.clientID,
+    teamID: config.teamID,
+    keyIdentifier: config.keyIdentifier,
+    privateKey: config.privateKey
+  });
+  const tokenResponse = await appleSignin.getAuthorizationToken(code, {
+    clientID: config.clientID,
+    redirectUri: config.redirectUri,
+    clientSecret
+  });
+  if (!tokenResponse?.id_token) {
+    console.error("Apple token exchange failed", tokenResponse);
+    throw Object.assign(new Error("Invalid Apple authorization code"), { status: 401 });
+  }
+  return tokenResponse.id_token;
+}
+
 function stampWins(incoming, current) {
   if (!current) return true;
   if (incoming.stamp !== current.stamp) return incoming.stamp > current.stamp;
@@ -318,13 +372,16 @@ async function handleAuth(request, response, pathname) {
   }
 
   if (pathname === "/auth/apple" && request.method === "POST") {
-    if (!body.identityToken) return send(response, 400, { error: "identityToken required" });
+    const identityToken = body.identityToken || (body.authorizationCode
+      ? await exchangeAppleAuthorizationCode(body.authorizationCode)
+      : null);
+    if (!identityToken) return send(response, 400, { error: "identityToken or authorizationCode required" });
     const audiences = [process.env.APPLE_BUNDLE_ID, process.env.APPLE_WEB_CLIENT_ID].filter(Boolean);
     if (!audiences.length) return send(response, 503, { error: "Apple Sign-In is not configured" });
     let payload;
     for (const audience of audiences) {
       try {
-        payload = await appleSignin.verifyIdToken(body.identityToken, { audience, ignoreExpiration: false });
+        payload = await appleSignin.verifyIdToken(identityToken, { audience, ignoreExpiration: false });
         break;
       } catch {}
     }
@@ -396,7 +453,7 @@ const server = http.createServer(async (request, response) => {
     }
     return send(response, 404, { error: "Not found" });
   } catch (error) {
-    console.error(error);
+    if (!error.quiet && (!error.status || error.status >= 500)) console.error(error);
     return send(response, error.status || 500, { error: error.message || "Internal server error" });
   }
 });
@@ -412,5 +469,6 @@ module.exports = {
   applyMutation,
   materializeAccount,
   validSyncRequest,
-  stampWins
+  stampWins,
+  appleWebAuthConfigured
 };
