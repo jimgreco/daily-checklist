@@ -35,6 +35,7 @@ h1 { margin: 0; font-size: clamp(48px, 14vw, 68px); line-height: .96; letter-spa
 .circle-button, .account-button, .edit-button { display: grid; place-items: center; border-radius: 999px; background: white; color: var(--accent); box-shadow: 0 8px 28px rgba(25,25,40,.05); }
 .circle-button { width: 52px; height: 52px; font-size: 30px; }
 .account-button { width: 48px; height: 48px; color: var(--ink); font-size: 21px; }
+.account-avatar { width: 100%; height: 100%; border-radius: 50%; object-fit: cover; }
 .controls { margin-top: 34px; }
 .segmented { display: grid; grid-template-columns: 1fr 1fr; padding: 5px; border-radius: 999px; background: #e9e7e3; }
 .segmented button { min-height: 52px; border-radius: 999px; background: transparent; color: var(--muted); font-weight: 750; }

@@ -34,8 +34,8 @@ final class AuthStore: ObservableObject {
         await refreshSession()
     }
 
-    func signInWithGoogle(idToken: String) async {
-        await authenticate { try await api.signInWithGoogle(idToken: idToken) }
+    func signInWithGoogle(idToken: String, profileImageURL: URL?) async {
+        await authenticate { try await api.signInWithGoogle(idToken: idToken, profileImageURL: profileImageURL) }
     }
 
     func signInWithApple(_ credential: ASAuthorizationAppleIDCredential) async {

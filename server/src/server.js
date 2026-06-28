@@ -122,6 +122,7 @@ function upsertUser(database, provider, providerID, profile) {
       id: newID(),
       email: profile.email.toLowerCase(),
       name: profile.name || profile.email,
+      profileImageURL: profile.profileImageURL || null,
       createdAt: new Date().toISOString()
     };
     database.users[user.id] = user;
@@ -129,6 +130,7 @@ function upsertUser(database, provider, providerID, profile) {
   } else {
     user.email = profile.email.toLowerCase();
     if (profile.name) user.name = profile.name;
+    if (profile.profileImageURL) user.profileImageURL = profile.profileImageURL;
   }
   return user;
 }
@@ -364,7 +366,8 @@ async function handleAuth(request, response, pathname) {
     const auth = await updateDatabase((database) => {
       const user = upsertUser(database, "google", payload.sub, {
         email: payload.email,
-        name: payload.name || payload.email
+        name: payload.name || payload.email,
+        profileImageURL: payload.picture || body.profileImageURL || null
       });
       return createSession(database, user);
     });

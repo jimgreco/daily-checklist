@@ -22,10 +22,12 @@ let subtleFill = adaptiveColor(light: (0.91, 0.90, 0.87), dark: (0.19, 0.20, 0.2
 
 struct ChecklistView: View {
     @EnvironmentObject private var store: ChecklistStore
+    @EnvironmentObject private var authStore: AuthStore
     @State private var editingItem: ChecklistItem?
     @State private var showingNewItem = false
     @State private var showingSettings = false
     @State private var showingAccount = false
+    @State private var isEditingChecklist = false
     @State private var draggingItemID: UUID?
     @State private var draggingGroupID: UUID?
 
@@ -157,15 +159,15 @@ struct ChecklistView: View {
                                 .background(controlSurface, in: Circle())
                         }
                         Button { showingAccount = true } label: {
-                            Image(systemName: "person.crop.circle")
-                                .font(.system(size: 19, weight: .semibold))
-                                .foregroundStyle(ink)
-                                .frame(width: 44, height: 44)
-                                .background(controlSurface, in: Circle())
+                            AccountToolbarImage(url: authStore.user?.profileImageURL)
                         }
+                        .accessibilityLabel("Account")
                     }
                     Spacer(minLength: 10)
-                    sortControl
+                    HStack(spacing: 8) {
+                        sortControl
+                        editModeButton
+                    }
                 }
             }
         }
@@ -216,6 +218,24 @@ struct ChecklistView: View {
         }
         .accessibilityLabel("Sort checklist")
         .accessibilityValue(store.sortMode.title)
+    }
+
+    private var editModeButton: some View {
+        Button {
+            withAnimation(.snappy) {
+                isEditingChecklist.toggle()
+                draggingItemID = nil
+                draggingGroupID = nil
+            }
+        } label: {
+            Image(systemName: isEditingChecklist ? "checkmark" : "pencil")
+                .font(.system(size: 13, weight: .bold))
+                .foregroundStyle(isEditingChecklist ? .white : ink)
+                .frame(width: 35, height: 35)
+                .background(isEditingChecklist ? accent : controlSurface, in: Circle())
+        }
+        .accessibilityLabel(isEditingChecklist ? "Done editing checklist" : "Edit checklist")
+        .accessibilityHint("Shows or hides reorder handles and item edit buttons")
     }
 
     private func filterButton(_ title: String, selected: Bool, action: @escaping () -> Void) -> some View {
@@ -339,7 +359,7 @@ struct ChecklistView: View {
                 }
             )
             if items.isEmpty {
-                if store.sortMode == .manual {
+                if isEditingChecklist && store.sortMode == .manual {
                     Text("Drop tasks here")
                         .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(.tertiary)
@@ -390,7 +410,7 @@ struct ChecklistView: View {
                 .foregroundStyle(accent)
                 .accessibilityHint("Marks every task in \(title) as complete")
             }
-            if isRealGroup, store.sortMode == .manual {
+            if isRealGroup, isEditingChecklist, store.sortMode == .manual {
                 Image(systemName: "line.3.horizontal")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(.secondary)
@@ -398,7 +418,7 @@ struct ChecklistView: View {
         }
         .padding(.horizontal, 4)
 
-        if isRealGroup, store.sortMode == .manual, let groupID {
+        if isRealGroup, isEditingChecklist, store.sortMode == .manual, let groupID {
             header
                 .opacity(draggingGroupID == groupID ? 0.55 : 1)
                 .onDrag {
@@ -410,12 +430,14 @@ struct ChecklistView: View {
                     of: [UTType.text],
                     delegate: groupDropDelegate(groupID: groupID, isRealGroup: true)
                 )
-        } else {
+        } else if isEditingChecklist && store.sortMode == .manual {
             header
                 .onDrop(
                     of: [UTType.text],
                     delegate: groupDropDelegate(groupID: groupID, isRealGroup: isRealGroup)
                 )
+        } else {
+            header
         }
     }
 
@@ -433,11 +455,12 @@ struct ChecklistView: View {
     private func itemStack(_ items: [ChecklistItem], groupID: UUID?) -> some View {
         VStack(spacing: 10) {
             ForEach(items) { item in
-                if store.sortMode == .manual {
+                if isEditingChecklist && store.sortMode == .manual {
                     ItemRow(
                         item: item,
                         date: store.selectedDate,
                         showsDragHandle: true,
+                        showsEditButton: true,
                         onToggle: { store.toggle(item) },
                         onEdit: { editingItem = item }
                     )
@@ -461,6 +484,7 @@ struct ChecklistView: View {
                         item: item,
                         date: store.selectedDate,
                         showsDragHandle: false,
+                        showsEditButton: isEditingChecklist,
                         onToggle: { store.toggle(item) },
                         onEdit: { editingItem = item }
                     )
@@ -470,10 +494,43 @@ struct ChecklistView: View {
     }
 }
 
+private struct AccountToolbarImage: View {
+    let url: URL?
+
+    var body: some View {
+        ZStack {
+            controlSurface
+            if let url {
+                AsyncImage(url: url) { phase in
+                    switch phase {
+                    case .success(let image):
+                        image
+                            .resizable()
+                            .scaledToFill()
+                    default:
+                        fallback
+                    }
+                }
+            } else {
+                fallback
+            }
+        }
+        .frame(width: 44, height: 44)
+        .clipShape(Circle())
+    }
+
+    private var fallback: some View {
+        Image(systemName: "person.crop.circle")
+            .font(.system(size: 19, weight: .semibold))
+            .foregroundStyle(ink)
+    }
+}
+
 private struct ItemRow: View {
     let item: ChecklistItem
     let date: Date
     let showsDragHandle: Bool
+    let showsEditButton: Bool
     let onToggle: () -> Void
     let onEdit: () -> Void
 
@@ -547,14 +604,16 @@ private struct ItemRow: View {
                     .frame(width: 24, height: 36)
                     .accessibilityHidden(true)
             }
-            Button(action: onEdit) {
-                Image(systemName: "pencil")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 36, height: 36)
-                    .background(subtleFill, in: Circle())
+            if showsEditButton {
+                Button(action: onEdit) {
+                    Image(systemName: "pencil")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 36, height: 36)
+                        .background(subtleFill, in: Circle())
+                }
+                .accessibilityLabel("Edit \(item.title)")
             }
-            .accessibilityLabel("Edit \(item.title)")
         }
         .padding(16)
         .background(

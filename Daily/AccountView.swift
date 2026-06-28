@@ -143,8 +143,9 @@ struct AccountView: View {
                 Task { @MainActor in authStore.errorMessage = "Google did not return an identity token." }
                 return
             }
+            let profileImageURL = result?.user.profile?.imageURL(withDimension: 120)
             Task { @MainActor in
-                await authStore.signInWithGoogle(idToken: token)
+                await authStore.signInWithGoogle(idToken: token, profileImageURL: profileImageURL)
                 if let userID = authStore.user?.id {
                     store.activateAuthenticatedAccount(userID)
                 }

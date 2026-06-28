@@ -290,7 +290,7 @@
             <button class="circle-button" data-action="next" aria-label="Next day">›</button>
           </div>
           <div class="date-nav" style="justify-content:flex-end;margin-top:12px">
-            <button class="account-button" data-action="account" aria-label="Account">◉</button>
+            ${renderAccountButton()}
           </div>
         </div>
       </div>
@@ -312,6 +312,13 @@
       ${renderModal()}
       ${state.toast ? `<div class="toast">${escapeHTML(state.toast)}</div>` : ""}
     </div>`;
+  }
+
+  function renderAccountButton() {
+    const photo = state.user?.profileImageURL;
+    return `<button class="account-button" data-action="account" aria-label="Account">${
+      photo ? `<img class="account-avatar" src="${escapeHTML(photo)}" alt="">` : "◉"
+    }</button>`;
   }
 
   function renderAuth() {

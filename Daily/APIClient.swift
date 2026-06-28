@@ -13,8 +13,12 @@ struct APIClient {
         self.baseURL = URL(string: configured ?? "http://127.0.0.1:8787")!
     }
 
-    func signInWithGoogle(idToken: String) async throws -> AuthResponse {
-        try await post(path: "auth/google", body: ["idToken": idToken])
+    func signInWithGoogle(idToken: String, profileImageURL: URL?) async throws -> AuthResponse {
+        struct Body: Codable {
+            var idToken: String
+            var profileImageURL: URL?
+        }
+        return try await post(path: "auth/google", body: Body(idToken: idToken, profileImageURL: profileImageURL))
     }
 
     func signInWithApple(identityToken: String, fullName: PersonNameComponents?) async throws -> AuthResponse {

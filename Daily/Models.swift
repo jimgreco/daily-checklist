@@ -262,6 +262,7 @@ struct AppUser: Codable {
     var id: String
     var email: String
     var name: String
+    var profileImageURL: URL?
 }
 
 struct AuthResponse: Codable {
