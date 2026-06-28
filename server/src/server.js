@@ -114,24 +114,109 @@ function createSession(database, user) {
   return { token: issueAccessToken(user, sessionID), refreshToken, user };
 }
 
+function normalizeEmail(email) {
+  return String(email || "").trim().toLowerCase();
+}
+
+function chooseCanonicalUser(users) {
+  return users
+    .filter(Boolean)
+    .sort((left, right) => {
+      const leftCreated = left.createdAt || "";
+      const rightCreated = right.createdAt || "";
+      return leftCreated.localeCompare(rightCreated) || left.id.localeCompare(right.id);
+    })[0];
+}
+
+function mergeStateMap(target = {}, source = {}) {
+  for (const [key, incoming] of Object.entries(source)) {
+    if (stampWins(incoming, target[key])) target[key] = incoming;
+  }
+  return target;
+}
+
+function mergeChecklistRecords(target, source) {
+  target.fields = mergeStateMap(target.fields, source.fields);
+  target.completions = mergeStateMap(target.completions, source.completions);
+  if (source.deleted && stampWins(source.deleted, target.deleted)) target.deleted = source.deleted;
+  return target;
+}
+
+function mergeAccount(database, targetUserID, sourceUserID) {
+  if (targetUserID === sourceUserID) return;
+
+  const source = database.accounts[sourceUserID];
+  if (source) {
+    const target = database.accounts[targetUserID] ||= {
+      items: {},
+      groups: {},
+      appliedMutations: {},
+      eveningReminder: null
+    };
+    target.items ||= {};
+    target.groups ||= {};
+    target.appliedMutations ||= {};
+
+    for (const [itemID, sourceItem] of Object.entries(source.items || {})) {
+      target.items[itemID] = target.items[itemID]
+        ? mergeChecklistRecords(target.items[itemID], sourceItem)
+        : sourceItem;
+    }
+    for (const [groupID, sourceGroup] of Object.entries(source.groups || {})) {
+      target.groups[groupID] = target.groups[groupID]
+        ? { ...target.groups[groupID], fields: mergeStateMap(target.groups[groupID].fields, sourceGroup.fields) }
+        : sourceGroup;
+    }
+    target.appliedMutations = { ...source.appliedMutations, ...target.appliedMutations };
+    if (source.eveningReminder && stampWins(source.eveningReminder, target.eveningReminder)) {
+      target.eveningReminder = source.eveningReminder;
+    }
+    delete database.accounts[sourceUserID];
+  }
+
+  for (const session of Object.values(database.sessions || {})) {
+    if (session.userId === sourceUserID) session.userId = targetUserID;
+  }
+  for (const [identityKey, userID] of Object.entries(database.identities || {})) {
+    if (userID === sourceUserID) database.identities[identityKey] = targetUserID;
+  }
+  delete database.users[sourceUserID];
+}
+
+function updateUserProfile(user, profile, email) {
+  const existingNameWasEmail = normalizeEmail(user.name) === normalizeEmail(user.email);
+  const profileName = profile.name || "";
+  const profileNameIsEmail = normalizeEmail(profileName) === email;
+  user.email = email;
+  if (!user.name || existingNameWasEmail || (profileName && !profileNameIsEmail)) {
+    user.name = profileName || email;
+  }
+  if (profile.profileImageURL) user.profileImageURL = profile.profileImageURL;
+  user.profileImageURL ||= null;
+}
+
 function upsertUser(database, provider, providerID, profile) {
   const identityKey = `${provider}:${providerID}`;
-  let user = database.users[database.identities[identityKey]];
+  const email = normalizeEmail(profile.email);
+  const identityUser = database.users[database.identities[identityKey]];
+  const emailUsers = Object.values(database.users).filter((candidate) => normalizeEmail(candidate.email) === email);
+  let user = chooseCanonicalUser([...emailUsers, identityUser]);
+
   if (!user) {
     user = {
       id: newID(),
-      email: profile.email.toLowerCase(),
+      email,
       name: profile.name || profile.email,
       profileImageURL: profile.profileImageURL || null,
       createdAt: new Date().toISOString()
     };
     database.users[user.id] = user;
-    database.identities[identityKey] = user.id;
   } else {
-    user.email = profile.email.toLowerCase();
-    if (profile.name) user.name = profile.name;
-    if (profile.profileImageURL) user.profileImageURL = profile.profileImageURL;
+    updateUserProfile(user, profile, email);
+    for (const duplicate of emailUsers) mergeAccount(database, user.id, duplicate.id);
+    if (identityUser) mergeAccount(database, user.id, identityUser.id);
   }
+  database.identities[identityKey] = user.id;
   return user;
 }
 
@@ -473,5 +558,6 @@ module.exports = {
   materializeAccount,
   validSyncRequest,
   stampWins,
-  appleWebAuthConfigured
+  appleWebAuthConfigured,
+  upsertUser
 };

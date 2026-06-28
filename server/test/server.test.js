@@ -4,6 +4,7 @@ const {
   applyMutation,
   appleWebAuthConfigured,
   materializeAccount,
+  upsertUser,
   validSyncRequest,
   stampWins
 } = require("../src/server");
@@ -56,6 +57,84 @@ test("Apple web authorization code sign-in requires server credentials", async (
 function account() {
   return { items: {}, appliedMutations: {}, eveningReminder: null };
 }
+
+function record(id, title, stamp = "2026-06-28T10:00:00.000Z") {
+  return {
+    id,
+    fields: {
+      title: { value: title, stamp, deviceID: "device-a" },
+      createdAt: { value: stamp, stamp, deviceID: "device-a" }
+    },
+    completions: {}
+  };
+}
+
+test("links new provider identities by verified email", () => {
+  const database = { users: {}, identities: {}, sessions: {}, accounts: {} };
+  const googleUser = upsertUser(database, "google", "google-123", {
+    email: "Jim@example.com",
+    name: "Jim Greco",
+    profileImageURL: "https://example.com/photo.jpg"
+  });
+  const appleUser = upsertUser(database, "apple", "apple-456", {
+    email: "jim@example.com",
+    name: "jim@example.com"
+  });
+
+  assert.equal(appleUser.id, googleUser.id);
+  assert.equal(database.identities["google:google-123"], googleUser.id);
+  assert.equal(database.identities["apple:apple-456"], googleUser.id);
+  assert.equal(database.users[googleUser.id].email, "jim@example.com");
+  assert.equal(database.users[googleUser.id].name, "Jim Greco");
+  assert.equal(database.users[googleUser.id].profileImageURL, "https://example.com/photo.jpg");
+});
+
+test("repairs previously split provider accounts with the same email", () => {
+  const database = {
+    users: {
+      google: {
+        id: "google",
+        email: "jim@example.com",
+        name: "Jim Greco",
+        profileImageURL: "https://example.com/photo.jpg",
+        createdAt: "2026-06-27T10:00:00.000Z"
+      },
+      apple: {
+        id: "apple",
+        email: "jim@example.com",
+        name: "jim@example.com",
+        profileImageURL: null,
+        createdAt: "2026-06-28T10:00:00.000Z"
+      }
+    },
+    identities: {
+      "google:google-123": "google",
+      "apple:apple-456": "apple"
+    },
+    sessions: {
+      appleSession: { id: "apple-session", userId: "apple", expiresAt: "2026-09-28T10:00:00.000Z" }
+    },
+    accounts: {
+      google: { items: { googleItem: record("googleItem", "Google item") }, groups: {}, appliedMutations: {}, eveningReminder: null },
+      apple: { items: { appleItem: record("appleItem", "Apple item") }, groups: {}, appliedMutations: {}, eveningReminder: null }
+    }
+  };
+
+  const user = upsertUser(database, "apple", "apple-456", {
+    email: "jim@example.com",
+    name: "jim@example.com"
+  });
+
+  assert.equal(user.id, "google");
+  assert.equal(database.identities["apple:apple-456"], "google");
+  assert.equal(database.sessions.appleSession.userId, "google");
+  assert.equal(database.users.apple, undefined);
+  assert.equal(database.accounts.apple, undefined);
+  assert.deepEqual(
+    materializeAccount(database.accounts.google).items.map((item) => item.title).sort(),
+    ["Apple item", "Google item"]
+  );
+});
 
 test("validates a sync request", () => {
   assert.equal(validSyncRequest({ deviceID: "device-1234", mutations: [] }), true);
