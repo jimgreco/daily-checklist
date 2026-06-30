@@ -3,16 +3,13 @@
 
   const app = document.getElementById("app");
   const STORAGE = {
-    token: "dailyWeb.token",
-    refresh: "dailyWeb.refreshToken",
     user: "dailyWeb.user",
     cache: "dailyWeb.cache",
     pending: "dailyWeb.pending",
     device: "dailyWeb.deviceID",
   };
   const state = {
-    token: localStorage.getItem(STORAGE.token) || "",
-    refreshToken: localStorage.getItem(STORAGE.refresh) || "",
+    token: "",
     user: readJSON(STORAGE.user, null),
     items: readJSON(STORAGE.cache, { items: [] }).items || [],
     groups: readJSON(STORAGE.cache, { groups: [] }).groups || [],
@@ -75,8 +72,6 @@
   function sameDay(left, right) { return dateKey(left) === dateKey(right); }
 
   function persistSession() {
-    state.token ? localStorage.setItem(STORAGE.token, state.token) : localStorage.removeItem(STORAGE.token);
-    state.refreshToken ? localStorage.setItem(STORAGE.refresh, state.refreshToken) : localStorage.removeItem(STORAGE.refresh);
     state.user ? localStorage.setItem(STORAGE.user, JSON.stringify(state.user)) : localStorage.removeItem(STORAGE.user);
   }
 
@@ -85,11 +80,10 @@
     localStorage.setItem(STORAGE.pending, JSON.stringify(state.pending));
   }
 
-  function hasSession() { return Boolean(state.token || state.refreshToken); }
+  function hasSession() { return Boolean(state.token || state.user); }
 
   function clearSession() {
     state.token = "";
-    state.refreshToken = "";
     state.user = null;
     state.items = [];
     state.groups = [];
@@ -100,7 +94,6 @@
 
   function applyAuth(auth) {
     state.token = auth.token || "";
-    state.refreshToken = auth.refreshToken || auth.refresh_token || "";
     state.user = auth.user || null;
     persistSession();
   }
@@ -114,7 +107,7 @@
         ...(options.headers || {}),
       },
     });
-    if (response.status === 401 && retry && state.refreshToken && path !== "/auth/refresh") {
+    if (response.status === 401 && retry && path !== "/auth/refresh") {
       if (await refreshAccessToken()) return request(path, options, false);
     }
     if (!response.ok) {
@@ -126,11 +119,10 @@
   }
 
   async function refreshAccessToken() {
-    if (!state.refreshToken) return false;
     if (!refreshPromise) {
       refreshPromise = request("/auth/refresh", {
         method: "POST",
-        body: JSON.stringify({ refreshToken: state.refreshToken }),
+        body: JSON.stringify({}),
       }, false).then((auth) => {
         applyAuth(auth);
         return true;
@@ -297,7 +289,7 @@
             <button class="circle-button" data-action="previous" aria-label="Previous day">‹</button>
             <button class="circle-button" data-action="next" aria-label="Next day">›</button>
           </div>
-          <div class="date-nav" style="justify-content:flex-end;margin-top:12px">
+          <div class="date-nav account-nav">
             ${renderAccountButton()}
           </div>
         </div>
@@ -364,7 +356,11 @@
           <strong>${escapeHTML(state.user?.name || state.user?.email || "Daily account")}</strong>
           <p>${escapeHTML(state.user?.email || "")}</p>
           <p>Your checklist is synced between this website and the Daily app.</p>
+          <button data-action="export-data">Export data</button>
+          <button data-action="privacy">Privacy</button>
+          <button data-action="support">Support</button>
           <button class="danger" data-action="sign-out">Sign out</button>
+          <button class="danger" data-action="delete-account">Delete account</button>
         </div>
         <div class="modal-actions"><span></span><button class="secondary" data-action="close">Done</button></div>
       </section></div>`;
@@ -423,6 +419,14 @@
     render();
   }
 
+  async function restoreSession() {
+    if (state.token) return true;
+    const refreshed = await refreshAccessToken();
+    if (refreshed) await sync();
+    render();
+    return refreshed;
+  }
+
   function renderGoogleButton() {
     const host = document.querySelector("[data-google-host]");
     if (!host || !state.googleClientId || !window.google?.accounts?.id) return;
@@ -462,6 +466,45 @@
     }, false);
     applyAuth(auth);
     await sync();
+  }
+
+  async function signOut() {
+    try {
+      await request("/auth/logout", { method: "POST", body: JSON.stringify({}) }, false);
+    } catch {}
+    clearSession();
+    state.modal = null;
+    render();
+  }
+
+  async function exportData() {
+    const response = await fetch("/api/export", {
+      headers: state.token ? { Authorization: `Bearer ${state.token}` } : {}
+    });
+    if (response.status === 401 && await refreshAccessToken()) return exportData();
+    if (!response.ok) throw new Error("Unable to export data.");
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "daily-checklist-export.json";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  async function deleteAccount(confirmed = false) {
+    if (!confirmed && !confirm("Delete your Daily account and synced checklist data? This cannot be undone.")) return;
+    const response = await fetch("/api/account", {
+      method: "DELETE",
+      headers: state.token ? { Authorization: `Bearer ${state.token}` } : {}
+    });
+    if (response.status === 401 && await refreshAccessToken()) return deleteAccount(true);
+    if (!response.ok) throw new Error("Unable to delete account.");
+    clearSession();
+    state.modal = null;
+    render();
   }
 
   function toggle(item) {
@@ -596,7 +639,15 @@
     if (action === "rename-group") renameGroup(target.dataset.group);
     if (action === "delete-group") deleteGroup(target.dataset.group);
     if (action === "account") { state.modal = { type: "account" }; render(); }
-    if (action === "sign-out") { clearSession(); state.modal = null; render(); }
+    if (action === "sign-out") await signOut();
+    if (action === "export-data") {
+      try { await exportData(); } catch (error) { showToast(error.message); }
+    }
+    if (action === "delete-account") {
+      try { await deleteAccount(); } catch (error) { showToast(error.message); }
+    }
+    if (action === "privacy") { location.href = "/privacy.html"; }
+    if (action === "support") { location.href = "/support.html"; }
     if (action === "weekday") { target.classList.toggle("active"); }
     if (action === "end-item") {
       const item = state.modal.item;
@@ -634,7 +685,7 @@
 
   render();
   void loadAuthConfig();
-  if (hasSession()) void sync();
+  void restoreSession();
   window.addEventListener("online", () => void sync());
   window.addEventListener("load", renderGoogleButton);
 })();

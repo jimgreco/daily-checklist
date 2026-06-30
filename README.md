@@ -20,6 +20,12 @@ The debug iOS build connects to `http://127.0.0.1:8787`, which works from the iO
 
 The server also hosts the mobile website at `http://127.0.0.1:8787/`. On localhost, use **Local dev sign in**. In production, the website and API share the same origin.
 
+Local development can run without Postgres and will use `server/data/database.json`. Production requires Postgres:
+
+```sh
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/daily_checklist npm start
+```
+
 ## Authentication setup
 
 The authentication contract mirrors CubbyLog:
@@ -32,6 +38,17 @@ The authentication contract mirrors CubbyLog:
 
 Provider tokens are exchanged for Daily's own short-lived access token and rotating refresh token. Refresh tokens are stored in the iOS Keychain.
 
+On the web, the rotating refresh token is stored in an `HttpOnly` cookie so the user stays signed in without exposing the refresh token to JavaScript. The iOS app stores refresh tokens in Keychain and is designed to keep users signed in across app launches.
+
+## Privacy and account management
+
+Daily stores checklist items, groups, completion history, reminder settings, sync metadata, and account identity fields returned by Google or Apple. The iOS app keeps an offline cache in app documents storage, and the web app keeps an offline cache in browser storage.
+
+Signed-in users can export their synced checklist data and delete their server-side account from the Account screen. The public web support pages are served at:
+
+- `https://daily-checklist.jim-greco.com/privacy.html`
+- `https://daily-checklist.jim-greco.com/support.html`
+
 ## Offline and conflict behavior
 
 The local cache is authoritative while offline. Every add, edit, completion, deletion, and evening-alert change is appended to a durable mutation queue. After authentication and whenever connectivity returns, queued mutations are uploaded.
@@ -43,7 +60,7 @@ The server merges item fields independently using timestamp plus device-ID order
 Every push to `main` runs `.github/workflows/publish.yml`:
 
 - tests and container-builds the Node server;
-- deploys `server/` to the shared EC2 host and rebuilds the `daily` Docker Compose service;
+- deploys `server/` to the shared EC2 host, ensures the `daily_checklist` Postgres database exists, migrates the old `daily-data/database.json` file into Postgres if Postgres is still empty, and rebuilds the `daily` Docker Compose service;
 - builds the iOS app, creates a current App Store provisioning profile, archives, and uploads to TestFlight.
 
 Repository secrets required:
@@ -51,5 +68,9 @@ Repository secrets required:
 - EC2: `EC2_HOST`, `EC2_USER`, `EC2_SSH_KEY`, `EC2_SSH_KNOWN_HOSTS`, `DAILY_SESSION_SECRET`
 - OAuth/runtime: `GOOGLE_IOS_CLIENT_ID`, `GOOGLE_IOS_REVERSED_CLIENT_ID`, `GOOGLE_WEB_CLIENT_ID`, `APPLE_WEB_CLIENT_ID`, `APPLE_WEB_KEY_ID`, `APPLE_WEB_PRIVATE_KEY_BASE64`, `IOS_API_BASE_URL`
 - Apple delivery: `APP_STORE_CONNECT_KEY_ID`, `APP_STORE_CONNECT_ISSUER_ID`, `APP_STORE_CONNECT_API_KEY`, `IOS_DIST_CERT_P12`, `IOS_DIST_CERT_PASSWORD`, `KEYCHAIN_PASSWORD`
+
+Optional runtime secret:
+
+- `DAILY_DATABASE_URL` overrides the default shared Postgres URL `postgresql://admin:${DB_PASSWORD}@db:5432/daily_checklist`.
 
 Before the first upload, create the Daily app record in App Store Connect for bundle ID `com.jimgreco.dailychecklist`. The workflow can register the bundle ID and provisioning profile, but Apple does not expose app-record creation through the same provisioning API.

@@ -74,6 +74,37 @@ final class AuthStore: ObservableObject {
         user = nil
     }
 
+    func exportData() async -> String? {
+        guard let token = await validAccessToken() else {
+            errorMessage = "Sign in again to export your data."
+            return nil
+        }
+        do {
+            let data = try await api.exportData(token: token)
+            errorMessage = nil
+            return String(data: data, encoding: .utf8)
+        } catch {
+            errorMessage = "Unable to export your data. Try again later."
+            return nil
+        }
+    }
+
+    func deleteAccount() async -> Bool {
+        guard let token = await validAccessToken() else {
+            errorMessage = "Sign in again to delete your account."
+            return false
+        }
+        do {
+            try await api.deleteAccount(token: token)
+            signOut()
+            errorMessage = nil
+            return true
+        } catch {
+            errorMessage = "Unable to delete your account. Try again later."
+            return false
+        }
+    }
+
     private func authenticate(_ operation: () async throws -> AuthResponse) async {
         isLoading = true
         defer { isLoading = false }

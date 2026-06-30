@@ -51,6 +51,14 @@ struct APIClient {
         try await request(path: "api/sync", method: "POST", token: token, body: encoder.encode(requestBody))
     }
 
+    func exportData(token: String) async throws -> Data {
+        try await requestData(path: "api/export", method: "GET", token: token, body: nil)
+    }
+
+    func deleteAccount(token: String) async throws {
+        let _: EmptyResponse = try await request(path: "api/account", method: "DELETE", token: token, body: nil)
+    }
+
     private func post<T: Decodable, Body: Encodable>(path: String, body: Body) async throws -> T {
         try await request(path: path, method: "POST", token: nil, body: encoder.encode(body))
     }
@@ -70,7 +78,26 @@ struct APIClient {
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw APIError.badResponse(0) }
         guard (200..<300).contains(http.statusCode) else { throw APIError.badResponse(http.statusCode) }
+        if T.self == EmptyResponse.self { return EmptyResponse() as! T }
         return try decoder.decode(T.self, from: data)
+    }
+
+    private func requestData(
+        path: String,
+        method: String,
+        token: String?,
+        body: Data?
+    ) async throws -> Data {
+        let url = baseURL.appending(path: path)
+        var request = URLRequest(url: url)
+        request.httpMethod = method
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        if let token { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
+        request.httpBody = body
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse else { throw APIError.badResponse(0) }
+        guard (200..<300).contains(http.statusCode) else { throw APIError.badResponse(http.statusCode) }
+        return data
     }
 
     private var decoder: JSONDecoder {
@@ -85,3 +112,5 @@ struct APIClient {
         return encoder
     }
 }
+
+private struct EmptyResponse: Decodable {}

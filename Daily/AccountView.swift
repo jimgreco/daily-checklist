@@ -1,11 +1,15 @@
 import AuthenticationServices
 import GoogleSignIn
 import SwiftUI
+import UIKit
 
 struct AccountView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.openURL) private var openURL
     @EnvironmentObject private var authStore: AuthStore
     @EnvironmentObject private var store: ChecklistStore
+    @State private var showingDeleteConfirmation = false
+    @State private var accountMessage: String?
 
     var body: some View {
         NavigationStack {
@@ -31,9 +35,37 @@ struct AccountView: View {
                     }
                     .buttonStyle(.borderedProminent)
 
+                    Button("Copy data export") {
+                        Task {
+                            if let export = await authStore.exportData() {
+                                UIPasteboard.general.string = export
+                                accountMessage = "Data export copied."
+                            }
+                        }
+                    }
+                    .buttonStyle(.bordered)
+
+                    Button("Privacy") {
+                        if let url = URL(string: "https://daily-checklist.jim-greco.com/privacy.html") {
+                            openURL(url)
+                        }
+                    }
+                    .buttonStyle(.bordered)
+
+                    Button("Support") {
+                        if let url = URL(string: "https://daily-checklist.jim-greco.com/support.html") {
+                            openURL(url)
+                        }
+                    }
+                    .buttonStyle(.bordered)
+
                     Button("Sign out", role: .destructive) {
                         authStore.signOut()
                         store.activateAnonymousAccount()
+                    }
+
+                    Button("Delete account", role: .destructive) {
+                        showingDeleteConfirmation = true
                     }
                 } else {
                     VStack(spacing: 8) {
@@ -94,6 +126,13 @@ struct AccountView: View {
                         .multilineTextAlignment(.center)
                         .padding(.horizontal)
                 }
+                if let accountMessage {
+                    Text(accountMessage)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal)
+                }
                 Spacer()
             }
             .padding()
@@ -110,6 +149,23 @@ struct AccountView: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { dismiss() }
                 }
+            }
+            .confirmationDialog(
+                "Delete Account?",
+                isPresented: $showingDeleteConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button("Delete Account", role: .destructive) {
+                    Task {
+                        if await authStore.deleteAccount() {
+                            store.activateAnonymousAccount()
+                            dismiss()
+                        }
+                    }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("This removes your synced checklist data from the server. Local offline copies on other devices may remain until those devices sign out or clear local data.")
             }
         }
     }

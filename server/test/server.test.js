@@ -8,6 +8,7 @@ const {
   validSyncRequest,
   stampWins
 } = require("../src/server");
+const { hasData } = require("../src/migrate-json-to-postgres");
 
 let listener;
 let baseURL;
@@ -30,6 +31,8 @@ test("serves the mobile website and public auth configuration", async () => {
   const page = await fetch(`${baseURL}/`);
   assert.equal(page.status, 200);
   assert.match(page.headers.get("content-type"), /^text\/html/);
+  assert.match(page.headers.get("content-security-policy"), /frame-ancestors 'none'/);
+  assert.equal(page.headers.get("x-frame-options"), "DENY");
   assert.match(await page.text(), /Daily Checklist/);
 
   const config = await fetch(`${baseURL}/auth/config`);
@@ -38,6 +41,76 @@ test("serves the mobile website and public auth configuration", async () => {
     google_client_id: null,
     apple_client_id: null
   });
+});
+
+test("dev sign-in sets an HttpOnly refresh cookie and logout clears it", async () => {
+  const response = await fetch(`${baseURL}/auth/dev`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ email: "cookie-test@daily.local", name: "Cookie Test" })
+  });
+  assert.equal(response.status, 200);
+  const cookie = response.headers.get("set-cookie");
+  assert.match(cookie, /daily_refresh=/);
+  assert.match(cookie, /HttpOnly/);
+  assert.match(cookie, /SameSite=Lax/);
+
+  const logout = await fetch(`${baseURL}/auth/logout`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      cookie
+    },
+    body: JSON.stringify({})
+  });
+  assert.equal(logout.status, 204);
+  assert.match(logout.headers.get("set-cookie"), /Max-Age=0/);
+});
+
+test("authenticated users can export and delete account data", async () => {
+  const login = await fetch(`${baseURL}/auth/dev`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ email: "privacy-test@daily.local", name: "Privacy Test" })
+  });
+  const auth = await login.json();
+  const sync = await fetch(`${baseURL}/api/sync`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${auth.token}`
+    },
+    body: JSON.stringify({
+      deviceID: "privacy-device",
+      mutations: [{
+        id: "privacy-create",
+        itemID: "privacy-item",
+        kind: "upsert",
+        stamp: "2026-06-30T12:00:00.000Z",
+        changedFields: ["title", "createdAt"],
+        item: { title: "Export me", createdAt: "2026-06-30T12:00:00.000Z" }
+      }]
+    })
+  });
+  assert.equal(sync.status, 200);
+
+  const exported = await fetch(`${baseURL}/api/export`, {
+    headers: { authorization: `Bearer ${auth.token}` }
+  });
+  assert.equal(exported.status, 200);
+  assert.match(exported.headers.get("content-disposition"), /daily-checklist-export\.json/);
+  assert.equal((await exported.json()).checklist.items[0].title, "Export me");
+
+  const deleted = await fetch(`${baseURL}/api/account`, {
+    method: "DELETE",
+    headers: { authorization: `Bearer ${auth.token}` }
+  });
+  assert.equal(deleted.status, 204);
+
+  const afterDelete = await fetch(`${baseURL}/auth/me`, {
+    headers: { authorization: `Bearer ${auth.token}` }
+  });
+  assert.equal(afterDelete.status, 404);
 });
 
 test("Apple web authorization code sign-in requires server credentials", async () => {
@@ -370,4 +443,10 @@ test("manual order is merged and materialized consistently", () => {
   }
 
   assert.deepEqual(materializeAccount(state).items.map((item) => item.title), ["First", "Second"]);
+});
+
+test("JSON migration data detection protects existing Postgres state", () => {
+  assert.equal(hasData({ users: {}, identities: {}, sessions: {}, accounts: {} }), false);
+  assert.equal(hasData({ users: { user: { id: "user" } }, identities: {}, sessions: {}, accounts: {} }), true);
+  assert.equal(hasData({ users: {}, identities: {}, sessions: {}, accounts: { user: { items: {} } } }), true);
 });

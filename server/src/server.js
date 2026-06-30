@@ -5,47 +5,54 @@ const crypto = require("node:crypto");
 const jwt = require("jsonwebtoken");
 const { OAuth2Client } = require("google-auth-library");
 const appleSignin = require("apple-signin-auth");
+const { createStore } = require("./database");
 
 const port = Number(process.env.PORT || 8787);
-const dataFile = process.env.DATA_FILE || path.join(__dirname, "..", "data", "database.json");
 const sessionSecret = process.env.SESSION_SECRET || "daily-local-development-secret-change-me";
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 const webRoot = path.join(__dirname, "..", "web");
-let writeQueue = Promise.resolve();
+const store = createStore();
+const isProduction = process.env.NODE_ENV === "production";
+const refreshCookieName = "daily_refresh";
 
-function emptyDatabase() {
-  return { users: {}, identities: {}, sessions: {}, accounts: {} };
+function securityHeaders() {
+  return {
+    "x-content-type-options": "nosniff",
+    "x-frame-options": "DENY",
+    "referrer-policy": "same-origin",
+    "permissions-policy": "camera=(), microphone=(), geolocation=()",
+    "cross-origin-opener-policy": "same-origin",
+    "content-security-policy": [
+      "default-src 'self'",
+      "base-uri 'self'",
+      "object-src 'none'",
+      "frame-ancestors 'none'",
+      "script-src 'self' https://accounts.google.com https://appleid.cdn-apple.com",
+      "style-src 'self' 'unsafe-inline'",
+      "img-src 'self' https: data:",
+      "connect-src 'self'",
+      "frame-src https://accounts.google.com https://appleid.apple.com"
+    ].join("; ")
+  };
 }
 
-async function readDatabase() {
-  try {
-    return { ...emptyDatabase(), ...JSON.parse(await fs.readFile(dataFile, "utf8")) };
-  } catch (error) {
-    if (error.code === "ENOENT") return emptyDatabase();
-    throw error;
-  }
-}
-
-async function updateDatabase(operation) {
-  const result = writeQueue.then(async () => {
-    const database = await readDatabase();
-    const value = await operation(database);
-    await fs.mkdir(path.dirname(dataFile), { recursive: true });
-    const temporary = `${dataFile}.${crypto.randomUUID()}.tmp`;
-    await fs.writeFile(temporary, JSON.stringify(database, null, 2));
-    await fs.rename(temporary, dataFile);
-    return value;
-  });
-  writeQueue = result.catch(() => {});
-  return result;
-}
-
-function send(response, status, body) {
+function send(response, status, body, headers = {}) {
   response.writeHead(status, {
+    ...securityHeaders(),
     "content-type": "application/json; charset=utf-8",
-    "cache-control": "no-store"
+    "cache-control": "no-store",
+    ...headers
   });
   response.end(body === undefined ? "" : JSON.stringify(body));
+}
+
+function noContent(response, headers = {}) {
+  response.writeHead(204, {
+    ...securityHeaders(),
+    "cache-control": "no-store",
+    ...headers
+  });
+  response.end();
 }
 
 const contentTypes = {
@@ -62,9 +69,9 @@ async function sendWebFile(response, relativePath) {
   try {
     const body = await fs.readFile(resolved);
     response.writeHead(200, {
+      ...securityHeaders(),
       "content-type": contentTypes[path.extname(resolved)] || "application/octet-stream",
-      "cache-control": path.basename(resolved) === "index.html" ? "no-cache" : "public, max-age=300",
-      "x-content-type-options": "nosniff"
+      "cache-control": path.basename(resolved) === "index.html" ? "no-cache" : "public, max-age=300"
     });
     response.end(body);
     return true;
@@ -85,6 +92,70 @@ async function readJSON(request) {
   } catch {
     throw Object.assign(new Error("Invalid JSON"), { status: 400 });
   }
+}
+
+function parseCookies(request) {
+  const header = request.headers.cookie || "";
+  return Object.fromEntries(header.split(";").map((cookie) => {
+    const [name, ...parts] = cookie.trim().split("=");
+    return [name, decodeURIComponent(parts.join("=") || "")];
+  }).filter(([name]) => name));
+}
+
+function serializeCookie(name, value, options = {}) {
+  const parts = [`${name}=${encodeURIComponent(value)}`];
+  if (options.maxAge != null) parts.push(`Max-Age=${options.maxAge}`);
+  parts.push(`Path=${options.path || "/"}`);
+  parts.push(`SameSite=${options.sameSite || "Lax"}`);
+  if (options.httpOnly !== false) parts.push("HttpOnly");
+  if (options.secure !== false && isProduction) parts.push("Secure");
+  return parts.join("; ");
+}
+
+function refreshCookie(refreshToken) {
+  return serializeCookie(refreshCookieName, refreshToken, {
+    maxAge: 90 * 86400,
+    httpOnly: true,
+    sameSite: "Lax"
+  });
+}
+
+function clearRefreshCookie() {
+  return serializeCookie(refreshCookieName, "", {
+    maxAge: 0,
+    httpOnly: true,
+    sameSite: "Lax"
+  });
+}
+
+const rateBuckets = new Map();
+
+function clientIP(request) {
+  if (process.env.TRUST_PROXY === "true") {
+    const forwarded = String(request.headers["x-forwarded-for"] || "").split(",")[0].trim();
+    if (forwarded) return forwarded;
+  }
+  return request.socket.remoteAddress || "unknown";
+}
+
+function rateLimit(request, key, { limit, windowMs }) {
+  const bucketKey = `${key}:${clientIP(request)}`;
+  const now = Date.now();
+  const bucket = rateBuckets.get(bucketKey);
+  if (!bucket || bucket.resetAt <= now) {
+    rateBuckets.set(bucketKey, { count: 1, resetAt: now + windowMs });
+    return null;
+  }
+  bucket.count += 1;
+  if (bucket.count <= limit) return null;
+  return Math.max(1, Math.ceil((bucket.resetAt - now) / 1000));
+}
+
+function enforceRateLimit(request, response, key, options) {
+  const retryAfter = rateLimit(request, key, options);
+  if (!retryAfter) return false;
+  send(response, 429, { error: "Too many requests. Try again shortly." }, { "retry-after": String(retryAfter) });
+  return true;
 }
 
 function hash(value) {
@@ -116,6 +187,17 @@ function createSession(database, user) {
 
 function normalizeEmail(email) {
   return String(email || "").trim().toLowerCase();
+}
+
+function safeProfileImageURL(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return null;
+  try {
+    const url = new URL(raw);
+    return url.protocol === "https:" ? url.toString() : null;
+  } catch {
+    return null;
+  }
 }
 
 function chooseCanonicalUser(users) {
@@ -197,7 +279,8 @@ function updateUserProfile(user, profile, email) {
   if (!user.name || existingNameWasEmail || (profileName && !profileNameIsEmail)) {
     user.name = profileName || email;
   }
-  if (profile.profileImageURL) user.profileImageURL = profile.profileImageURL;
+  const profileImageURL = safeProfileImageURL(profile.profileImageURL);
+  if (profileImageURL) user.profileImageURL = profileImageURL;
   user.profileImageURL ||= null;
 }
 
@@ -213,7 +296,7 @@ function upsertUser(database, provider, providerID, profile) {
       id: newID(),
       email,
       name: profile.name || profile.email,
-      profileImageURL: profile.profileImageURL || null,
+      profileImageURL: safeProfileImageURL(profile.profileImageURL),
       createdAt: new Date().toISOString()
     };
     database.users[user.id] = user;
@@ -298,6 +381,85 @@ function stampWins(incoming, current) {
 
 const itemFields = ["title", "notes", "schedule", "customWeekdays", "reminderMinutes", "createdAt", "startDate", "endedAt", "groupID", "sortOrder"];
 const groupFields = ["name", "sortOrder"];
+
+function validID(value) {
+  return typeof value === "string" && /^[a-z0-9._:-]{1,120}$/i.test(value);
+}
+
+function validISODate(value, { nullable = true } = {}) {
+  if (value == null) return nullable;
+  return typeof value === "string" && !Number.isNaN(Date.parse(value)) && value.length <= 40;
+}
+
+function validDateKey(value) {
+  return typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value);
+}
+
+function validFiniteNumber(value, { nullable = true, min = -1_000_000, max = 1_000_000 } = {}) {
+  if (value == null) return nullable;
+  return typeof value === "number" && Number.isFinite(value) && value >= min && value <= max;
+}
+
+function validWeekdays(value) {
+  return Array.isArray(value)
+    && value.length <= 7
+    && value.every((day) => Number.isInteger(day) && day >= 1 && day <= 7)
+    && new Set(value).size === value.length;
+}
+
+function validChangedFields(value, allowed) {
+  return value == null || (
+    Array.isArray(value)
+    && value.length <= allowed.length
+    && value.every((field) => allowed.includes(field))
+  );
+}
+
+function validItemPayload(item = {}) {
+  return item && typeof item === "object"
+    && (item.title == null || (typeof item.title === "string" && item.title.length <= 120))
+    && (item.notes == null || (typeof item.notes === "string" && item.notes.length <= 2000))
+    && (item.schedule == null || ["everyDay", "weekdays", "weekends", "custom"].includes(item.schedule))
+    && (item.customWeekdays == null || validWeekdays(item.customWeekdays))
+    && validFiniteNumber(item.reminderMinutes, { nullable: true, min: 0, max: 1439 })
+    && validISODate(item.createdAt)
+    && validISODate(item.startDate)
+    && validISODate(item.endedAt)
+    && (item.groupID == null || validID(item.groupID))
+    && validFiniteNumber(item.sortOrder);
+}
+
+function validGroupPayload(group = {}) {
+  return group && typeof group === "object"
+    && (group.name == null || (typeof group.name === "string" && group.name.length <= 120))
+    && validFiniteNumber(group.sortOrder);
+}
+
+function validMutation(mutation) {
+  if (!mutation || typeof mutation !== "object") return false;
+  if (!validID(mutation.id) || !validISODate(mutation.stamp, { nullable: false })) return false;
+  if (mutation.kind === "eveningReminder") {
+    return mutation.eveningReminderMinutes == null
+      || (Number.isInteger(mutation.eveningReminderMinutes)
+        && mutation.eveningReminderMinutes >= 0
+        && mutation.eveningReminderMinutes <= 1439);
+  }
+  if (mutation.kind === "groupUpsert") {
+    return validID(mutation.groupID)
+      && validChangedFields(mutation.changedFields, groupFields)
+      && validGroupPayload(mutation.group);
+  }
+  if (mutation.kind === "groupDelete") return validID(mutation.groupID);
+  if (!validID(mutation.itemID)) return false;
+  if (mutation.kind === "delete") return true;
+  if (mutation.kind === "completion") {
+    return validDateKey(mutation.completionDate) && typeof mutation.completed === "boolean";
+  }
+  if (mutation.kind === "upsert") {
+    return validChangedFields(mutation.changedFields, itemFields) && validItemPayload(mutation.item);
+  }
+  return false;
+}
 
 function applyMutation(account, mutation, deviceID) {
   if (!mutation?.id || !mutation.kind || !mutation.stamp) return false;
@@ -432,7 +594,8 @@ function validSyncRequest(body) {
     && typeof body.deviceID === "string"
     && /^[a-z0-9-]{8,80}$/i.test(body.deviceID)
     && Array.isArray(body.mutations)
-    && body.mutations.length <= 5000;
+    && body.mutations.length <= 5000
+    && body.mutations.every(validMutation);
 }
 
 async function handleAuth(request, response, pathname) {
@@ -446,25 +609,27 @@ async function handleAuth(request, response, pathname) {
   }
 
   if (pathname === "/auth/dev" && request.method === "POST") {
+    if (enforceRateLimit(request, response, "auth-dev", { limit: 10, windowMs: 15 * 60_000 })) return true;
     if (process.env.NODE_ENV === "production") return send(response, 404, { error: "Not found" });
-    const auth = await updateDatabase((database) => {
+    const auth = await store.update((database) => {
       const user = upsertUser(database, "dev", body.email || "dev@daily.local", {
         email: body.email || "dev@daily.local",
         name: body.name || "Local Dev"
       });
       return createSession(database, user);
     });
-    return send(response, 200, auth);
+    return send(response, 200, auth, { "set-cookie": refreshCookie(auth.refreshToken) });
   }
 
   if (pathname === "/auth/google" && request.method === "POST") {
+    if (enforceRateLimit(request, response, "auth-google", { limit: 20, windowMs: 15 * 60_000 })) return true;
     if (!body.idToken) return send(response, 400, { error: "idToken required" });
     const audiences = [process.env.GOOGLE_CLIENT_ID, process.env.GOOGLE_WEB_CLIENT_ID].filter(Boolean);
     if (!audiences.length) return send(response, 503, { error: "Google Sign-In is not configured" });
     const ticket = await googleClient.verifyIdToken({ idToken: body.idToken, audience: audiences });
     const payload = ticket.getPayload();
     if (!payload?.sub || !payload.email) return send(response, 401, { error: "Invalid Google token" });
-    const auth = await updateDatabase((database) => {
+    const auth = await store.update((database) => {
       const user = upsertUser(database, "google", payload.sub, {
         email: payload.email,
         name: payload.name || payload.email,
@@ -472,10 +637,11 @@ async function handleAuth(request, response, pathname) {
       });
       return createSession(database, user);
     });
-    return send(response, 200, auth);
+    return send(response, 200, auth, { "set-cookie": refreshCookie(auth.refreshToken) });
   }
 
   if (pathname === "/auth/apple" && request.method === "POST") {
+    if (enforceRateLimit(request, response, "auth-apple", { limit: 20, windowMs: 15 * 60_000 })) return true;
     const identityToken = body.identityToken || (body.authorizationCode
       ? await exchangeAppleAuthorizationCode(body.authorizationCode)
       : null);
@@ -492,29 +658,46 @@ async function handleAuth(request, response, pathname) {
     if (!payload?.sub) return send(response, 401, { error: "Invalid Apple token" });
     const email = payload.email || `${payload.sub}@privaterelay.appleid.com`;
     const providedName = [body.fullName?.givenName, body.fullName?.familyName].filter(Boolean).join(" ");
-    const auth = await updateDatabase((database) => {
+    const auth = await store.update((database) => {
       const user = upsertUser(database, "apple", payload.sub, { email, name: providedName || email });
       return createSession(database, user);
     });
-    return send(response, 200, auth);
+    return send(response, 200, auth, { "set-cookie": refreshCookie(auth.refreshToken) });
   }
 
   if (pathname === "/auth/refresh" && request.method === "POST") {
-    const tokenHash = hash(body.refreshToken || "");
-    const auth = await updateDatabase((database) => {
+    if (enforceRateLimit(request, response, "auth-refresh", { limit: 60, windowMs: 15 * 60_000 })) return true;
+    const cookieToken = parseCookies(request)[refreshCookieName];
+    const refreshToken = body.refreshToken || cookieToken || "";
+    const tokenHash = hash(refreshToken);
+    const auth = await store.update((database) => {
       const session = database.sessions[tokenHash];
       if (!session || session.expiresAt < new Date().toISOString()) return null;
       delete database.sessions[tokenHash];
       const user = database.users[session.userId];
       return user ? createSession(database, user) : null;
     });
-    return auth ? send(response, 200, auth) : send(response, 401, { error: "Invalid refresh token" });
+    return auth
+      ? send(response, 200, auth, { "set-cookie": refreshCookie(auth.refreshToken) })
+      : send(response, 401, { error: "Invalid refresh token" }, { "set-cookie": clearRefreshCookie() });
+  }
+
+  if (pathname === "/auth/logout" && request.method === "POST") {
+    const cookieToken = parseCookies(request)[refreshCookieName];
+    const refreshToken = body.refreshToken || cookieToken || "";
+    if (refreshToken) {
+      await store.update((database) => {
+        delete database.sessions[hash(refreshToken)];
+        return null;
+      });
+    }
+    return noContent(response, { "set-cookie": clearRefreshCookie() });
   }
 
   if (pathname === "/auth/me" && request.method === "GET") {
     const claims = authenticate(request);
     if (!claims) return send(response, 401, { error: "Unauthorized" });
-    const database = await readDatabase();
+    const database = await store.read();
     const user = database.users[claims.userId];
     return user ? send(response, 200, user) : send(response, 404, { error: "User not found" });
   }
@@ -525,6 +708,7 @@ const server = http.createServer(async (request, response) => {
   try {
     const pathname = new URL(request.url, "http://localhost").pathname;
     if (request.method === "GET" && pathname === "/health") {
+      await store.health();
       return send(response, 200, { ok: true });
     }
     if (pathname.startsWith("/auth/")) {
@@ -532,11 +716,12 @@ const server = http.createServer(async (request, response) => {
       if (handled !== false) return;
     }
     if (request.method === "POST" && pathname === "/api/sync") {
+      if (enforceRateLimit(request, response, "api-sync", { limit: 240, windowMs: 15 * 60_000 })) return;
       const claims = authenticate(request);
       if (!claims) return send(response, 401, { error: "Unauthorized" });
       const body = await readJSON(request);
       if (!validSyncRequest(body)) return send(response, 422, { error: "Invalid sync request" });
-      const result = await updateDatabase((database) => {
+      const result = await store.update((database) => {
         const account = database.accounts[claims.userId] ||= {
           items: {},
           groups: {},
@@ -551,6 +736,44 @@ const server = http.createServer(async (request, response) => {
       });
       return send(response, 200, result);
     }
+    if (request.method === "GET" && pathname === "/api/export") {
+      if (enforceRateLimit(request, response, "api-export", { limit: 30, windowMs: 15 * 60_000 })) return;
+      const claims = authenticate(request);
+      if (!claims) return send(response, 401, { error: "Unauthorized" });
+      const database = await store.read();
+      const user = database.users[claims.userId];
+      if (!user) return send(response, 404, { error: "User not found" });
+      const account = database.accounts[claims.userId] || {
+        items: {},
+        groups: {},
+        appliedMutations: {},
+        eveningReminder: null
+      };
+      return send(response, 200, {
+        exportedAt: new Date().toISOString(),
+        user,
+        checklist: materializeAccount(account)
+      }, {
+        "content-disposition": "attachment; filename=\"daily-checklist-export.json\""
+      });
+    }
+    if (request.method === "DELETE" && pathname === "/api/account") {
+      if (enforceRateLimit(request, response, "api-delete-account", { limit: 5, windowMs: 60 * 60_000 })) return;
+      const claims = authenticate(request);
+      if (!claims) return send(response, 401, { error: "Unauthorized" });
+      await store.update((database) => {
+        delete database.accounts[claims.userId];
+        delete database.users[claims.userId];
+        for (const [identity, userID] of Object.entries(database.identities || {})) {
+          if (userID === claims.userId) delete database.identities[identity];
+        }
+        for (const [tokenHash, session] of Object.entries(database.sessions || {})) {
+          if (session.userId === claims.userId) delete database.sessions[tokenHash];
+        }
+        return null;
+      });
+      return noContent(response, { "set-cookie": clearRefreshCookie() });
+    }
     if (request.method === "GET") {
       const relativePath = pathname === "/" ? "index.html" : pathname.slice(1);
       if (await sendWebFile(response, relativePath)) return;
@@ -558,7 +781,11 @@ const server = http.createServer(async (request, response) => {
     return send(response, 404, { error: "Not found" });
   } catch (error) {
     if (!error.quiet && (!error.status || error.status >= 500)) console.error(error);
-    return send(response, error.status || 500, { error: error.message || "Internal server error" });
+    const status = error.status || 500;
+    const message = status >= 500 && isProduction
+      ? "Internal server error"
+      : error.message || "Internal server error";
+    return send(response, status, { error: error.expose === false ? "Internal server error" : message });
   }
 });
 

@@ -94,6 +94,7 @@ jobs:
           DAILY_SESSION_SECRET: ${{ secrets.DAILY_SESSION_SECRET }}
           GOOGLE_IOS_CLIENT_ID: ${{ secrets.GOOGLE_IOS_CLIENT_ID }}
           GOOGLE_WEB_CLIENT_ID: ${{ secrets.GOOGLE_WEB_CLIENT_ID }}
+          DAILY_DATABASE_URL: ${{ secrets.DAILY_DATABASE_URL }}
           APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID || 'V6JPQCD336' }}
           APPLE_WEB_CLIENT_ID: ${{ secrets.APPLE_WEB_CLIENT_ID }}
           APPLE_WEB_KEY_ID: ${{ secrets.APPLE_WEB_KEY_ID }}
@@ -105,7 +106,7 @@ jobs:
             -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
             -o StrictHostKeyChecking=yes \
             "$EC2_USER@$EC2_HOST" \
-            "DAILY_SESSION_SECRET='$DAILY_SESSION_SECRET' DAILY_GOOGLE_CLIENT_ID='$GOOGLE_IOS_CLIENT_ID' DAILY_GOOGLE_WEB_CLIENT_ID='$GOOGLE_WEB_CLIENT_ID' DAILY_APPLE_TEAM_ID='$APPLE_TEAM_ID' DAILY_APPLE_WEB_CLIENT_ID='$APPLE_WEB_CLIENT_ID' DAILY_APPLE_WEB_KEY_ID='$APPLE_WEB_KEY_ID' DAILY_APPLE_WEB_PRIVATE_KEY_BASE64='$APPLE_WEB_PRIVATE_KEY_BASE64' DAILY_APPLE_WEB_REDIRECT_URI='$APPLE_WEB_REDIRECT_URI' bash -se" <<'REMOTE'
+            "DAILY_SESSION_SECRET='$DAILY_SESSION_SECRET' DAILY_GOOGLE_CLIENT_ID='$GOOGLE_IOS_CLIENT_ID' DAILY_GOOGLE_WEB_CLIENT_ID='$GOOGLE_WEB_CLIENT_ID' DAILY_DATABASE_URL='$DAILY_DATABASE_URL' DAILY_APPLE_TEAM_ID='$APPLE_TEAM_ID' DAILY_APPLE_WEB_CLIENT_ID='$APPLE_WEB_CLIENT_ID' DAILY_APPLE_WEB_KEY_ID='$APPLE_WEB_KEY_ID' DAILY_APPLE_WEB_PRIVATE_KEY_BASE64='$APPLE_WEB_PRIVATE_KEY_BASE64' DAILY_APPLE_WEB_REDIRECT_URI='$APPLE_WEB_REDIRECT_URI' bash -se" <<'REMOTE'
           set -euo pipefail
           cd "$HOME/deploy"
 
@@ -129,6 +130,11 @@ jobs:
           update_env DAILY_SESSION_SECRET "$DAILY_SESSION_SECRET"
           update_env DAILY_GOOGLE_CLIENT_ID "$DAILY_GOOGLE_CLIENT_ID"
           update_env DAILY_GOOGLE_WEB_CLIENT_ID "$DAILY_GOOGLE_WEB_CLIENT_ID"
+          if [ -n "$DAILY_DATABASE_URL" ]; then
+            update_env DAILY_DATABASE_URL "$DAILY_DATABASE_URL"
+          else
+            update_env DAILY_DATABASE_URL 'postgresql://admin:${DB_PASSWORD}@db:5432/daily_checklist'
+          fi
           update_env DAILY_APPLE_BUNDLE_ID "com.jimgreco.dailychecklist"
           update_env DAILY_APPLE_TEAM_ID "$DAILY_APPLE_TEAM_ID"
           update_env DAILY_APPLE_WEB_CLIENT_ID "$DAILY_APPLE_WEB_CLIENT_ID"
@@ -136,9 +142,23 @@ jobs:
           update_env DAILY_APPLE_WEB_PRIVATE_KEY_BASE64 "$DAILY_APPLE_WEB_PRIVATE_KEY_BASE64"
           update_env DAILY_APPLE_WEB_REDIRECT_URI "$DAILY_APPLE_WEB_REDIRECT_URI"
 
-          sudo mkdir -p daily-data
-          sudo chown -R 1000:1000 daily-data
-          docker-compose --profile daily up -d --build daily
+          docker-compose up -d db
+          for attempt in $(seq 1 60); do
+            if docker-compose exec -T db pg_isready -U admin; then
+              break
+            fi
+            sleep 2
+          done
+          docker-compose exec -T db psql -U admin -d postgres -tc "SELECT 1 FROM pg_database WHERE datname = 'daily_checklist'" | grep -q 1 \
+            || docker-compose exec -T db psql -U admin -d postgres -c "CREATE DATABASE daily_checklist"
+          docker-compose --profile daily build daily
+          if [ -f daily-data/database.json ]; then
+            docker-compose --profile daily run --rm \
+              -v "$PWD/daily-data:/legacy-daily-data:ro" \
+              -e MIGRATE_JSON_FILE=/legacy-daily-data/database.json \
+              daily node src/migrate-json-to-postgres.js
+          fi
+          docker-compose --profile daily up -d daily
           for attempt in $(seq 1 60); do
             if docker-compose --profile daily exec -T daily node -e \
               'fetch("http://127.0.0.1:8787/health").then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))'; then
