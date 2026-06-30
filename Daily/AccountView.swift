@@ -59,11 +59,9 @@ struct AccountView: View {
                                     return
                                 }
                                 Task {
-                                    await authStore.signInWithApple(credential)
-                                    if let userID = authStore.user?.id {
-                                        store.activateAuthenticatedAccount(userID)
+                                    await finishSignIn {
+                                        await authStore.signInWithApple(credential)
                                     }
-                                    await store.sync(using: authStore)
                                 }
                             case .failure(let error):
                                 authStore.errorMessage = error.localizedDescription
@@ -78,11 +76,9 @@ struct AccountView: View {
                         #if DEBUG
                         Button("Local development sign in") {
                             Task {
-                                await authStore.devSignIn()
-                                if let userID = authStore.user?.id {
-                                    store.activateAuthenticatedAccount(userID)
+                                await finishSignIn {
+                                    await authStore.devSignIn()
                                 }
-                                await store.sync(using: authStore)
                             }
                         }
                         .font(.footnote.weight(.semibold))
@@ -145,13 +141,19 @@ struct AccountView: View {
             }
             let profileImageURL = result?.user.profile?.imageURL(withDimension: 120)
             Task { @MainActor in
-                await authStore.signInWithGoogle(idToken: token, profileImageURL: profileImageURL)
-                if let userID = authStore.user?.id {
-                    store.activateAuthenticatedAccount(userID)
+                await finishSignIn {
+                    await authStore.signInWithGoogle(idToken: token, profileImageURL: profileImageURL)
                 }
-                await store.sync(using: authStore)
             }
         }
+    }
+
+    private func finishSignIn(_ signIn: () async -> Void) async {
+        await signIn()
+        guard authStore.errorMessage == nil, let userID = authStore.user?.id else { return }
+        store.activateAuthenticatedAccount(userID)
+        let didSync = await store.sync(using: authStore)
+        if didSync { dismiss() }
     }
 }
 

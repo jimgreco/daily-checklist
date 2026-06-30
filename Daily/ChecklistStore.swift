@@ -299,10 +299,11 @@ final class ChecklistStore: ObservableObject {
         persistAndSchedule()
     }
 
-    func sync(using authStore: AuthStore) async {
+    @discardableResult
+    func sync(using authStore: AuthStore) async -> Bool {
         guard let token = await authStore.validAccessToken() else {
             syncState = pendingMutations.isEmpty ? "Saved locally" : "Waiting to sync"
-            return
+            return false
         }
         let sent = pendingMutations
         syncState = "Syncing…"
@@ -321,9 +322,12 @@ final class ChecklistStore: ObservableObject {
             groups = response.groups ?? groups
             eveningReminderMinutes = response.eveningReminderMinutes
             persistAndSchedule()
-            syncState = pendingMutations.isEmpty ? "Synced" : "Changes pending"
+            let didFinishSyncing = pendingMutations.isEmpty
+            syncState = didFinishSyncing ? "Synced" : "Changes pending"
+            return didFinishSyncing
         } catch {
             syncState = "Saved offline"
+            return false
         }
     }
 
