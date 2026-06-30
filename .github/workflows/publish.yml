@@ -149,15 +149,23 @@ jobs:
             fi
             sleep 2
           done
-          docker-compose exec -T db psql -U admin -d postgres -tc "SELECT 1 FROM pg_database WHERE datname = 'daily_checklist'" | grep -q 1 \
-            || docker-compose exec -T db psql -U admin -d postgres -c "CREATE DATABASE daily_checklist"
+          echo "Ensuring daily_checklist database exists."
+          daily_db_exists="$(docker-compose exec -T db psql -U admin -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname = 'daily_checklist'" | tr -d '[:space:]')"
+          if [ "$daily_db_exists" != "1" ]; then
+            docker-compose exec -T db psql -U admin -d postgres -c "CREATE DATABASE daily_checklist"
+          fi
+          echo "Building Daily service."
           docker-compose --profile daily build daily
           if [ -f daily-data/database.json ]; then
+            echo "Migrating legacy Daily JSON data into Postgres."
             docker-compose --profile daily run --rm \
               -v "$PWD/daily-data:/legacy-daily-data:ro" \
               -e MIGRATE_JSON_FILE=/legacy-daily-data/database.json \
               daily node src/migrate-json-to-postgres.js
+          else
+            echo "No legacy Daily JSON data found; skipping migration."
           fi
+          echo "Starting Daily service."
           docker-compose --profile daily up -d daily
           for attempt in $(seq 1 60); do
             if docker-compose --profile daily exec -T daily node -e \
