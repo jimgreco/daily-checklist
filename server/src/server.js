@@ -142,6 +142,12 @@ function mergeChecklistRecords(target, source) {
   return target;
 }
 
+function mergeGroupRecords(target, source) {
+  target.fields = mergeStateMap(target.fields, source.fields);
+  if (source.deleted && stampWins(source.deleted, target.deleted)) target.deleted = source.deleted;
+  return target;
+}
+
 function mergeAccount(database, targetUserID, sourceUserID) {
   if (targetUserID === sourceUserID) return;
 
@@ -164,7 +170,7 @@ function mergeAccount(database, targetUserID, sourceUserID) {
     }
     for (const [groupID, sourceGroup] of Object.entries(source.groups || {})) {
       target.groups[groupID] = target.groups[groupID]
-        ? { ...target.groups[groupID], fields: mergeStateMap(target.groups[groupID].fields, sourceGroup.fields) }
+        ? mergeGroupRecords(target.groups[groupID], sourceGroup)
         : sourceGroup;
     }
     target.appliedMutations = { ...source.appliedMutations, ...target.appliedMutations };
@@ -312,6 +318,7 @@ function applyMutation(account, mutation, deviceID) {
   if (mutation.kind === "groupUpsert" && mutation.groupID && mutation.group) {
     account.groups ||= {};
     const record = account.groups[mutation.groupID] ||= { id: mutation.groupID, fields: {} };
+    if (record.deleted) return true;
     const changed = new Set(mutation.changedFields || groupFields);
     for (const field of groupFields) {
       if (!changed.has(field)) continue;
@@ -322,6 +329,14 @@ function applyMutation(account, mutation, deviceID) {
       };
       if (stampWins(incoming, record.fields[field])) record.fields[field] = incoming;
     }
+    return true;
+  }
+
+  if (mutation.kind === "groupDelete" && mutation.groupID) {
+    account.groups ||= {};
+    const record = account.groups[mutation.groupID] ||= { id: mutation.groupID, fields: {} };
+    const incoming = { stamp: mutation.stamp, deviceID };
+    if (stampWins(incoming, record.deleted)) record.deleted = incoming;
     return true;
   }
 
@@ -398,6 +413,7 @@ function materializeAccount(account) {
       return left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id);
     });
   const groups = Object.values(account.groups || {})
+    .filter((record) => !record.deleted)
     .map((record) => ({
       id: record.id,
       name: record.fields.name?.value || "Untitled group",

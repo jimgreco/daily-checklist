@@ -87,6 +87,10 @@ final class ChecklistStore: ObservableObject {
         Calendar.current.isDateInToday(selectedDate)
     }
 
+    func canDeleteGroup(_ groupID: UUID) -> Bool {
+        !items.contains { $0.groupID == groupID && $0.endedAt == nil }
+    }
+
     func moveSelectedDate(by days: Int) {
         guard let date = Calendar.current.date(byAdding: .day, value: days, to: selectedDate) else { return }
         selectedDate = Calendar.current.startOfDay(for: date)
@@ -236,6 +240,38 @@ final class ChecklistStore: ObservableObject {
             .upsert(group: $0, changedFields: ["sortOrder"])
         })
         persistAndSchedule()
+    }
+
+    @discardableResult
+    func renameGroup(_ groupID: UUID, to name: String) -> Bool {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              let index = groups.firstIndex(where: { $0.id == groupID }),
+              groups[index].name != trimmed else { return false }
+        guard !groups.contains(where: { $0.id != groupID && $0.name.caseInsensitiveCompare(trimmed) == .orderedSame }) else {
+            return false
+        }
+
+        groups[index].name = trimmed
+        pendingMutations.removeAll {
+            $0.kind == .groupUpsert
+                && $0.changedFields == ["name"]
+                && $0.groupID == groupID
+        }
+        pendingMutations.append(.upsert(group: groups[index], changedFields: ["name"]))
+        persistAndSchedule()
+        return true
+    }
+
+    @discardableResult
+    func deleteGroup(_ groupID: UUID) -> Bool {
+        guard canDeleteGroup(groupID),
+              let index = groups.firstIndex(where: { $0.id == groupID }) else { return false }
+        groups.remove(at: index)
+        pendingMutations.removeAll { $0.groupID == groupID && ($0.kind == .groupUpsert || $0.kind == .groupDelete) }
+        pendingMutations.append(.delete(groupID: groupID))
+        persistAndSchedule()
+        return true
     }
 
     func move(_ itemID: UUID, before targetID: UUID, toGroup groupID: UUID?) {

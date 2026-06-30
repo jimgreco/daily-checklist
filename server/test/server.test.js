@@ -318,6 +318,34 @@ test("groups and item membership are synced and ordered", () => {
   assert.equal(materialized.items[0].groupID, "group-morning");
 });
 
+test("group deletions tombstone empty groups", () => {
+  const state = account();
+  applyMutation(state, {
+    id: "group-home",
+    groupID: "group-home",
+    kind: "groupUpsert",
+    stamp: "2026-06-25T10:00:00.000Z",
+    changedFields: ["name", "sortOrder"],
+    group: { name: "Home", sortOrder: 0 }
+  }, "device-a");
+  applyMutation(state, {
+    id: "delete-home",
+    groupID: "group-home",
+    kind: "groupDelete",
+    stamp: "2026-06-25T10:01:00.000Z"
+  }, "device-a");
+  applyMutation(state, {
+    id: "stale-rename-home",
+    groupID: "group-home",
+    kind: "groupUpsert",
+    stamp: "2026-06-25T10:00:30.000Z",
+    changedFields: ["name"],
+    group: { name: "House", sortOrder: 0 }
+  }, "device-b");
+
+  assert.deepEqual(materializeAccount(state).groups, []);
+});
+
 test("equal timestamps use device ID as deterministic tie breaker", () => {
   assert.equal(
     stampWins(

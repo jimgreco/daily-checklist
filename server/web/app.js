@@ -223,6 +223,10 @@
     return done === items.length ? String(items.length) : `${done}/${items.length}`;
   }
 
+  function canDeleteGroup(groupID) {
+    return !state.items.some((item) => item.groupID === groupID && !item.endedAt);
+  }
+
   function renderTask(item) {
     return `<article class="task ${complete(item) ? "complete" : ""}">
       <button class="check" data-action="toggle" data-id="${item.id}" aria-label="${complete(item) ? "Mark incomplete" : "Mark complete"}">${complete(item) ? "✓" : ""}</button>
@@ -239,16 +243,21 @@
   }
 
   function renderGroup(name, items, groupID, realGroup) {
-    if (!items.length) return "";
+    if (!items.length && !realGroup) return "";
     const todo = items.filter((item) => !complete(item));
     const done = items.filter(complete);
     const ordered = realGroup && todo.length ? [...todo, ...done] : items;
+    const canDelete = realGroup && canDeleteGroup(groupID);
     return `<section class="group">
       <div class="group-head">
         <div class="group-title">${escapeHTML(name)} <span>${groupProgress(items)}</span></div>
-        ${todo.length ? `<button class="complete-all" data-action="complete-group" data-group="${groupID || ""}">✓ Complete all</button>` : ""}
+        <div class="group-actions">
+          ${todo.length ? `<button class="complete-all" data-action="complete-group" data-group="${groupID || ""}">✓ Complete all</button>` : ""}
+          ${realGroup ? `<button class="group-action" data-action="rename-group" data-group="${groupID}" aria-label="Rename ${escapeHTML(name)}">✎</button>` : ""}
+          ${canDelete ? `<button class="group-action danger" data-action="delete-group" data-group="${groupID}" aria-label="Delete ${escapeHTML(name)}">⌫</button>` : ""}
+        </div>
       </div>
-      <div class="task-list">${ordered.map(renderTask).join("")}</div>
+      <div class="task-list">${ordered.length ? ordered.map(renderTask).join("") : `<div class="empty-group">No tasks</div>`}</div>
     </section>`;
   }
 
@@ -265,7 +274,7 @@
     const grouped = groups.map((group) => ({
       group,
       items: items.filter((item) => item.groupID === group.id)
-    })).filter((entry) => entry.items.length);
+    })).filter((entry) => entry.items.length || canDeleteGroup(entry.group.id));
     const todoBody = [
       renderGroup("Ungrouped", ungroupedTodo, "", false),
       ...grouped.filter((entry) => entry.items.some((item) => !complete(item)))
@@ -477,6 +486,39 @@
     void sync();
   }
 
+  function renameGroup(groupID) {
+    const group = state.groups.find((candidate) => candidate.id === groupID);
+    if (!group) return;
+    const name = prompt("Rename this group", group.name);
+    const trimmed = name?.trim();
+    if (!trimmed || trimmed === group.name) return;
+    if (state.groups.some((candidate) => candidate.id !== groupID && candidate.name.toLowerCase() === trimmed.toLowerCase())) {
+      showToast("A group with that name already exists.");
+      return;
+    }
+    group.name = trimmed;
+    state.pending = state.pending.filter((entry) => !(
+      entry.kind === "groupUpsert"
+        && entry.groupID === groupID
+        && entry.changedFields?.length === 1
+        && entry.changedFields[0] === "name"
+    ));
+    queue(mutation("groupUpsert", {
+      groupID,
+      changedFields: ["name"],
+      group: { name: group.name, sortOrder: group.sortOrder }
+    }));
+  }
+
+  function deleteGroup(groupID) {
+    const group = state.groups.find((candidate) => candidate.id === groupID);
+    if (!group || !canDeleteGroup(groupID)) return;
+    if (!confirm(`Delete "${group.name}"?`)) return;
+    state.groups = state.groups.filter((candidate) => candidate.id !== groupID);
+    state.pending = state.pending.filter((entry) => entry.groupID !== groupID || (entry.kind !== "groupUpsert" && entry.kind !== "groupDelete"));
+    queue(mutation("groupDelete", { groupID }));
+  }
+
   function saveEditor(form) {
     const data = new FormData(form);
     const existing = state.modal.item;
@@ -552,6 +594,8 @@
       const id = target.dataset.group || null;
       completeItems(visibleItems().filter((item) => (item.groupID || null) === id));
     }
+    if (action === "rename-group") renameGroup(target.dataset.group);
+    if (action === "delete-group") deleteGroup(target.dataset.group);
     if (action === "account") { state.modal = { type: "account" }; render(); }
     if (action === "sign-out") { clearSession(); state.modal = null; render(); }
     if (action === "weekday") { target.classList.toggle("active"); }

@@ -50,6 +50,10 @@ h1 { margin: 0; font-size: clamp(48px, 14vw, 68px); line-height: .96; letter-spa
 .group-head { min-height: 38px; justify-content: space-between; gap: 12px; padding: 0 6px; }
 .group-title { min-width: 0; font-size: 16px; font-weight: 800; }
 .group-title span { margin-left: 7px; color: var(--muted); font-size: 13px; font-weight: 650; }
+.group-actions { display: flex; align-items: center; gap: 7px; }
+.group-action { width: 30px; height: 30px; border-radius: 999px; background: white; color: var(--muted); box-shadow: 0 6px 18px rgba(25,25,40,.04); font-weight: 800; }
+.group-action.danger { color: #b5362f; }
+.empty-group { padding: 13px 14px; border-radius: 16px; background: var(--soft); color: var(--muted); font-size: 13px; font-weight: 650; text-align: center; }
 .task-list { display: grid; gap: 12px; }
 .task { position: relative; display: grid; grid-template-columns: auto 1fr auto; gap: 14px; align-items: start; min-height: 96px; padding: 18px 14px 16px 18px; border-radius: 24px; background: var(--card); box-shadow: 0 8px 28px rgba(25,25,40,.025); }
 .check { width: 42px; height: 42px; margin-top: 2px; border: 3px solid #d5d5d6; border-radius: 50%; background: white; color: white; font-size: 25px; line-height: 1; }

@@ -30,6 +30,9 @@ struct ChecklistView: View {
     @State private var isEditingChecklist = false
     @State private var draggingItemID: UUID?
     @State private var draggingGroupID: UUID?
+    @State private var renamingGroupID: UUID?
+    @State private var renameGroupName = ""
+    @State private var deletingGroup: ChecklistGroup?
 
     var body: some View {
         NavigationStack {
@@ -99,6 +102,44 @@ struct ChecklistView: View {
             .sheet(isPresented: $showingAccount) {
                 AccountView()
                     .environmentObject(store)
+            }
+            .alert("Rename Group", isPresented: Binding(
+                get: { renamingGroupID != nil },
+                set: { if !$0 { renamingGroupID = nil } }
+            )) {
+                TextField("Group name", text: $renameGroupName)
+                Button("Cancel", role: .cancel) {
+                    renamingGroupID = nil
+                }
+                Button("Save") {
+                    if let renamingGroupID {
+                        _ = store.renameGroup(renamingGroupID, to: renameGroupName)
+                    }
+                    renamingGroupID = nil
+                }
+                .disabled(renameGroupName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            } message: {
+                Text("Update this group name on every signed-in device.")
+            }
+            .confirmationDialog(
+                "Delete Group?",
+                isPresented: Binding(
+                    get: { deletingGroup != nil },
+                    set: { if !$0 { deletingGroup = nil } }
+                ),
+                titleVisibility: .visible
+            ) {
+                Button("Delete Group", role: .destructive) {
+                    if let deletingGroup {
+                        _ = store.deleteGroup(deletingGroup.id)
+                    }
+                    deletingGroup = nil
+                }
+                Button("Cancel", role: .cancel) {
+                    deletingGroup = nil
+                }
+            } message: {
+                Text("Only the empty group is removed. Tasks are not deleted.")
             }
         }
         .tint(accent)
@@ -328,6 +369,7 @@ struct ChecklistView: View {
                             groupID: group.id,
                             items: groupItems,
                             isRealGroup: true,
+                            canDeleteGroup: store.canDeleteGroup(group.id),
                             showsCompleteAll: !isCompletedSection
                                 && groupItems.contains { !$0.isComplete(on: store.selectedDate) }
                         )
@@ -342,6 +384,7 @@ struct ChecklistView: View {
         groupID: UUID?,
         items: [ChecklistItem],
         isRealGroup: Bool,
+        canDeleteGroup: Bool = false,
         showsCompleteAll: Bool
     ) -> some View {
         VStack(alignment: .leading, spacing: 9) {
@@ -351,7 +394,18 @@ struct ChecklistView: View {
                 completedCount: items.filter { $0.isComplete(on: store.selectedDate) }.count,
                 totalCount: items.count,
                 isRealGroup: isRealGroup,
+                canDeleteGroup: canDeleteGroup,
                 showsCompleteAll: showsCompleteAll,
+                rename: {
+                    guard let groupID else { return }
+                    renameGroupName = title
+                    renamingGroupID = groupID
+                },
+                delete: {
+                    guard let groupID,
+                          let group = store.groups.first(where: { $0.id == groupID }) else { return }
+                    deletingGroup = group
+                },
                 completeAll: {
                     withAnimation(.snappy) {
                         store.completeAll(itemIDs: Set(items.map(\.id)))
@@ -387,7 +441,10 @@ struct ChecklistView: View {
         completedCount: Int,
         totalCount: Int,
         isRealGroup: Bool,
+        canDeleteGroup: Bool,
         showsCompleteAll: Bool,
+        rename: @escaping () -> Void,
+        delete: @escaping () -> Void,
         completeAll: @escaping () -> Void
     ) -> some View {
         let header = HStack(spacing: 8) {
@@ -414,6 +471,24 @@ struct ChecklistView: View {
                 Image(systemName: "line.3.horizontal")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(.secondary)
+            }
+            if isRealGroup, isEditingChecklist {
+                Menu {
+                    Button(action: rename) {
+                        Label("Rename", systemImage: "pencil")
+                    }
+                    if canDeleteGroup {
+                        Button(role: .destructive, action: delete) {
+                            Label("Delete", systemImage: "trash")
+                        }
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 30, height: 30)
+                }
+                .accessibilityLabel("Group actions for \(title)")
             }
         }
         .padding(.horizontal, 4)

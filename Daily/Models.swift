@@ -174,6 +174,7 @@ struct SyncMutation: Identifiable, Codable {
         case completion
         case eveningReminder
         case groupUpsert
+        case groupDelete
     }
 
     var id: UUID
@@ -219,6 +220,10 @@ struct SyncMutation: Identifiable, Codable {
             changedFields: changedFields,
             group: GroupPayload(name: group.name, sortOrder: group.sortOrder)
         )
+    }
+
+    static func delete(groupID: UUID) -> SyncMutation {
+        SyncMutation(id: UUID(), groupID: groupID, kind: .groupDelete, stamp: SyncStamp.now)
     }
 
     static func delete(itemID: UUID) -> SyncMutation {
