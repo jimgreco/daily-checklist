@@ -435,6 +435,12 @@ final class ChecklistStore: ObservableObject {
         persistAndSchedule()
     }
 
+    func permanentlyDelete(_ item: ChecklistItem) {
+        items.removeAll { $0.id == item.id }
+        pendingMutations.append(.delete(itemID: item.id))
+        persistAndSchedule()
+    }
+
     func applyTemplate(_ template: RoutineTemplate) {
         let group = createGroup(named: template.groupName) ?? groups.first { $0.name == template.groupName }
         let groupID = group?.id

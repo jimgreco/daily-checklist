@@ -254,6 +254,7 @@
       <div class="task-actions">
         ${isSkipped ? `<button class="mini-button" data-action="unskip" data-id="${item.id}">Undo</button>` : !isComplete ? `<button class="mini-button accent" data-action="skip" data-id="${item.id}">Skip</button>` : ""}
         <button class="mini-button" data-action="history" data-id="${item.id}" aria-label="History for ${escapeHTML(item.title)}">History</button>
+        ${state.mode === "archive" ? `<button class="mini-button danger" data-action="delete-item" data-id="${item.id}" aria-label="Delete ${escapeHTML(item.title)} permanently">Delete</button>` : ""}
         <button class="edit-button" data-action="edit" data-id="${item.id}" aria-label="Edit ${escapeHTML(item.title)}">✎</button>
       </div>
     </article>`;
@@ -289,6 +290,9 @@
     const remaining = items.filter((item) => !complete(item) && !skipped(item)).length;
     const dateLabel = state.selectedDate.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" });
     const title = sameDay(state.selectedDate, new Date()) ? "Daily" : state.selectedDate.toLocaleDateString([], { month: "short", day: "numeric" });
+    const subtitle = state.mode === "archive"
+      ? `${items.length} ${items.length === 1 ? "archived item" : "archived items"}.`
+      : `${remaining} ${remaining === 1 ? "thing" : "things"} left today.`;
     const ungroupedTodo = ungrouped.filter((item) => !complete(item) && !skipped(item));
     const ungroupedSkipped = ungrouped.filter((item) => skipped(item) && !complete(item));
     const ungroupedDone = ungrouped.filter(complete);
@@ -321,7 +325,7 @@
         <div>
           <p class="eyebrow">${escapeHTML(dateLabel)}</p>
           <h1>${escapeHTML(title)}</h1>
-          <p class="subtitle">${remaining} ${remaining === 1 ? "thing" : "things"} left today.</p>
+          <p class="subtitle">${escapeHTML(subtitle)}</p>
         </div>
         <div>
           <div class="date-nav">
@@ -395,17 +399,26 @@
   function renderModal() {
     if (!state.modal) return "";
     if (state.modal.type === "account") {
+      const displayName = state.user?.name || "Daily account";
+      const email = state.user?.email || "";
+      const photo = state.user?.profileImageURL;
       return `<div class="scrim" data-action="close"><section class="modal" data-modal>
         <h2>Account</h2>
         <div class="account-card">
-          <strong>${escapeHTML(state.user?.name || state.user?.email || "Daily account")}</strong>
-          <p>${escapeHTML(state.user?.email || "")}</p>
-          <p>Your checklist is synced between this website and the Daily app.</p>
-          <button data-action="export-data">Export data</button>
-          <button data-action="privacy">Privacy</button>
-          <button data-action="support">Support</button>
-          <button class="danger" data-action="sign-out">Sign out</button>
-          <button class="danger" data-action="delete-account">Delete account</button>
+          <div class="account-profile">
+            <div class="account-photo">${photo ? `<img src="${escapeHTML(photo)}" alt="">` : "◉"}</div>
+            <strong>${escapeHTML(displayName)}</strong>
+            <p>${escapeHTML(email)}</p>
+          </div>
+          <div class="account-panel">
+            <button data-action="export-data"><span>Export data</span><small>Copy a JSON backup</small></button>
+            <button data-action="privacy"><span>Privacy</span><small>Review data handling</small></button>
+            <button data-action="support"><span>Support</span><small>Get help with Daily</small></button>
+          </div>
+          <div class="account-panel">
+            <button class="danger" data-action="sign-out"><span>Sign out</span></button>
+            <button class="danger" data-action="delete-account"><span>Delete account</span><small>Remove synced account data</small></button>
+          </div>
         </div>
         <div class="modal-actions"><span></span><button class="secondary" data-action="close">Done</button></div>
       </section></div>`;
@@ -723,6 +736,14 @@
     queue(mutation("groupDelete", { groupID }));
   }
 
+  function permanentlyDeleteItem(itemID) {
+    const item = state.items.find((candidate) => candidate.id === itemID);
+    if (!item?.endedAt) return;
+    if (!confirm(`Permanently delete "${item.title}"?`)) return;
+    state.items = state.items.filter((candidate) => candidate.id !== itemID);
+    queue(mutation("delete", { itemID }));
+  }
+
   function skipGroup(groupID) {
     visibleItems()
       .filter((item) => (item.groupID || "") === (groupID || "") && !complete(item))
@@ -880,6 +901,7 @@
       state.modal = { type: "history", item: state.items.find((item) => item.id === target.dataset.id) };
       render();
     }
+    if (action === "delete-item") permanentlyDeleteItem(target.dataset.id);
     if (action === "complete-all") completeItems(visibleItems());
     if (action === "complete-group") {
       const id = target.dataset.group || null;

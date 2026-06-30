@@ -26,7 +26,6 @@ struct ChecklistView: View {
     @State private var editingItem: ChecklistItem?
     @State private var showingNewItem = false
     @State private var showingTemplates = false
-    @State private var showingSettings = false
     @State private var showingAccount = false
     @State private var searchText = ""
     @State private var historyItem: ChecklistItem?
@@ -36,6 +35,8 @@ struct ChecklistView: View {
     @State private var renamingGroupID: UUID?
     @State private var renameGroupName = ""
     @State private var deletingGroup: ChecklistGroup?
+    @State private var permanentlyDeletingItem: ChecklistItem?
+    @FocusState private var searchIsFocused: Bool
 
     var body: some View {
         NavigationStack {
@@ -54,7 +55,8 @@ struct ChecklistView: View {
                                 items: filtered(store.visibleItems),
                                 emptyText: "No ended tasks",
                                 showsCompleteAll: false,
-                                isCompletedSection: false
+                                isCompletedSection: false,
+                                allowsPermanentDelete: true
                             )
                                 .padding(.top, 28)
                         } else {
@@ -112,6 +114,13 @@ struct ChecklistView: View {
                 .padding(24)
             }
             .toolbar(.hidden, for: .navigationBar)
+            .overlay(alignment: .top) {
+                if searchIsFocused {
+                    expandedSearchOverlay
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                        .zIndex(5)
+                }
+            }
             .sheet(isPresented: $showingNewItem) {
                 ItemEditor(
                     item: ChecklistItem(title: ""),
@@ -128,10 +137,6 @@ struct ChecklistView: View {
                     onCreateGroup: { store.createGroup(named: $0) },
                     onDelete: { store.delete($0) }
                 )
-            }
-            .sheet(isPresented: $showingSettings) {
-                EveningReminderView()
-                    .environmentObject(store)
             }
             .sheet(isPresented: $showingTemplates) {
                 TemplatePickerView { template in
@@ -184,6 +189,26 @@ struct ChecklistView: View {
             } message: {
                 Text("Only the empty group is removed. Tasks are not deleted.")
             }
+            .confirmationDialog(
+                "Delete Archived Item?",
+                isPresented: Binding(
+                    get: { permanentlyDeletingItem != nil },
+                    set: { if !$0 { permanentlyDeletingItem = nil } }
+                ),
+                titleVisibility: .visible
+            ) {
+                Button("Delete Permanently", role: .destructive) {
+                    if let permanentlyDeletingItem {
+                        store.permanentlyDelete(permanentlyDeletingItem)
+                    }
+                    permanentlyDeletingItem = nil
+                }
+                Button("Cancel", role: .cancel) {
+                    permanentlyDeletingItem = nil
+                }
+            } message: {
+                Text("This removes the archived item from every synced device.")
+            }
         }
         .tint(accent)
     }
@@ -235,17 +260,10 @@ struct ChecklistView: View {
                 Spacer()
                 VStack(alignment: .trailing) {
                     HStack(spacing: 10) {
-                        Button { showingSettings = true } label: {
-                            Image(systemName: "bell")
-                                .font(.system(size: 18, weight: .semibold))
-                                .foregroundStyle(ink)
-                                .frame(width: 44, height: 44)
-                                .background(controlSurface, in: Circle())
-                        }
                         Button { showingAccount = true } label: {
                             AccountToolbarImage(url: authStore.user?.profileImageURL)
                         }
-                        .accessibilityLabel("Account")
+                        .accessibilityLabel("Account and notification settings")
                     }
                     Spacer(minLength: 10)
                     HStack(spacing: 8) {
@@ -259,6 +277,11 @@ struct ChecklistView: View {
     }
 
     private var summary: String {
+        if store.scope == .archive {
+            let count = store.visibleItems.count
+            if count == 0 { return "No archived items." }
+            return count == 1 ? "One archived item." : "\(count) archived items."
+        }
         let count = store.todoItems.count
         if count == 0 { return "Everything is checked off." }
         let day = store.isSelectedDateToday ? "today" : "this day"
@@ -286,6 +309,7 @@ struct ChecklistView: View {
                 .foregroundStyle(.secondary)
             TextField("Search tasks", text: $searchText)
                 .textInputAutocapitalization(.never)
+                .focused($searchIsFocused)
             if !searchText.isEmpty {
                 Button {
                     searchText = ""
@@ -300,6 +324,48 @@ struct ChecklistView: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
         .background(controlSurface, in: Capsule())
+        .opacity(searchIsFocused ? 0 : 1)
+    }
+
+    private var expandedSearchOverlay: some View {
+        VStack(spacing: 12) {
+            HStack(spacing: 10) {
+                HStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundStyle(.secondary)
+                    TextField("Search tasks", text: $searchText)
+                        .textInputAutocapitalization(.never)
+                        .focused($searchIsFocused)
+                    if !searchText.isEmpty {
+                        Button {
+                            searchText = ""
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundStyle(.secondary)
+                        }
+                        .accessibilityLabel("Clear search")
+                    }
+                }
+                .font(.system(size: 17, weight: .medium))
+                .padding(.horizontal, 14)
+                .frame(height: 46)
+                .background(controlSurface, in: Capsule())
+
+                Button("Cancel") {
+                    withAnimation(.snappy) {
+                        searchIsFocused = false
+                    }
+                }
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(accent)
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 12)
+            .padding(.bottom, 10)
+        }
+        .frame(maxWidth: .infinity)
+        .background(.regularMaterial)
+        .shadow(color: .black.opacity(0.08), radius: 18, y: 8)
     }
 
     private func filtered(_ items: [ChecklistItem]) -> [ChecklistItem] {
@@ -374,7 +440,8 @@ struct ChecklistView: View {
         items: [ChecklistItem],
         emptyText: String?,
         showsCompleteAll: Bool = false,
-        isCompletedSection: Bool
+        isCompletedSection: Bool,
+        allowsPermanentDelete: Bool = false
     ) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
@@ -417,7 +484,8 @@ struct ChecklistView: View {
                 groupedItems(
                     items,
                     isCompletedSection: isCompletedSection,
-                    allowsGroupActions: showsCompleteAll
+                    allowsGroupActions: showsCompleteAll,
+                    allowsPermanentDelete: allowsPermanentDelete
                 )
             }
         }
@@ -427,13 +495,14 @@ struct ChecklistView: View {
     private func groupedItems(
         _ items: [ChecklistItem],
         isCompletedSection: Bool,
-        allowsGroupActions: Bool
+        allowsGroupActions: Bool,
+        allowsPermanentDelete: Bool
     ) -> some View {
         let knownGroupIDs = Set(store.groups.map(\.id))
         let ungrouped = items.filter { $0.groupID == nil || $0.groupID.map(knownGroupIDs.contains) == false }
 
         if store.groups.isEmpty {
-            itemStack(ungrouped, groupID: nil)
+            itemStack(ungrouped, groupID: nil, allowsPermanentDelete: allowsPermanentDelete)
         } else {
             VStack(alignment: .leading, spacing: 18) {
                 if !ungrouped.isEmpty {
@@ -442,6 +511,7 @@ struct ChecklistView: View {
                         groupID: nil,
                         items: ungrouped,
                         isRealGroup: false,
+                        allowsPermanentDelete: allowsPermanentDelete,
                         showsCompleteAll: false
                     )
                 }
@@ -457,6 +527,7 @@ struct ChecklistView: View {
                             isRealGroup: true,
                             canDeleteGroup: store.canDeleteGroup(group.id),
                             allowsGroupActions: allowsGroupActions,
+                            allowsPermanentDelete: allowsPermanentDelete,
                             showsCompleteAll: !isCompletedSection
                                 && groupItems.contains { !$0.isComplete(on: store.selectedDate) }
                         )
@@ -473,6 +544,7 @@ struct ChecklistView: View {
         isRealGroup: Bool,
         canDeleteGroup: Bool = false,
         allowsGroupActions: Bool = false,
+        allowsPermanentDelete: Bool = false,
         showsCompleteAll: Bool
     ) -> some View {
         VStack(alignment: .leading, spacing: 9) {
@@ -541,7 +613,7 @@ struct ChecklistView: View {
                         )
                 }
             } else {
-                itemStack(items, groupID: groupID)
+                itemStack(items, groupID: groupID, allowsPermanentDelete: allowsPermanentDelete)
             }
         }
     }
@@ -599,7 +671,7 @@ struct ChecklistView: View {
                         }
                     }
                 } label: {
-                    Image(systemName: "ellipsis.circle")
+                    Image(systemName: "pencil")
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundStyle(.secondary)
                         .frame(width: 30, height: 30)
@@ -658,7 +730,7 @@ struct ChecklistView: View {
         )
     }
 
-    private func itemStack(_ items: [ChecklistItem], groupID: UUID?) -> some View {
+    private func itemStack(_ items: [ChecklistItem], groupID: UUID?, allowsPermanentDelete: Bool) -> some View {
         VStack(spacing: 10) {
             ForEach(items) { item in
                 if isEditingChecklist && store.sortMode == .manual {
@@ -671,7 +743,9 @@ struct ChecklistView: View {
                         onEdit: { editingItem = item },
                         onSkip: { store.setSkipped(item, skipped: true) },
                         onUnskip: { store.setSkipped(item, skipped: false) },
-                        onHistory: { historyItem = item }
+                        onHistory: { historyItem = item },
+                        allowsPermanentDelete: allowsPermanentDelete,
+                        onPermanentDelete: { permanentlyDeletingItem = item }
                     )
                     .opacity(draggingItemID == item.id ? 0.55 : 1)
                     .onDrag {
@@ -698,7 +772,9 @@ struct ChecklistView: View {
                         onEdit: { editingItem = item },
                         onSkip: { store.setSkipped(item, skipped: true) },
                         onUnskip: { store.setSkipped(item, skipped: false) },
-                        onHistory: { historyItem = item }
+                        onHistory: { historyItem = item },
+                        allowsPermanentDelete: allowsPermanentDelete,
+                        onPermanentDelete: { permanentlyDeletingItem = item }
                     )
                 }
             }
@@ -748,6 +824,8 @@ private struct ItemRow: View {
     let onSkip: () -> Void
     let onUnskip: () -> Void
     let onHistory: () -> Void
+    let allowsPermanentDelete: Bool
+    let onPermanentDelete: () -> Void
 
     private var completed: Bool { item.isComplete(on: date) }
     private var skipped: Bool { item.isSkipped(on: date) }
@@ -821,50 +899,12 @@ private struct ItemRow: View {
                     .accessibilityHidden(true)
             }
             if skipped {
-                Button(action: onUnskip) {
-                    Text("Skipped")
-                        .font(.system(size: 12, weight: .bold))
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 8)
-                        .background(subtleFill, in: Capsule())
-                }
-                .accessibilityLabel("Undo skip for \(item.title)")
-            } else if !completed {
-                Button(action: onSkip) {
-                    Text("Skip")
-                        .font(.system(size: 12, weight: .bold))
-                        .foregroundStyle(accent)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 8)
-                        .background(accent.opacity(0.10), in: Capsule())
-                }
-                .accessibilityLabel("Skip \(item.title) today")
-            }
-            if showsEditButton {
-                Menu {
-                    Button(action: onEdit) {
-                        Label("Edit", systemImage: "pencil")
-                    }
-                    Button(action: onHistory) {
-                        Label("History", systemImage: "calendar")
-                    }
-                    if skipped {
-                        Button(action: onUnskip) {
-                            Label("Undo skip", systemImage: "arrow.uturn.backward")
-                        }
-                    } else if !completed {
-                        Button(action: onSkip) {
-                            Label("Skip today", systemImage: "forward.end")
-                        }
-                    }
-                } label: {
-                    Image(systemName: "ellipsis.circle")
-                        .font(.system(size: 17, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                        .frame(width: 36, height: 36)
-                }
-                .accessibilityLabel("Actions for \(item.title)")
+                Text("Skipped")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .background(subtleFill, in: Capsule())
             }
         }
         .padding(16)
@@ -872,6 +912,29 @@ private struct ItemRow: View {
             (completed ? softSurface : surface),
             in: RoundedRectangle(cornerRadius: 20)
         )
+        .contextMenu {
+            Button(action: onEdit) {
+                Label("Edit", systemImage: "pencil")
+            }
+            Button(action: onHistory) {
+                Label("History", systemImage: "calendar")
+            }
+            if skipped {
+                Button(action: onUnskip) {
+                    Label("Undo skip", systemImage: "arrow.uturn.backward")
+                }
+            } else if !completed {
+                Button(action: onSkip) {
+                    Label("Skip today", systemImage: "forward.end")
+                }
+            }
+            if allowsPermanentDelete {
+                Button(role: .destructive, action: onPermanentDelete) {
+                    Label("Delete permanently", systemImage: "trash")
+                }
+            }
+        }
+        .accessibilityHint("Long press for edit, history, and skip actions")
     }
 }
 

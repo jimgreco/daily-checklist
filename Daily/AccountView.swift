@@ -10,131 +10,40 @@ struct AccountView: View {
     @EnvironmentObject private var store: ChecklistStore
     @State private var showingDeleteConfirmation = false
     @State private var accountMessage: String?
+    @State private var reminderEnabled = true
+    @State private var reminderTime = Date.now
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 24) {
-                Spacer()
-                Image(systemName: authStore.isAuthenticated ? "checkmark.icloud.fill" : "icloud")
-                    .font(.system(size: 58, weight: .medium))
-                    .foregroundStyle(accent)
-
-                if let user = authStore.user {
-                    VStack(spacing: 6) {
-                        Text("Synced")
-                            .font(.title.bold())
-                        Text(user.email)
-                            .foregroundStyle(.secondary)
-                        Text(store.syncState)
-                            .font(.footnote.weight(.medium))
-                            .foregroundStyle(.secondary)
+            ScrollView {
+                VStack(spacing: 18) {
+                    if let user = authStore.user {
+                        signedInHeader(user)
+                        notificationCard
+                        syncCard
+                        accountActions
+                    } else {
+                        signedOutContent
                     }
 
-                    Button("Sync now") {
-                        Task { await store.sync(using: authStore) }
-                    }
-                    .buttonStyle(.borderedProminent)
-
-                    Button("Copy data export") {
-                        Task {
-                            if let export = await authStore.exportData() {
-                                UIPasteboard.general.string = export
-                                accountMessage = "Data export copied."
-                            }
-                        }
-                    }
-                    .buttonStyle(.bordered)
-
-                    Button("Privacy") {
-                        if let url = URL(string: "https://daily-checklist.jim-greco.com/privacy.html") {
-                            openURL(url)
-                        }
-                    }
-                    .buttonStyle(.bordered)
-
-                    Button("Support") {
-                        if let url = URL(string: "https://daily-checklist.jim-greco.com/support.html") {
-                            openURL(url)
-                        }
-                    }
-                    .buttonStyle(.bordered)
-
-                    Button("Sign out", role: .destructive) {
-                        authStore.signOut()
-                        store.activateAnonymousAccount()
-                    }
-
-                    Button("Delete account", role: .destructive) {
-                        showingDeleteConfirmation = true
-                    }
-                } else {
-                    VStack(spacing: 8) {
-                        Text("Keep your checklist in sync")
-                            .font(.title2.bold())
-                        Text("Daily works fully offline. Sign in when you want changes backed up and shared across devices.")
+                    if let error = authStore.errorMessage {
+                        Text(error)
+                            .font(.footnote)
+                            .foregroundStyle(.red)
                             .multilineTextAlignment(.center)
+                            .padding(.horizontal)
+                    }
+                    if let accountMessage {
+                        Text(accountMessage)
+                            .font(.footnote)
                             .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal)
                     }
-                    .padding(.horizontal)
-
-                    VStack(spacing: 12) {
-                        ProviderSignInButton(provider: .google, action: googleSignIn)
-                            .accessibilityLabel("Continue with Google")
-
-                        SignInWithAppleButton(.continue) { request in
-                            request.requestedScopes = [.fullName, .email]
-                        } onCompletion: { result in
-                            switch result {
-                            case .success(let authorization):
-                                guard let credential = authorization.credential as? ASAuthorizationAppleIDCredential else {
-                                    authStore.errorMessage = "Apple did not return a valid credential."
-                                    return
-                                }
-                                Task {
-                                    await finishSignIn {
-                                        await authStore.signInWithApple(credential)
-                                    }
-                                }
-                            case .failure(let error):
-                                authStore.errorMessage = error.localizedDescription
-                            }
-                        }
-                        .signInWithAppleButtonStyle(.black)
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 50)
-                        .clipShape(RoundedRectangle(cornerRadius: 7))
-                        .accessibilityLabel("Continue with Apple")
-
-                        #if DEBUG
-                        Button("Local development sign in") {
-                            Task {
-                                await finishSignIn {
-                                    await authStore.devSignIn()
-                                }
-                            }
-                        }
-                        .font(.footnote.weight(.semibold))
-                        #endif
-                    }
-                    .padding(.horizontal, 30)
                 }
-
-                if let error = authStore.errorMessage {
-                    Text(error)
-                        .font(.footnote)
-                        .foregroundStyle(.red)
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal)
-                }
-                if let accountMessage {
-                    Text(accountMessage)
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal)
-                }
-                Spacer()
+                .padding(20)
             }
+            .background(canvas.ignoresSafeArea())
             .padding()
             .overlay {
                 if authStore.isLoading {
@@ -150,6 +59,7 @@ struct AccountView: View {
                     Button("Done") { dismiss() }
                 }
             }
+            .onAppear(perform: loadReminderState)
             .confirmationDialog(
                 "Delete Account?",
                 isPresented: $showingDeleteConfirmation,
@@ -168,6 +78,177 @@ struct AccountView: View {
                 Text("This removes your synced checklist data from the server. Local offline copies on other devices may remain until those devices sign out or clear local data.")
             }
         }
+    }
+
+    private func signedInHeader(_ user: AppUser) -> some View {
+        VStack(spacing: 12) {
+            AccountProfileImage(url: user.profileImageURL)
+            VStack(spacing: 4) {
+                Text(user.name.isEmpty ? "Daily account" : user.name)
+                    .font(.system(size: 26, weight: .bold, design: .rounded))
+                    .foregroundStyle(ink)
+                Text(user.email)
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.top, 8)
+        .padding(.bottom, 6)
+    }
+
+    private var notificationCard: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Label("Notifications", systemImage: "bell.fill")
+                .font(.system(size: 15, weight: .bold))
+                .foregroundStyle(ink)
+            Toggle("Evening check-in", isOn: Binding(
+                get: { reminderEnabled },
+                set: { enabled in
+                    reminderEnabled = enabled
+                    if enabled {
+                        saveReminderTime()
+                    } else {
+                        store.updateEveningReminder(nil)
+                    }
+                }
+            ))
+            if reminderEnabled {
+                DatePicker("Alert time", selection: Binding(
+                    get: { reminderTime },
+                    set: { newTime in
+                        reminderTime = newTime
+                        saveReminderTime()
+                    }
+                ), displayedComponents: .hourAndMinute)
+            }
+            Text("Daily will tell you how many scheduled tasks are still unfinished.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        }
+        .padding(16)
+        .background(surface, in: RoundedRectangle(cornerRadius: 18))
+    }
+
+    private var syncCard: some View {
+        VStack(spacing: 0) {
+            AccountActionRow(
+                title: "Sync now",
+                subtitle: store.syncState,
+                systemImage: "arrow.triangle.2.circlepath"
+            ) {
+                Task { await store.sync(using: authStore) }
+            }
+            Divider().padding(.leading, 48)
+            AccountActionRow(
+                title: "Copy data export",
+                subtitle: "Copy a JSON backup to the clipboard",
+                systemImage: "square.and.arrow.down"
+            ) {
+                Task {
+                    if let export = await authStore.exportData() {
+                        UIPasteboard.general.string = export
+                        accountMessage = "Data export copied."
+                    }
+                }
+            }
+        }
+        .background(surface, in: RoundedRectangle(cornerRadius: 18))
+    }
+
+    private var accountActions: some View {
+        VStack(spacing: 0) {
+            AccountActionRow(title: "Privacy", subtitle: nil, systemImage: "hand.raised") {
+                if let url = URL(string: "https://daily-checklist.jim-greco.com/privacy.html") {
+                    openURL(url)
+                }
+            }
+            Divider().padding(.leading, 48)
+            AccountActionRow(title: "Support", subtitle: nil, systemImage: "questionmark.circle") {
+                if let url = URL(string: "https://daily-checklist.jim-greco.com/support.html") {
+                    openURL(url)
+                }
+            }
+            Divider().padding(.leading, 48)
+            AccountActionRow(title: "Sign out", subtitle: nil, systemImage: "rectangle.portrait.and.arrow.right", role: .destructive) {
+                authStore.signOut()
+                store.activateAnonymousAccount()
+            }
+            Divider().padding(.leading, 48)
+            AccountActionRow(title: "Delete account", subtitle: "Remove synced account data", systemImage: "trash", role: .destructive) {
+                showingDeleteConfirmation = true
+            }
+        }
+        .background(surface, in: RoundedRectangle(cornerRadius: 18))
+    }
+
+    private var signedOutContent: some View {
+        VStack(spacing: 22) {
+            Image(systemName: "icloud")
+                .font(.system(size: 58, weight: .medium))
+                .foregroundStyle(accent)
+            VStack(spacing: 8) {
+                Text("Keep your checklist in sync")
+                    .font(.title2.bold())
+                Text("Daily works fully offline. Sign in when you want changes backed up and shared across devices.")
+                    .multilineTextAlignment(.center)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal)
+
+            VStack(spacing: 12) {
+                ProviderSignInButton(provider: .google, action: googleSignIn)
+                    .accessibilityLabel("Continue with Google")
+
+                SignInWithAppleButton(.continue) { request in
+                    request.requestedScopes = [.fullName, .email]
+                } onCompletion: { result in
+                    switch result {
+                    case .success(let authorization):
+                        guard let credential = authorization.credential as? ASAuthorizationAppleIDCredential else {
+                            authStore.errorMessage = "Apple did not return a valid credential."
+                            return
+                        }
+                        Task {
+                            await finishSignIn {
+                                await authStore.signInWithApple(credential)
+                            }
+                        }
+                    case .failure(let error):
+                        authStore.errorMessage = error.localizedDescription
+                    }
+                }
+                .signInWithAppleButtonStyle(.black)
+                .frame(maxWidth: .infinity)
+                .frame(height: 50)
+                .clipShape(RoundedRectangle(cornerRadius: 7))
+                .accessibilityLabel("Continue with Apple")
+
+                #if DEBUG
+                Button("Local development sign in") {
+                    Task {
+                        await finishSignIn {
+                            await authStore.devSignIn()
+                        }
+                    }
+                }
+                .font(.footnote.weight(.semibold))
+                #endif
+            }
+            .padding(.horizontal, 10)
+        }
+        .padding(.top, 48)
+    }
+
+    private func loadReminderState() {
+        reminderEnabled = store.eveningReminderMinutes != nil
+        let minutes = store.eveningReminderMinutes ?? 20 * 60
+        reminderTime = Calendar.current.date(from: DateComponents(hour: minutes / 60, minute: minutes % 60)) ?? .now
+    }
+
+    private func saveReminderTime() {
+        let parts = Calendar.current.dateComponents([.hour, .minute], from: reminderTime)
+        store.updateEveningReminder((parts.hour ?? 20) * 60 + (parts.minute ?? 0))
     }
 
     private func googleSignIn() {
@@ -210,6 +291,80 @@ struct AccountView: View {
         store.activateAuthenticatedAccount(userID)
         let didSync = await store.sync(using: authStore)
         if didSync { dismiss() }
+    }
+}
+
+private struct AccountProfileImage: View {
+    let url: URL?
+
+    var body: some View {
+        ZStack {
+            Circle().fill(controlSurface)
+            if let url {
+                AsyncImage(url: url) { phase in
+                    switch phase {
+                    case .success(let image):
+                        image
+                            .resizable()
+                            .scaledToFill()
+                    default:
+                        fallback
+                    }
+                }
+            } else {
+                fallback
+            }
+        }
+        .frame(width: 88, height: 88)
+        .clipShape(Circle())
+        .overlay {
+            Circle().stroke(.white.opacity(0.8), lineWidth: 3)
+        }
+        .shadow(color: .black.opacity(0.08), radius: 18, y: 8)
+    }
+
+    private var fallback: some View {
+        Image(systemName: "person.crop.circle.fill")
+            .font(.system(size: 62, weight: .semibold))
+            .foregroundStyle(accent)
+    }
+}
+
+private struct AccountActionRow: View {
+    let title: String
+    let subtitle: String?
+    let systemImage: String
+    var role: ButtonRole?
+    let action: () -> Void
+
+    var body: some View {
+        Button(role: role, action: action) {
+            HStack(spacing: 12) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(role == .destructive ? Color.red : accent)
+                    .frame(width: 36, height: 36)
+                    .background((role == .destructive ? Color.red : accent).opacity(0.10), in: Circle())
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(role == .destructive ? Color.red : ink)
+                    if let subtitle, !subtitle.isEmpty {
+                        Text(subtitle)
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 }
 
