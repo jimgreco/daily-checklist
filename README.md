@@ -18,7 +18,7 @@ open Daily.xcodeproj
 
 The debug iOS build connects to `http://127.0.0.1:8787`, which works from the iOS Simulator. Set `API_BASE_URL` to an HTTPS deployment before running on a physical device.
 
-The server also hosts the mobile website at `http://127.0.0.1:8787/`. On localhost, use **Local dev sign in**. In production, the website and API share the same origin.
+The server hosts the public marketing site at `http://127.0.0.1:8787/` and the mobile web app at `http://127.0.0.1:8787/app`. On localhost, use **Local dev sign in**. In production, the website and API share the same origin.
 
 Local development can run without Postgres and will use `server/data/database.json`. Production requires Postgres:
 

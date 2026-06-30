@@ -302,6 +302,44 @@ test("completion conflicts resolve per date", () => {
   assert.deepEqual(materializeAccount(state).items[0].completedDates, ["2026-06-24"]);
 });
 
+test("skipped dates sync independently from completion history", () => {
+  const state = account();
+  applyMutation(state, {
+    id: "create",
+    itemID: "item-1",
+    kind: "upsert",
+    stamp: "2026-06-24T10:00:00.000Z",
+    changedFields: ["title", "skippedDates"],
+    item: { title: "Pills", skippedDates: ["2026-06-24"] }
+  }, "device-a");
+  applyMutation(state, {
+    id: "done",
+    itemID: "item-1",
+    kind: "completion",
+    stamp: "2026-06-24T12:00:00.000Z",
+    completionDate: "2026-06-25",
+    completed: true
+  }, "device-a");
+
+  const item = materializeAccount(state).items[0];
+  assert.deepEqual(item.skippedDates, ["2026-06-24"]);
+  assert.deepEqual(item.completedDates, ["2026-06-25"]);
+});
+
+test("rejects invalid skipped date payloads", () => {
+  assert.equal(validSyncRequest({
+    deviceID: "device-1234",
+    mutations: [{
+      id: "bad-skip",
+      itemID: "item-1",
+      kind: "upsert",
+      stamp: "2026-06-24T10:00:00.000Z",
+      changedFields: ["skippedDates"],
+      item: { skippedDates: ["06/24/2026"] }
+    }]
+  }), false);
+});
+
 test("deletion tombstones prevent stale-device resurrection", () => {
   const state = account();
   applyMutation(state, {

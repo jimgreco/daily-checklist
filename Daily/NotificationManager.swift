@@ -1,6 +1,42 @@
 import Foundation
 import UserNotifications
 
+extension Notification.Name {
+    static let dailyNotificationAction = Notification.Name("DailyNotificationAction")
+}
+
+struct DailyNotificationAction {
+    static let complete = "DAILY_COMPLETE"
+    static let skip = "DAILY_SKIP"
+    static let snooze = "DAILY_SNOOZE"
+    static let itemCategory = "DAILY_ITEM_REMINDER"
+}
+
+final class DailyNotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
+    static let shared = DailyNotificationDelegate()
+
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse
+    ) async {
+        guard [
+            DailyNotificationAction.complete,
+            DailyNotificationAction.skip,
+            DailyNotificationAction.snooze
+        ].contains(response.actionIdentifier) else { return }
+
+        NotificationCenter.default.post(
+            name: .dailyNotificationAction,
+            object: nil,
+            userInfo: [
+                "action": response.actionIdentifier,
+                "itemID": response.notification.request.content.userInfo["itemID"] as? String ?? "",
+                "date": response.notification.request.content.userInfo["date"] as? String ?? ""
+            ]
+        )
+    }
+}
+
 struct NotificationManager {
     private let center = UNUserNotificationCenter.current()
 
@@ -8,7 +44,34 @@ struct NotificationManager {
         #if DEBUG
         if ScreenshotSeedData.isEnabled { return }
         #endif
+        configureCategories()
         _ = try? await center.requestAuthorization(options: [.alert, .sound, .badge])
+    }
+
+    func configureCategories() {
+        let complete = UNNotificationAction(
+            identifier: DailyNotificationAction.complete,
+            title: "Complete",
+            options: []
+        )
+        let skip = UNNotificationAction(
+            identifier: DailyNotificationAction.skip,
+            title: "Skip today",
+            options: []
+        )
+        let snooze = UNNotificationAction(
+            identifier: DailyNotificationAction.snooze,
+            title: "Snooze",
+            options: []
+        )
+        center.setNotificationCategories([
+            UNNotificationCategory(
+                identifier: DailyNotificationAction.itemCategory,
+                actions: [complete, skip, snooze],
+                intentIdentifiers: [],
+                options: []
+            )
+        ])
     }
 
     func reschedule(items: [ChecklistItem], eveningMinutes: Int?) async {
@@ -40,6 +103,11 @@ struct NotificationManager {
             content.title = reminder.item.title
             content.body = reminder.item.notes.isEmpty ? "Time for your daily task." : reminder.item.notes
             content.sound = .default
+            content.categoryIdentifier = DailyNotificationAction.itemCategory
+            content.userInfo = [
+                "itemID": reminder.item.id.uuidString,
+                "date": DateKey.string(from: reminder.date)
+            ]
             let trigger = UNCalendarNotificationTrigger(
                 dateMatching: calendar.dateComponents([.year, .month, .day, .hour, .minute], from: reminder.date),
                 repeats: false
@@ -73,5 +141,23 @@ struct NotificationManager {
                 trigger: trigger
             ))
         }
+    }
+
+    func snooze(item: ChecklistItem, minutes: Int) async {
+        let content = UNMutableNotificationContent()
+        content.title = item.title
+        content.body = item.notes.isEmpty ? "Snoozed reminder." : item.notes
+        content.sound = .default
+        content.categoryIdentifier = DailyNotificationAction.itemCategory
+        content.userInfo = [
+            "itemID": item.id.uuidString,
+            "date": DateKey.string(from: .now)
+        ]
+        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: TimeInterval(max(1, minutes) * 60), repeats: false)
+        try? await center.add(UNNotificationRequest(
+            identifier: "daily.snooze.\(item.id).\(Date().timeIntervalSince1970)",
+            content: content,
+            trigger: trigger
+        ))
     }
 }

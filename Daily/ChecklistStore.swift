@@ -24,11 +24,64 @@ enum ChecklistSort: String, CaseIterable, Identifiable {
     }
 }
 
+enum ChecklistScope: String, CaseIterable, Identifiable {
+    case today
+    case all
+    case archive
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .today: "Today"
+        case .all: "All"
+        case .archive: "Archive"
+        }
+    }
+}
+
+struct RoutineTemplate: Identifiable {
+    let id: String
+    let title: String
+    let groupName: String
+    let items: [String]
+
+    static let builtIns: [RoutineTemplate] = [
+        RoutineTemplate(
+            id: "morning",
+            title: "Morning",
+            groupName: "Morning Routine",
+            items: ["Medication", "Vitamins", "Review today"]
+        ),
+        RoutineTemplate(
+            id: "evening",
+            title: "Evening",
+            groupName: "Evening Routine",
+            items: ["Tidy up", "Prepare tomorrow", "Skincare"]
+        ),
+        RoutineTemplate(
+            id: "pet-care",
+            title: "Pet care",
+            groupName: "Pet Care",
+            items: ["Food", "Fresh water", "Medication"]
+        ),
+        RoutineTemplate(
+            id: "household",
+            title: "Household",
+            groupName: "Household",
+            items: ["Dishes", "Trash", "Quick reset"]
+        )
+    ]
+}
+
 @MainActor
 final class ChecklistStore: ObservableObject {
     @Published private(set) var items: [ChecklistItem] = []
     @Published private(set) var groups: [ChecklistGroup] = []
     @Published var showingToday = true
+    @Published var scope: ChecklistScope = .today {
+        didSet { showingToday = scope == .today }
+    }
     @Published var selectedDate = Calendar.current.startOfDay(for: .now)
     @Published var eveningReminderMinutes: Int? = 20 * 60
     @Published private(set) var syncState = "Saved locally"
@@ -62,10 +115,16 @@ final class ChecklistStore: ObservableObject {
     }
 
     var visibleItems: [ChecklistItem] {
-        items
-            .filter { $0.isActive(on: selectedDate) }
-            .filter { !showingToday || $0.occurs(on: selectedDate) }
-            .sorted(by: sortPredicate)
+        let scoped: [ChecklistItem]
+        switch scope {
+        case .today:
+            scoped = items.filter { $0.occurs(on: selectedDate) }
+        case .all:
+            scoped = items.filter { $0.isActive(on: selectedDate) }
+        case .archive:
+            scoped = items.filter { $0.endedAt != nil }
+        }
+        return scoped.sorted(by: sortPredicate)
     }
 
     var orderedGroups: [ChecklistGroup] {
@@ -76,11 +135,15 @@ final class ChecklistStore: ObservableObject {
     }
 
     var todoItems: [ChecklistItem] {
-        visibleItems.filter { !$0.isComplete(on: selectedDate) }
+        visibleItems.filter { !$0.isComplete(on: selectedDate) && !$0.isSkipped(on: selectedDate) }
     }
 
     var completedItems: [ChecklistItem] {
         visibleItems.filter { $0.isComplete(on: selectedDate) }
+    }
+
+    var skippedItems: [ChecklistItem] {
+        visibleItems.filter { $0.isSkipped(on: selectedDate) && !$0.isComplete(on: selectedDate) }
     }
 
     var isSelectedDateToday: Bool {
@@ -98,6 +161,7 @@ final class ChecklistStore: ObservableObject {
 
     func selectToday() {
         selectedDate = Calendar.current.startOfDay(for: .now)
+        scope = .today
     }
 
     func start() async {
@@ -146,13 +210,51 @@ final class ChecklistStore: ObservableObject {
             items[index].completedDates.remove(key)
         } else {
             items[index].completedDates.insert(key)
+            items[index].skippedDates.remove(key)
         }
         pendingMutations.append(.completion(
             itemID: item.id,
             date: key,
             completed: items[index].completedDates.contains(key)
         ))
+        pendingMutations.append(.upsert(item: items[index], changedFields: ["skippedDates"]))
         persistAndSchedule()
+    }
+
+    func setSkipped(_ item: ChecklistItem, skipped: Bool, on date: Date? = nil) {
+        guard let index = items.firstIndex(where: { $0.id == item.id }) else { return }
+        let key = DateKey.string(from: date ?? selectedDate)
+        if skipped {
+            items[index].skippedDates.insert(key)
+            items[index].completedDates.remove(key)
+        } else {
+            items[index].skippedDates.remove(key)
+        }
+        pendingMutations.append(.upsert(item: items[index], changedFields: ["skippedDates"]))
+        if skipped {
+            pendingMutations.append(.completion(itemID: items[index].id, date: key, completed: false))
+        }
+        persistAndSchedule()
+    }
+
+    func complete(itemID: UUID, on date: Date) {
+        guard let index = items.firstIndex(where: { $0.id == itemID }) else { return }
+        let key = DateKey.string(from: date)
+        items[index].completedDates.insert(key)
+        items[index].skippedDates.remove(key)
+        pendingMutations.append(.completion(itemID: itemID, date: key, completed: true))
+        pendingMutations.append(.upsert(item: items[index], changedFields: ["skippedDates"]))
+        persistAndSchedule()
+    }
+
+    func skip(itemID: UUID, on date: Date) {
+        guard let item = items.first(where: { $0.id == itemID }) else { return }
+        setSkipped(item, skipped: true, on: date)
+    }
+
+    func snooze(itemID: UUID, minutes: Int = 60) {
+        guard let item = items.first(where: { $0.id == itemID }) else { return }
+        Task { await notifications.snooze(item: item, minutes: minutes) }
     }
 
     func completeAllForSelectedDate() {
@@ -167,12 +269,16 @@ final class ChecklistStore: ObservableObject {
             guard itemIDs.contains(items[index].id),
                   !items[index].completedDates.contains(key) else { continue }
             items[index].completedDates.insert(key)
+            items[index].skippedDates.remove(key)
             completedItemIDs.append(items[index].id)
         }
 
         guard !completedItemIDs.isEmpty else { return }
         pendingMutations.append(contentsOf: completedItemIDs.map {
             .completion(itemID: $0, date: key, completed: true)
+        })
+        pendingMutations.append(contentsOf: items.filter { completedItemIDs.contains($0.id) }.map {
+            .upsert(item: $0, changedFields: ["skippedDates"])
         })
         persistAndSchedule()
     }
@@ -329,6 +435,97 @@ final class ChecklistStore: ObservableObject {
         persistAndSchedule()
     }
 
+    func applyTemplate(_ template: RoutineTemplate) {
+        let group = createGroup(named: template.groupName) ?? groups.first { $0.name == template.groupName }
+        let groupID = group?.id
+        let firstOrder = nextItemSortOrder(in: groupID)
+        let createdItems = template.items.enumerated().map { offset, title in
+            ChecklistItem(
+                title: title,
+                schedule: .everyDay,
+                createdAt: .now,
+                groupID: groupID,
+                sortOrder: firstOrder + Double(offset)
+            )
+        }
+        items.append(contentsOf: createdItems)
+        pendingMutations.append(contentsOf: createdItems.map { .upsert(item: $0, changedFields: Self.allFields) })
+        persistAndSchedule()
+    }
+
+    func skipGroup(_ groupID: UUID?) {
+        let groupItems = visibleItems.filter { $0.groupID == groupID && !$0.isComplete(on: selectedDate) }
+        groupItems.forEach { setSkipped($0, skipped: true) }
+    }
+
+    func endGroupToday(_ groupID: UUID) {
+        let end = Calendar.current.startOfDay(for: .now)
+        var changed: [ChecklistItem] = []
+        for index in items.indices where items[index].groupID == groupID && items[index].endedAt == nil {
+            items[index].endedAt = end
+            changed.append(items[index])
+        }
+        guard !changed.isEmpty else { return }
+        pendingMutations.append(contentsOf: changed.map { .upsert(item: $0, changedFields: ["endedAt"]) })
+        persistAndSchedule()
+    }
+
+    func startGroupTomorrow(_ groupID: UUID) {
+        guard let tomorrow = Calendar.current.date(byAdding: .day, value: 1, to: Calendar.current.startOfDay(for: .now)) else { return }
+        var changed: [ChecklistItem] = []
+        for index in items.indices where items[index].groupID == groupID && items[index].endedAt == nil {
+            items[index].startDate = tomorrow
+            changed.append(items[index])
+        }
+        guard !changed.isEmpty else { return }
+        pendingMutations.append(contentsOf: changed.map { .upsert(item: $0, changedFields: ["startDate"]) })
+        persistAndSchedule()
+    }
+
+    func duplicateGroup(_ groupID: UUID) {
+        guard let source = groups.first(where: { $0.id == groupID }) else { return }
+        let baseName = "\(source.name) Copy"
+        let group = createGroup(named: uniqueGroupName(baseName)) ?? source
+        let sourceItems = items.filter { $0.groupID == groupID && $0.endedAt == nil }.sorted(by: Self.isOrderedBefore)
+        let copied = sourceItems.enumerated().map { offset, item in
+            ChecklistItem(
+                title: item.title,
+                notes: item.notes,
+                schedule: item.schedule,
+                customWeekdays: item.customWeekdays,
+                reminderMinutes: item.reminderMinutes,
+                createdAt: .now,
+                startDate: item.startDate,
+                groupID: group.id,
+                sortOrder: Double(offset)
+            )
+        }
+        items.append(contentsOf: copied)
+        pendingMutations.append(contentsOf: copied.map { .upsert(item: $0, changedFields: Self.allFields) })
+        persistAndSchedule()
+    }
+
+    func completionHistory(for item: ChecklistItem, days: Int = 21) -> [(date: Date, state: String)] {
+        (0..<days).compactMap { offset in
+            guard let date = Calendar.current.date(byAdding: .day, value: -offset, to: Calendar.current.startOfDay(for: selectedDate)) else {
+                return nil
+            }
+            let state: String
+            if item.isComplete(on: date) {
+                state = "Done"
+            } else if item.isSkipped(on: date) {
+                state = "Skipped"
+            } else if item.occurs(on: date) && date < Calendar.current.startOfDay(for: .now) {
+                state = "Missed"
+            } else if item.occurs(on: date) {
+                state = "Open"
+            } else {
+                state = "Off"
+            }
+            return (date, state)
+        }
+    }
+
     func updateEveningReminder(_ minutes: Int?) {
         eveningReminderMinutes = minutes
         pendingMutations.append(.evening(minutes: minutes))
@@ -442,7 +639,7 @@ final class ChecklistStore: ObservableObject {
     }
 
     static let allFields: Set<String> = [
-        "title", "notes", "schedule", "customWeekdays", "reminderMinutes", "createdAt", "startDate", "endedAt", "groupID", "sortOrder"
+        "title", "notes", "schedule", "customWeekdays", "reminderMinutes", "skippedDates", "createdAt", "startDate", "endedAt", "groupID", "sortOrder"
     ]
     static let allGroupFields: Set<String> = ["name", "sortOrder"]
 
@@ -453,6 +650,7 @@ final class ChecklistStore: ObservableObject {
         if old.schedule != new.schedule { changed.insert("schedule") }
         if old.customWeekdays != new.customWeekdays { changed.insert("customWeekdays") }
         if old.reminderMinutes != new.reminderMinutes { changed.insert("reminderMinutes") }
+        if old.skippedDates != new.skippedDates { changed.insert("skippedDates") }
         if old.startDate != new.startDate { changed.insert("startDate") }
         if old.endedAt != new.endedAt { changed.insert("endedAt") }
         if old.groupID != new.groupID { changed.insert("groupID") }
@@ -501,6 +699,20 @@ final class ChecklistStore: ObservableObject {
     private func nextItemSortOrder(in groupID: UUID?) -> Double {
         let orders = items.filter { $0.groupID == groupID }.compactMap(\.sortOrder)
         return (orders.max() ?? -1) + 1
+    }
+
+    private func uniqueGroupName(_ base: String) -> String {
+        if !groups.contains(where: { $0.name.caseInsensitiveCompare(base) == .orderedSame }) {
+            return base
+        }
+        var index = 2
+        while true {
+            let candidate = "\(base) \(index)"
+            if !groups.contains(where: { $0.name.caseInsensitiveCompare(candidate) == .orderedSame }) {
+                return candidate
+            }
+            index += 1
+        }
     }
 
     private func orderedItemIDs(in groupID: UUID?) -> [UUID] {

@@ -18,6 +18,7 @@
     selectedDate: startOfDay(new Date()),
     mode: "today",
     sort: "manual",
+    search: "",
     loaded: false,
     syncing: false,
     authLoaded: false,
@@ -28,6 +29,12 @@
   };
   let refreshPromise = null;
   let toastTimer = null;
+  const templates = [
+    { id: "morning", title: "Morning", groupName: "Morning Routine", items: ["Medication", "Vitamins", "Review today"] },
+    { id: "evening", title: "Evening", groupName: "Evening Routine", items: ["Tidy up", "Prepare tomorrow", "Skincare"] },
+    { id: "pet-care", title: "Pet care", groupName: "Pet Care", items: ["Food", "Fresh water", "Medication"] },
+    { id: "household", title: "Household", groupName: "Household", items: ["Dishes", "Trash", "Quick reset"] },
+  ];
 
   localStorage.setItem(STORAGE.device, state.deviceID);
 
@@ -170,6 +177,11 @@
   }
 
   function occurs(item, date) {
+    if (state.mode === "archive") return Boolean(item.endedAt);
+    return occursOnDate(item, date);
+  }
+
+  function occursOnDate(item, date) {
     const day = startOfDay(date);
     const first = startOfDay(new Date(item.startDate || item.createdAt));
     if (day < first) return false;
@@ -183,9 +195,15 @@
   }
 
   function complete(item) { return (item.completedDates || []).includes(dateKey(state.selectedDate)); }
+  function skipped(item) { return (item.skippedDates || []).includes(dateKey(state.selectedDate)); }
 
   function visibleItems() {
-    const items = state.items.filter((item) => occurs(item, state.selectedDate));
+    const query = state.search.trim().toLowerCase();
+    const items = state.items
+      .filter((item) => occurs(item, state.selectedDate))
+      .filter((item) => !query
+        || item.title.toLowerCase().includes(query)
+        || String(item.notes || "").toLowerCase().includes(query));
     return items.sort((left, right) => {
       if (state.sort === "name") return left.title.localeCompare(right.title);
       if (state.sort === "time") return (left.reminderMinutes ?? 9999) - (right.reminderMinutes ?? 9999);
@@ -220,21 +238,28 @@
   }
 
   function renderTask(item) {
-    return `<article class="task ${complete(item) ? "complete" : ""}">
+    const isComplete = complete(item);
+    const isSkipped = skipped(item) && !isComplete;
+    return `<article class="task ${isComplete ? "complete" : ""} ${isSkipped ? "skipped" : ""}">
       <button class="check" data-action="toggle" data-id="${item.id}" aria-label="${complete(item) ? "Mark incomplete" : "Mark complete"}">${complete(item) ? "✓" : ""}</button>
       <div class="task-copy">
         <div class="task-title">${escapeHTML(item.title)}</div>
         <div class="task-meta">
           <span>↻ ${escapeHTML(scheduleText(item))}</span>
           ${item.reminderMinutes == null ? "" : `<span>♟ ${escapeHTML(timeText(item.reminderMinutes))}</span>`}
+          ${isSkipped ? "<span>Skipped today</span>" : ""}
         </div>
         ${item.notes ? `<p class="notes">${escapeHTML(item.notes)}</p>` : ""}
       </div>
-      <button class="edit-button" data-action="edit" data-id="${item.id}" aria-label="Edit ${escapeHTML(item.title)}">✎</button>
+      <div class="task-actions">
+        ${isSkipped ? `<button class="mini-button" data-action="unskip" data-id="${item.id}">Undo</button>` : !isComplete ? `<button class="mini-button accent" data-action="skip" data-id="${item.id}">Skip</button>` : ""}
+        <button class="mini-button" data-action="history" data-id="${item.id}" aria-label="History for ${escapeHTML(item.title)}">History</button>
+        <button class="edit-button" data-action="edit" data-id="${item.id}" aria-label="Edit ${escapeHTML(item.title)}">✎</button>
+      </div>
     </article>`;
   }
 
-  function renderGroup(name, items, groupID, realGroup) {
+  function renderGroup(name, items, groupID, realGroup, { allowsBulkActions = false } = {}) {
     if (!items.length) return "";
     const todo = items.filter((item) => !complete(item));
     const done = items.filter(complete);
@@ -244,7 +269,11 @@
       <div class="group-head">
         <div class="group-title">${escapeHTML(name)}<span>${groupProgress(items)}</span>${realGroup ? `<button class="group-action group-title-action" data-action="rename-group" data-group="${groupID}" aria-label="Rename ${escapeHTML(name)}">✎</button>` : ""}</div>
         <div class="group-actions">
-          ${todo.length ? `<button class="complete-all" data-action="complete-group" data-group="${groupID || ""}">✓ All</button>` : ""}
+          ${allowsBulkActions && todo.length ? `<button class="complete-all" data-action="complete-group" data-group="${groupID || ""}">✓ All</button>` : ""}
+          ${allowsBulkActions && todo.length ? `<button class="complete-all" data-action="skip-group" data-group="${groupID || ""}">Skip</button>` : ""}
+          ${realGroup ? `<button class="group-action" data-action="duplicate-group" data-group="${groupID}" aria-label="Duplicate ${escapeHTML(name)}">⧉</button>` : ""}
+          ${realGroup ? `<button class="group-action" data-action="start-group-tomorrow" data-group="${groupID}" aria-label="Start ${escapeHTML(name)} tomorrow">↷</button>` : ""}
+          ${realGroup ? `<button class="group-action danger" data-action="end-group" data-group="${groupID}" aria-label="End all items in ${escapeHTML(name)}">–</button>` : ""}
           ${canDelete ? `<button class="group-action danger" data-action="delete-group" data-group="${groupID}" aria-label="Delete ${escapeHTML(name)}">⌫</button>` : ""}
         </div>
       </div>
@@ -257,25 +286,35 @@
     const groups = [...state.groups].sort((a, b) => a.sortOrder - b.sortOrder);
     const known = new Set(groups.map((group) => group.id));
     const ungrouped = items.filter((item) => !item.groupID || !known.has(item.groupID));
-    const remaining = items.filter((item) => !complete(item)).length;
+    const remaining = items.filter((item) => !complete(item) && !skipped(item)).length;
     const dateLabel = state.selectedDate.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" });
     const title = sameDay(state.selectedDate, new Date()) ? "Daily" : state.selectedDate.toLocaleDateString([], { month: "short", day: "numeric" });
-    const ungroupedTodo = ungrouped.filter((item) => !complete(item));
+    const ungroupedTodo = ungrouped.filter((item) => !complete(item) && !skipped(item));
+    const ungroupedSkipped = ungrouped.filter((item) => skipped(item) && !complete(item));
     const ungroupedDone = ungrouped.filter(complete);
     const grouped = groups.map((group) => ({
       group,
       items: items.filter((item) => item.groupID === group.id)
     })).filter((entry) => entry.items.length);
     const todoBody = [
-      renderGroup("Ungrouped", ungroupedTodo, "", false),
-      ...grouped.filter((entry) => entry.items.some((item) => !complete(item)))
-        .map((entry) => renderGroup(entry.group.name, entry.items, entry.group.id, true))
+      renderGroup("Ungrouped", ungroupedTodo, "", false, { allowsBulkActions: true }),
+      ...grouped.filter((entry) => entry.items.some((item) => !complete(item) && !skipped(item)))
+        .map((entry) => renderGroup(entry.group.name, entry.items.filter((item) => !complete(item) && !skipped(item)), entry.group.id, true, { allowsBulkActions: true }))
+    ].join("");
+    const skippedBody = [
+      renderGroup("Ungrouped", ungroupedSkipped, "", false),
+      ...grouped.filter((entry) => entry.items.some((item) => skipped(item) && !complete(item)))
+        .map((entry) => renderGroup(entry.group.name, entry.items.filter((item) => skipped(item) && !complete(item)), entry.group.id, true))
     ].join("");
     const completedBody = [
       renderGroup("Ungrouped", ungroupedDone, "", false),
-      ...grouped.filter((entry) => entry.items.every(complete))
-        .map((entry) => renderGroup(entry.group.name, entry.items, entry.group.id, true))
+      ...grouped.filter((entry) => entry.items.some(complete))
+        .map((entry) => renderGroup(entry.group.name, entry.items.filter(complete), entry.group.id, true))
     ].join("");
+    const archiveBody = state.mode === "archive" ? [
+      renderGroup("Ungrouped", ungrouped, "", false),
+      ...grouped.map((entry) => renderGroup(entry.group.name, entry.items, entry.group.id, true))
+    ].join("") : "";
 
     app.innerHTML = `<div class="shell">
       <div class="topline">
@@ -298,15 +337,21 @@
         <div class="segmented">
           <button class="${state.mode === "today" ? "active" : ""}" data-action="mode" data-mode="today">Today</button>
           <button class="${state.mode === "all" ? "active" : ""}" data-action="mode" data-mode="all">All items</button>
+          <button class="${state.mode === "archive" ? "active" : ""}" data-action="mode" data-mode="archive">Archive</button>
         </div>
-        <div class="toolbar"><button class="sort-button" data-action="sort">⇅ ${state.sort === "manual" ? "Manual" : state.sort === "name" ? "Name" : "Reminder time"}</button></div>
+        <div class="toolbar">
+          <button class="sort-button" data-action="templates">▦ Templates</button>
+          <button class="sort-button" data-action="sort">⇅ ${state.sort === "manual" ? "Manual" : state.sort === "name" ? "Name" : "Reminder time"}</button>
+        </div>
+        <label class="search-field"><span>⌕</span><input data-search placeholder="Search tasks" value="${escapeHTML(state.search)}"></label>
       </div>
-      <div class="section-head">
+      ${state.mode === "archive" ? `<div class="section-head"><span class="section-label">Archive</span></div>${archiveBody || `<div class="empty">No ended tasks.</div>`}` : `<div class="section-head">
         <span class="section-label">To do</span>
         ${remaining ? `<button class="complete-all" data-action="complete-all">✓ All&nbsp;&nbsp;${remaining}</button>` : ""}
       </div>
       ${todoBody || `<div class="empty">${completedBody ? "Everything is complete." : "Nothing is scheduled for this day."}</div>`}
-      ${completedBody ? `<div class="section-head"><span class="section-label">Completed</span></div>${completedBody}` : ""}
+      ${skippedBody ? `<div class="section-head"><span class="section-label">Skipped</span></div>${skippedBody}` : ""}
+      ${completedBody ? `<div class="section-head"><span class="section-label">Completed</span></div>${completedBody}` : ""}`}
       <div class="status">${state.syncing ? "Syncing…" : state.pending.length ? "Saved offline" : "Synced"}</div>
       <button class="fab" data-action="add" aria-label="Add checklist item">+</button>
       ${renderModal()}
@@ -361,6 +406,31 @@
           <button data-action="support">Support</button>
           <button class="danger" data-action="sign-out">Sign out</button>
           <button class="danger" data-action="delete-account">Delete account</button>
+        </div>
+        <div class="modal-actions"><span></span><button class="secondary" data-action="close">Done</button></div>
+      </section></div>`;
+    }
+    if (state.modal.type === "templates") {
+      return `<div class="scrim" data-action="close"><section class="modal" data-modal>
+        <h2>Templates</h2>
+        <div class="template-list">
+          ${templates.map((template) => `<button class="template-option" data-action="apply-template" data-template="${template.id}">
+            <strong>${escapeHTML(template.title)}</strong>
+            <span>${escapeHTML(template.items.join(" · "))}</span>
+          </button>`).join("")}
+        </div>
+        <div class="modal-actions"><span></span><button class="secondary" data-action="close">Done</button></div>
+      </section></div>`;
+    }
+    if (state.modal.type === "history") {
+      const item = state.modal.item;
+      return `<div class="scrim" data-action="close"><section class="modal" data-modal>
+        <h2>${escapeHTML(item.title)}</h2>
+        <div class="history-list">
+          ${historyFor(item).map((entry) => `<div class="history-row">
+            <span>${escapeHTML(entry.label)}</span>
+            <strong class="${entry.state.toLowerCase()}">${escapeHTML(entry.state)}</strong>
+          </div>`).join("")}
         </div>
         <div class="modal-actions"><span></span><button class="secondary" data-action="close">Done</button></div>
       </section></div>`;
@@ -512,6 +582,14 @@
     item.completedDates ||= [];
     const completed = !item.completedDates.includes(key);
     item.completedDates = completed ? [...item.completedDates, key] : item.completedDates.filter((date) => date !== key);
+    if (completed) item.skippedDates = (item.skippedDates || []).filter((date) => date !== key);
+    if (completed) {
+      state.pending.push(mutation("upsert", {
+        itemID: item.id,
+        changedFields: ["skippedDates"],
+        item: { skippedDates: item.skippedDates || [] }
+      }));
+    }
     queue(mutation("completion", { itemID: item.id, completionDate: key, completed }));
   }
 
@@ -520,9 +598,93 @@
     const changed = items.filter((item) => !complete(item));
     changed.forEach((item) => {
       item.completedDates ||= [];
+      item.skippedDates = (item.skippedDates || []).filter((date) => date !== key);
       item.completedDates.push(key);
       state.pending.push(mutation("completion", { itemID: item.id, completionDate: key, completed: true }));
+      state.pending.push(mutation("upsert", {
+        itemID: item.id,
+        changedFields: ["skippedDates"],
+        item: { skippedDates: item.skippedDates }
+      }));
     });
+    persistData();
+    render();
+    void sync();
+  }
+
+  function setSkipped(item, shouldSkip) {
+    if (!item) return;
+    const key = dateKey(state.selectedDate);
+    item.skippedDates ||= [];
+    item.completedDates ||= [];
+    if (shouldSkip) {
+      if (!item.skippedDates.includes(key)) item.skippedDates.push(key);
+      item.completedDates = item.completedDates.filter((date) => date !== key);
+      state.pending.push(mutation("completion", { itemID: item.id, completionDate: key, completed: false }));
+    } else {
+      item.skippedDates = item.skippedDates.filter((date) => date !== key);
+    }
+    queue(mutation("upsert", {
+      itemID: item.id,
+      changedFields: ["skippedDates"],
+      item: { skippedDates: item.skippedDates }
+    }));
+  }
+
+  function historyFor(item) {
+    const today = startOfDay(state.selectedDate);
+    return Array.from({ length: 21 }, (_, offset) => {
+      const date = addDays(today, -offset);
+      let stateLabel = "Off";
+      if ((item.completedDates || []).includes(dateKey(date))) stateLabel = "Done";
+      else if ((item.skippedDates || []).includes(dateKey(date))) stateLabel = "Skipped";
+      else if (occursOnDate(item, date) && date < startOfDay(new Date())) stateLabel = "Missed";
+      else if (occursOnDate(item, date)) stateLabel = "Open";
+      return {
+        label: date.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" }),
+        state: stateLabel
+      };
+    });
+  }
+
+  function applyTemplate(templateID) {
+    const template = templates.find((candidate) => candidate.id === templateID);
+    if (!template) return;
+    let group = state.groups.find((candidate) => candidate.name.toLowerCase() === template.groupName.toLowerCase());
+    if (!group) {
+      group = { id: crypto.randomUUID(), name: template.groupName, sortOrder: state.groups.length };
+      state.groups.push(group);
+      state.pending.push(mutation("groupUpsert", {
+        groupID: group.id,
+        changedFields: ["name", "sortOrder"],
+        group: { name: group.name, sortOrder: group.sortOrder }
+      }));
+    }
+    const firstOrder = state.items.filter((item) => item.groupID === group.id).length;
+    for (const [index, title] of template.items.entries()) {
+    const item = {
+        id: crypto.randomUUID(),
+        title,
+        notes: "",
+        schedule: "everyDay",
+        customWeekdays: [],
+        reminderMinutes: null,
+        completedDates: [],
+        skippedDates: [],
+        createdAt: new Date().toISOString(),
+        startDate: null,
+        endedAt: null,
+        groupID: group.id,
+        sortOrder: firstOrder + index,
+      };
+      state.items.push(item);
+      state.pending.push(mutation("upsert", {
+        itemID: item.id,
+        changedFields: ["title","notes","schedule","customWeekdays","reminderMinutes","skippedDates","createdAt","startDate","endedAt","groupID","sortOrder"],
+        item
+      }));
+    }
+    state.modal = null;
     persistData();
     render();
     void sync();
@@ -561,6 +723,83 @@
     queue(mutation("groupDelete", { groupID }));
   }
 
+  function skipGroup(groupID) {
+    visibleItems()
+      .filter((item) => (item.groupID || "") === (groupID || "") && !complete(item))
+      .forEach((item) => setSkipped(item, true));
+  }
+
+  function duplicateGroup(groupID) {
+    const source = state.groups.find((candidate) => candidate.id === groupID);
+    if (!source) return;
+    let name = `${source.name} Copy`;
+    let suffix = 2;
+    while (state.groups.some((candidate) => candidate.name.toLowerCase() === name.toLowerCase())) {
+      name = `${source.name} Copy ${suffix++}`;
+    }
+    const group = { id: crypto.randomUUID(), name, sortOrder: state.groups.length };
+    state.groups.push(group);
+    state.pending.push(mutation("groupUpsert", {
+      groupID: group.id,
+      changedFields: ["name", "sortOrder"],
+      group: { name: group.name, sortOrder: group.sortOrder }
+    }));
+    const sourceItems = state.items
+      .filter((item) => item.groupID === groupID && !item.endedAt)
+      .sort((left, right) => (left.sortOrder ?? 9999) - (right.sortOrder ?? 9999));
+    sourceItems.forEach((sourceItem, index) => {
+      const item = {
+        ...sourceItem,
+        id: crypto.randomUUID(),
+        completedDates: [],
+        skippedDates: [],
+        createdAt: new Date().toISOString(),
+        groupID: group.id,
+        sortOrder: index
+      };
+      state.items.push(item);
+      state.pending.push(mutation("upsert", {
+        itemID: item.id,
+        changedFields: ["title","notes","schedule","customWeekdays","reminderMinutes","skippedDates","createdAt","startDate","endedAt","groupID","sortOrder"],
+        item
+      }));
+    });
+    persistData();
+    render();
+    void sync();
+  }
+
+  function endGroup(groupID) {
+    if (!confirm("End every active item in this group?")) return;
+    const endedAt = startOfDay(new Date()).toISOString();
+    state.items.filter((item) => item.groupID === groupID && !item.endedAt).forEach((item) => {
+      item.endedAt = endedAt;
+      state.pending.push(mutation("upsert", {
+        itemID: item.id,
+        changedFields: ["endedAt"],
+        item: { endedAt }
+      }));
+    });
+    persistData();
+    render();
+    void sync();
+  }
+
+  function startGroupTomorrow(groupID) {
+    const startDate = addDays(new Date(), 1).toISOString();
+    state.items.filter((item) => item.groupID === groupID && !item.endedAt).forEach((item) => {
+      item.startDate = startDate;
+      state.pending.push(mutation("upsert", {
+        itemID: item.id,
+        changedFields: ["startDate"],
+        item: { startDate }
+      }));
+    });
+    persistData();
+    render();
+    void sync();
+  }
+
   function saveEditor(form) {
     const data = new FormData(form);
     const existing = state.modal.item;
@@ -582,7 +821,7 @@
     const startDate = localISO(data.get("startDate"));
     const lastDay = dateFromInput(data.get("endDate"));
     const endedAt = lastDay ? addDays(lastDay, 1).toISOString() : null;
-    const item = {
+      const item = {
       id: existing?.id || crypto.randomUUID(),
       title: String(data.get("title")).trim(),
       notes: String(data.get("notes") || "").trim(),
@@ -590,6 +829,7 @@
       customWeekdays,
       reminderMinutes: reminder ? hours * 60 + minutes : null,
       completedDates: existing?.completedDates || [],
+      skippedDates: existing?.skippedDates || [],
       createdAt: existing?.createdAt || new Date().toISOString(),
       startDate,
       endedAt,
@@ -602,10 +842,11 @@
     state.modal = null;
     queue(mutation("upsert", {
       itemID: item.id,
-      changedFields: ["title","notes","schedule","customWeekdays","reminderMinutes","createdAt","startDate","endedAt","groupID","sortOrder"],
+      changedFields: ["title","notes","schedule","customWeekdays","reminderMinutes","skippedDates","createdAt","startDate","endedAt","groupID","sortOrder"],
       item: {
         title: item.title, notes: item.notes, schedule: item.schedule,
         customWeekdays: item.customWeekdays, reminderMinutes: item.reminderMinutes,
+        skippedDates: item.skippedDates,
         createdAt: item.createdAt, startDate: item.startDate, endedAt: item.endedAt,
         groupID: item.groupID, sortOrder: item.sortOrder
       }
@@ -625,18 +866,30 @@
       state.sort = state.sort === "manual" ? "time" : state.sort === "time" ? "name" : "manual";
       render();
     }
+    if (action === "templates") { state.modal = { type: "templates" }; render(); }
+    if (action === "apply-template") applyTemplate(target.dataset.template);
     if (action === "add") { state.modal = { type: "editor", item: null }; render(); }
     if (action === "edit") {
       state.modal = { type: "editor", item: state.items.find((item) => item.id === target.dataset.id) };
       render();
     }
     if (action === "toggle") toggle(state.items.find((item) => item.id === target.dataset.id));
+    if (action === "skip") setSkipped(state.items.find((item) => item.id === target.dataset.id), true);
+    if (action === "unskip") setSkipped(state.items.find((item) => item.id === target.dataset.id), false);
+    if (action === "history") {
+      state.modal = { type: "history", item: state.items.find((item) => item.id === target.dataset.id) };
+      render();
+    }
     if (action === "complete-all") completeItems(visibleItems());
     if (action === "complete-group") {
       const id = target.dataset.group || null;
       completeItems(visibleItems().filter((item) => (item.groupID || null) === id));
     }
     if (action === "rename-group") renameGroup(target.dataset.group);
+    if (action === "skip-group") skipGroup(target.dataset.group || "");
+    if (action === "duplicate-group") duplicateGroup(target.dataset.group);
+    if (action === "start-group-tomorrow") startGroupTomorrow(target.dataset.group);
+    if (action === "end-group") endGroup(target.dataset.group);
     if (action === "delete-group") deleteGroup(target.dataset.group);
     if (action === "account") { state.modal = { type: "account" }; render(); }
     if (action === "sign-out") await signOut();
@@ -675,6 +928,12 @@
       const custom = event.target.closest("form").querySelector("[data-custom-days]");
       custom.hidden = event.target.value !== "custom";
     }
+  });
+
+  app.addEventListener("input", (event) => {
+    if (!event.target.matches("[data-search]")) return;
+    state.search = event.target.value;
+    render();
   });
 
   app.addEventListener("submit", (event) => {

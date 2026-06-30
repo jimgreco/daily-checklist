@@ -31,6 +31,22 @@ struct ChecklistGroup: Identifiable, Codable, Hashable {
 }
 
 struct ChecklistItem: Identifiable, Codable, Hashable {
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case title
+        case notes
+        case schedule
+        case customWeekdays
+        case reminderMinutes
+        case completedDates
+        case skippedDates
+        case createdAt
+        case startDate
+        case endedAt
+        case groupID
+        case sortOrder
+    }
+
     var id: UUID
     var title: String
     var notes: String
@@ -38,6 +54,7 @@ struct ChecklistItem: Identifiable, Codable, Hashable {
     var customWeekdays: Set<Int>
     var reminderMinutes: Int?
     var completedDates: Set<String>
+    var skippedDates: Set<String>
     var createdAt: Date
     var startDate: Date?
     var endedAt: Date?
@@ -52,6 +69,7 @@ struct ChecklistItem: Identifiable, Codable, Hashable {
         customWeekdays: Set<Int> = [],
         reminderMinutes: Int? = nil,
         completedDates: Set<String> = [],
+        skippedDates: Set<String> = [],
         createdAt: Date = .now,
         startDate: Date? = nil,
         endedAt: Date? = nil,
@@ -65,11 +83,29 @@ struct ChecklistItem: Identifiable, Codable, Hashable {
         self.customWeekdays = customWeekdays
         self.reminderMinutes = reminderMinutes
         self.completedDates = completedDates
+        self.skippedDates = skippedDates
         self.createdAt = createdAt
         self.startDate = startDate
         self.endedAt = endedAt
         self.groupID = groupID
         self.sortOrder = sortOrder
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        title = try container.decode(String.self, forKey: .title)
+        notes = try container.decodeIfPresent(String.self, forKey: .notes) ?? ""
+        schedule = try container.decodeIfPresent(ScheduleKind.self, forKey: .schedule) ?? .everyDay
+        customWeekdays = try container.decodeIfPresent(Set<Int>.self, forKey: .customWeekdays) ?? []
+        reminderMinutes = try container.decodeIfPresent(Int.self, forKey: .reminderMinutes)
+        completedDates = try container.decodeIfPresent(Set<String>.self, forKey: .completedDates) ?? []
+        skippedDates = try container.decodeIfPresent(Set<String>.self, forKey: .skippedDates) ?? []
+        createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? .now
+        startDate = try container.decodeIfPresent(Date.self, forKey: .startDate)
+        endedAt = try container.decodeIfPresent(Date.self, forKey: .endedAt)
+        groupID = try container.decodeIfPresent(UUID.self, forKey: .groupID)
+        sortOrder = try container.decodeIfPresent(Double.self, forKey: .sortOrder)
     }
 
     func isActive(on date: Date, calendar: Calendar = .current) -> Bool {
@@ -95,6 +131,10 @@ struct ChecklistItem: Identifiable, Codable, Hashable {
         completedDates.contains(DateKey.string(from: date))
     }
 
+    func isSkipped(on date: Date) -> Bool {
+        skippedDates.contains(DateKey.string(from: date))
+    }
+
     func consecutiveMissedDays(asOf date: Date, calendar: Calendar = .current) -> Int {
         let today = calendar.startOfDay(for: .now)
         var cursor = min(calendar.startOfDay(for: date), today)
@@ -111,7 +151,7 @@ struct ChecklistItem: Identifiable, Codable, Hashable {
 
         while cursor >= firstEligibleDate {
             if occurs(on: cursor, calendar: calendar) {
-                if isComplete(on: cursor) {
+                if isComplete(on: cursor) || isSkipped(on: cursor) {
                     break
                 }
                 missedDays += 1
@@ -150,16 +190,72 @@ struct LegacyEnvelope: Codable {
 }
 
 struct ItemPayload: Codable {
+    private enum CodingKeys: String, CodingKey {
+        case title
+        case notes
+        case schedule
+        case customWeekdays
+        case reminderMinutes
+        case skippedDates
+        case createdAt
+        case startDate
+        case endedAt
+        case groupID
+        case sortOrder
+    }
+
     var title: String
     var notes: String
     var schedule: ScheduleKind
     var customWeekdays: Set<Int>
     var reminderMinutes: Int?
+    var skippedDates: Set<String>
     var createdAt: Date
     var startDate: Date?
     var endedAt: Date?
     var groupID: UUID?
     var sortOrder: Double?
+
+    init(
+        title: String,
+        notes: String,
+        schedule: ScheduleKind,
+        customWeekdays: Set<Int>,
+        reminderMinutes: Int?,
+        skippedDates: Set<String>,
+        createdAt: Date,
+        startDate: Date?,
+        endedAt: Date?,
+        groupID: UUID?,
+        sortOrder: Double?
+    ) {
+        self.title = title
+        self.notes = notes
+        self.schedule = schedule
+        self.customWeekdays = customWeekdays
+        self.reminderMinutes = reminderMinutes
+        self.skippedDates = skippedDates
+        self.createdAt = createdAt
+        self.startDate = startDate
+        self.endedAt = endedAt
+        self.groupID = groupID
+        self.sortOrder = sortOrder
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        title = try container.decodeIfPresent(String.self, forKey: .title) ?? ""
+        notes = try container.decodeIfPresent(String.self, forKey: .notes) ?? ""
+        schedule = try container.decodeIfPresent(ScheduleKind.self, forKey: .schedule) ?? .everyDay
+        customWeekdays = try container.decodeIfPresent(Set<Int>.self, forKey: .customWeekdays) ?? []
+        reminderMinutes = try container.decodeIfPresent(Int.self, forKey: .reminderMinutes)
+        skippedDates = try container.decodeIfPresent(Set<String>.self, forKey: .skippedDates) ?? []
+        createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? .now
+        startDate = try container.decodeIfPresent(Date.self, forKey: .startDate)
+        endedAt = try container.decodeIfPresent(Date.self, forKey: .endedAt)
+        groupID = try container.decodeIfPresent(UUID.self, forKey: .groupID)
+        sortOrder = try container.decodeIfPresent(Double.self, forKey: .sortOrder)
+    }
 }
 
 struct GroupPayload: Codable {
@@ -202,6 +298,7 @@ struct SyncMutation: Identifiable, Codable {
                 schedule: item.schedule,
                 customWeekdays: item.customWeekdays,
                 reminderMinutes: item.reminderMinutes,
+                skippedDates: item.skippedDates,
                 createdAt: item.createdAt,
                 startDate: item.startDate,
                 endedAt: item.endedAt,
@@ -299,5 +396,9 @@ enum DateKey {
 
     static func string(from date: Date) -> String {
         formatter.string(from: date)
+    }
+
+    static func date(from key: String) -> Date? {
+        formatter.date(from: key)
     }
 }

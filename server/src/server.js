@@ -382,7 +382,7 @@ function stampWins(incoming, current) {
   return incoming.deviceID > current.deviceID;
 }
 
-const itemFields = ["title", "notes", "schedule", "customWeekdays", "reminderMinutes", "createdAt", "startDate", "endedAt", "groupID", "sortOrder"];
+const itemFields = ["title", "notes", "schedule", "customWeekdays", "reminderMinutes", "skippedDates", "createdAt", "startDate", "endedAt", "groupID", "sortOrder"];
 const groupFields = ["name", "sortOrder"];
 
 function validID(value) {
@@ -425,6 +425,11 @@ function validItemPayload(item = {}) {
     && (item.schedule == null || ["everyDay", "weekdays", "weekends", "custom"].includes(item.schedule))
     && (item.customWeekdays == null || validWeekdays(item.customWeekdays))
     && validFiniteNumber(item.reminderMinutes, { nullable: true, min: 0, max: 1439 })
+    && (item.skippedDates == null || (
+      Array.isArray(item.skippedDates)
+      && item.skippedDates.length <= 5000
+      && item.skippedDates.every(validDateKey)
+    ))
     && validISODate(item.createdAt)
     && validISODate(item.startDate)
     && validISODate(item.endedAt)
@@ -559,6 +564,7 @@ function materializeAccount(account) {
         schedule: value.schedule || "everyDay",
         customWeekdays: value.customWeekdays || [],
         reminderMinutes: value.reminderMinutes,
+        skippedDates: value.skippedDates || [],
         startDate: value.startDate,
         endedAt: value.endedAt,
         groupID: value.groupID,

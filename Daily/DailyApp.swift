@@ -1,5 +1,6 @@
 import SwiftUI
 import GoogleSignIn
+import UserNotifications
 
 @main
 struct DailyApp: App {
@@ -8,6 +9,7 @@ struct DailyApp: App {
     @StateObject private var authStore = AuthStore()
 
     init() {
+        UNUserNotificationCenter.current().delegate = DailyNotificationDelegate.shared
         if let clientID = Bundle.main.object(forInfoDictionaryKey: "GIDClientID") as? String,
            !clientID.hasPrefix("YOUR_") {
             GIDSignIn.sharedInstance.configuration = GIDConfiguration(clientID: clientID)
@@ -35,6 +37,23 @@ struct DailyApp: App {
                 .onChange(of: scenePhase) { _, phase in
                     guard phase == .active else { return }
                     Task { await store.sync(using: authStore) }
+                }
+                .onReceive(NotificationCenter.default.publisher(for: .dailyNotificationAction)) { notification in
+                    guard let rawID = notification.userInfo?["itemID"] as? String,
+                          let itemID = UUID(uuidString: rawID),
+                          let action = notification.userInfo?["action"] as? String else { return }
+                    let date = (notification.userInfo?["date"] as? String)
+                        .flatMap(DateKey.date(from:)) ?? Date()
+                    switch action {
+                    case DailyNotificationAction.complete:
+                        store.complete(itemID: itemID, on: date)
+                    case DailyNotificationAction.skip:
+                        store.skip(itemID: itemID, on: date)
+                    case DailyNotificationAction.snooze:
+                        store.snooze(itemID: itemID)
+                    default:
+                        break
+                    }
                 }
         }
     }
