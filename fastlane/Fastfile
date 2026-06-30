@@ -1,0 +1,102 @@
+ENV["FASTLANE_SKIP_UPDATE_CHECK"] = "1"
+
+default_platform(:ios)
+opt_out_usage
+
+APP_IDENTIFIER = "com.jimgreco.dailychecklist"
+APP_TARGET = "Daily"
+PROJECT_PATH = "Daily.xcodeproj"
+SCREENSHOT_SCHEME = "DailyScreenshots"
+SCREENSHOT_OUTPUT = "fastlane/screenshots"
+METADATA_PATH = "fastlane/metadata"
+
+def screenshot_devices
+  raw_devices = ENV["SCREENSHOT_DEVICES"] || "iPhone 17 Pro Max"
+  raw_devices.split(",").map(&:strip).reject(&:empty?)
+end
+
+platform :ios do
+  desc "Capture App Store screenshots from deterministic local sample data"
+  lane :screenshots do
+    capture_ios_screenshots(
+      project: PROJECT_PATH,
+      scheme: SCREENSHOT_SCHEME,
+      app_identifier: APP_IDENTIFIER,
+      configuration: "Debug",
+      devices: screenshot_devices,
+      languages: ["en-US"],
+      output_directory: SCREENSHOT_OUTPUT,
+      clear_previous_screenshots: true,
+      reinstall_app: true,
+      clean: true,
+      override_status_bar: true,
+      skip_open_summary: true
+    )
+  end
+
+  desc "Upload source-controlled App Store listing metadata to the editable version"
+  lane :upload_metadata do
+    upload_to_app_store(
+      api_key: app_store_api_key,
+      app_identifier: APP_IDENTIFIER,
+      app_version: app_store_version,
+      metadata_path: METADATA_PATH,
+      skip_binary_upload: true,
+      skip_screenshots: true,
+      force: true,
+      run_precheck_before_submit: false,
+      submit_for_review: false
+    )
+  end
+
+  desc "Upload generated screenshots to the editable App Store version"
+  lane :upload_screenshots do
+    upload_to_app_store(
+      api_key: app_store_api_key,
+      app_identifier: APP_IDENTIFIER,
+      app_version: app_store_version,
+      screenshots_path: SCREENSHOT_OUTPUT,
+      skip_binary_upload: true,
+      skip_metadata: true,
+      overwrite_screenshots: true,
+      force: true,
+      run_precheck_before_submit: false,
+      submit_for_review: false
+    )
+  end
+
+  desc "Capture screenshots, then upload them to App Store Connect"
+  lane :screenshots_and_upload do
+    screenshots
+    upload_screenshots
+  end
+
+  desc "Upload App Store metadata and screenshots"
+  lane :upload_release_assets do
+    upload_metadata
+    upload_screenshots
+  end
+
+  private_lane :app_store_version do
+    version_override = ENV["APP_STORE_VERSION"].to_s.strip
+    if version_override.empty?
+      get_version_number(
+        xcodeproj: PROJECT_PATH,
+        target: APP_TARGET
+      )
+    else
+      version_override
+    end
+  end
+
+  private_lane :app_store_api_key do
+    app_store_connect_api_key(
+      key_id: ENV.fetch("APP_STORE_CONNECT_KEY_ID"),
+      issuer_id: ENV.fetch("APP_STORE_CONNECT_ISSUER_ID"),
+      key_content: ENV.fetch("APP_STORE_CONNECT_API_KEY"),
+      is_key_content_base64: false,
+      duration: 1200,
+      in_house: false
+    )
+  end
+end

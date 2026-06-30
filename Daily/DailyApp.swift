@@ -12,6 +12,9 @@ struct DailyApp: App {
            !clientID.hasPrefix("YOUR_") {
             GIDSignIn.sharedInstance.configuration = GIDConfiguration(clientID: clientID)
         }
+        #if DEBUG
+        ScreenshotSeedData.installIfNeeded()
+        #endif
     }
 
     var body: some Scene {

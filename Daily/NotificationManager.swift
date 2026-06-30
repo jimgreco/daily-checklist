@@ -5,10 +5,16 @@ struct NotificationManager {
     private let center = UNUserNotificationCenter.current()
 
     func requestAuthorization() async {
+        #if DEBUG
+        if ScreenshotSeedData.isEnabled { return }
+        #endif
         _ = try? await center.requestAuthorization(options: [.alert, .sound, .badge])
     }
 
     func reschedule(items: [ChecklistItem], eveningMinutes: Int?) async {
+        #if DEBUG
+        if ScreenshotSeedData.isEnabled { return }
+        #endif
         let pending = await center.pendingNotificationRequests()
         let managed = pending.map(\.identifier).filter {
             $0.hasPrefix("daily.item.") || $0.hasPrefix("daily.evening.")

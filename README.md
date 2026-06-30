@@ -71,6 +71,8 @@ Every push to `main` runs `.github/workflows/publish.yml`:
 - deploys `server/` to the shared EC2 host, ensures the `daily_checklist` Postgres database exists, migrates the old `daily-data/database.json` file into Postgres if Postgres is still empty, and rebuilds the `daily` Docker Compose service;
 - builds the iOS app, creates a current App Store provisioning profile, archives, and uploads to TestFlight.
 
+Manual Publish runs can also upload source-controlled App Store listing metadata and deterministic screenshots to the editable App Store Connect version. See `docs/app-store-production.md`.
+
 Repository secrets required:
 
 - EC2: `EC2_HOST`, `EC2_USER`, `EC2_SSH_KEY`, `EC2_SSH_KNOWN_HOSTS`, `DAILY_SESSION_SECRET`

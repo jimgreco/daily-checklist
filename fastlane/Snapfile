@@ -1,0 +1,12 @@
+project("Daily.xcodeproj")
+scheme("DailyScreenshots")
+app_identifier("com.jimgreco.dailychecklist")
+configuration("Debug")
+
+devices((ENV["SCREENSHOT_DEVICES"] || "iPhone 17 Pro Max").split(",").map(&:strip))
+languages(["en-US"])
+
+output_directory("fastlane/screenshots")
+clear_previous_screenshots(true)
+reinstall_app(true)
+override_status_bar(true)

@@ -40,3 +40,18 @@ targets:
           PROVISIONING_PROFILE_SPECIFIER: "$(IOS_PROFILE_NAME)"
     scheme:
       testTargets: []
+  DailyScreenshots:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: DailyScreenshots
+    dependencies:
+      - target: Daily
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.jimgreco.dailychecklist.screenshots
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: Daily
+    scheme:
+      testTargets:
+        - DailyScreenshots

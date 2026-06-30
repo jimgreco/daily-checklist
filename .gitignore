@@ -25,3 +25,10 @@ server/data/
 # Local tooling
 .idea/
 .vscode/
+
+# Fastlane generated artifacts
+fastlane/screenshots/
+fastlane/report.xml
+fastlane/screenshots.html
+.bundle/
+vendor/bundle/

@@ -4,6 +4,32 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      update_app_store_metadata:
+        description: Upload source-controlled App Store listing metadata to the editable version
+        required: true
+        type: choice
+        default: "false"
+        options:
+          - "false"
+          - "true"
+      update_app_store_screenshots:
+        description: Generate screenshots and replace screenshots on the editable App Store version
+        required: true
+        type: choice
+        default: "false"
+        options:
+          - "false"
+          - "true"
+      app_store_version:
+        description: Optional App Store version override; defaults to Xcode MARKETING_VERSION
+        required: false
+        type: string
+      screenshot_devices:
+        description: Comma-separated simulator names for screenshot capture
+        required: true
+        type: string
+        default: "iPhone 17 Pro Max"
 
 concurrency:
   group: publish-${{ github.ref }}
@@ -180,6 +206,66 @@ jobs:
           docker-compose --profile daily logs --tail=100 daily || true
           exit 1
           REMOTE
+
+  app-store-assets:
+    if: ${{ github.event_name == 'workflow_dispatch' && (inputs.update_app_store_metadata == 'true' || inputs.update_app_store_screenshots == 'true') }}
+    runs-on: macos-latest
+    timeout-minutes: 45
+    env:
+      FASTLANE_SKIP_UPDATE_CHECK: "1"
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Select Xcode
+        run: |
+          set -euo pipefail
+          for path in /Applications/Xcode_26.2.app /Applications/Xcode_26.1.app /Applications/Xcode_26.0.app /Applications/Xcode_26.app /Applications/Xcode.app; do
+            if [ -d "$path" ]; then
+              sudo xcode-select -s "$path/Contents/Developer"
+              break
+            fi
+          done
+          xcodebuild -version
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.3"
+          bundler-cache: false
+
+      - name: Install Fastlane
+        run: bundle install
+
+      - name: Generate App Store screenshots
+        if: ${{ inputs.update_app_store_screenshots == 'true' }}
+        env:
+          SCREENSHOT_DEVICES: ${{ inputs.screenshot_devices }}
+        run: bundle exec fastlane ios screenshots
+
+      - name: Upload screenshot artifact
+        if: ${{ inputs.update_app_store_screenshots == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-store-screenshots
+          path: fastlane/screenshots
+          if-no-files-found: error
+
+      - name: Upload App Store metadata
+        if: ${{ inputs.update_app_store_metadata == 'true' }}
+        env:
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APP_STORE_CONNECT_API_KEY: ${{ secrets.APP_STORE_CONNECT_API_KEY }}
+          APP_STORE_VERSION: ${{ inputs.app_store_version }}
+        run: bundle exec fastlane ios upload_metadata
+
+      - name: Upload App Store screenshots
+        if: ${{ inputs.update_app_store_screenshots == 'true' }}
+        env:
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APP_STORE_CONNECT_API_KEY: ${{ secrets.APP_STORE_CONNECT_API_KEY }}
+          APP_STORE_VERSION: ${{ inputs.app_store_version }}
+        run: bundle exec fastlane ios upload_screenshots
 
   testflight:
     runs-on: macos-latest
