@@ -144,15 +144,15 @@ jobs:
 
           docker-compose up -d db
           for attempt in $(seq 1 60); do
-            if docker-compose exec -T db pg_isready -U admin; then
+            if docker-compose exec -T db pg_isready -U admin </dev/null; then
               break
             fi
             sleep 2
           done
           echo "Ensuring daily_checklist database exists."
-          daily_db_exists="$(docker-compose exec -T db psql -U admin -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname = 'daily_checklist'" | tr -d '[:space:]')"
+          daily_db_exists="$(docker-compose exec -T db psql -U admin -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname = 'daily_checklist'" </dev/null | tr -d '[:space:]')"
           if [ "$daily_db_exists" != "1" ]; then
-            docker-compose exec -T db psql -U admin -d postgres -c "CREATE DATABASE daily_checklist"
+            docker-compose exec -T db psql -U admin -d postgres -c "CREATE DATABASE daily_checklist" </dev/null
           fi
           echo "Building Daily service."
           docker-compose --profile daily build daily
@@ -161,7 +161,7 @@ jobs:
             docker-compose --profile daily run --rm \
               -v "$PWD/daily-data:/legacy-daily-data:ro" \
               -e MIGRATE_JSON_FILE=/legacy-daily-data/database.json \
-              daily node src/migrate-json-to-postgres.js
+              daily node src/migrate-json-to-postgres.js </dev/null
           else
             echo "No legacy Daily JSON data found; skipping migration."
           fi
@@ -169,7 +169,7 @@ jobs:
           docker-compose --profile daily up -d daily
           for attempt in $(seq 1 60); do
             if docker-compose --profile daily exec -T daily node -e \
-              'fetch("http://127.0.0.1:8787/health").then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))'; then
+              'fetch("http://127.0.0.1:8787/health").then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))' </dev/null; then
               echo "Daily server is healthy."
               docker system prune -f
               exit 0
