@@ -43,6 +43,18 @@ test("serves the mobile website and public auth configuration", async () => {
   });
 });
 
+test("serves public privacy and support pages", async () => {
+  const privacy = await fetch(`${baseURL}/privacy.html`);
+  assert.equal(privacy.status, 200);
+  assert.match(privacy.headers.get("content-security-policy"), /frame-ancestors 'none'/);
+  assert.match(await privacy.text(), /Daily does not sell personal data/);
+
+  const support = await fetch(`${baseURL}/support.html`);
+  assert.equal(support.status, 200);
+  assert.match(support.headers.get("x-content-type-options"), /nosniff/);
+  assert.match(await support.text(), /Privacy Requests/);
+});
+
 test("dev sign-in sets an HttpOnly refresh cookie and logout clears it", async () => {
   const response = await fetch(`${baseURL}/auth/dev`, {
     method: "POST",

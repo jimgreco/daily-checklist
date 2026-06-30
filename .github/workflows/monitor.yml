@@ -1,0 +1,75 @@
+name: Production Monitor
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: production-monitor
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  uptime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      BASE_URL: ${{ vars.DAILY_PRODUCTION_BASE_URL || 'https://daily-checklist.jim-greco.com' }}
+      ALERT_WEBHOOK_URL: ${{ secrets.DAILY_MONITOR_WEBHOOK_URL }}
+    steps:
+      - name: Check production health and public privacy pages
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          notify_failure() {
+            status="$1"
+            if [ "$status" -ne 0 ] && [ -n "${ALERT_WEBHOOK_URL:-}" ]; then
+              payload="$(node -e '
+                const text = `Daily production monitor failed for ${process.env.BASE_URL}.\nRun: ${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`;
+                process.stdout.write(JSON.stringify({ text, content: text }));
+              ')"
+              curl -fsS -m 10 \
+                -H "content-type: application/json" \
+                -d "$payload" \
+                "$ALERT_WEBHOOK_URL" >/dev/null || true
+            fi
+            exit "$status"
+          }
+
+          tmpdir="$(mktemp -d)"
+          finish() {
+            status=$?
+            rm -rf "$tmpdir"
+            notify_failure "$status"
+          }
+          trap finish EXIT
+
+          check_get() {
+            path="$1"
+            expected="$2"
+            body="$tmpdir/$(echo "$path" | tr '/.' '__').body"
+            headers="$tmpdir/$(echo "$path" | tr '/.' '__').headers"
+            url="${BASE_URL%/}${path}"
+
+            curl -fsS -m 15 -D "$headers" -o "$body" "$url"
+            grep -qi '^x-content-type-options: nosniff' "$headers"
+            grep -qi '^content-security-policy:' "$headers"
+            grep -q "$expected" "$body"
+          }
+
+          health_body="$tmpdir/health.body"
+          health_headers="$tmpdir/health.headers"
+          curl -fsS -m 15 -D "$health_headers" -o "$health_body" "${BASE_URL%/}/health"
+          grep -qi '^cache-control: no-store' "$health_headers"
+          node -e '
+            const fs = require("node:fs");
+            const payload = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+            if (payload.ok !== true) process.exit(1);
+          ' "$health_body"
+
+          check_get "/privacy.html" "Data Daily Stores"
+          check_get "/support.html" "Account Requests"

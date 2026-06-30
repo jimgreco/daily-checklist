@@ -49,6 +49,14 @@ Signed-in users can export their synced checklist data and delete their server-s
 - `https://daily-checklist.jim-greco.com/privacy.html`
 - `https://daily-checklist.jim-greco.com/support.html`
 
+Keep App Store Connect privacy answers aligned with `Daily/PrivacyInfo.xcprivacy` and `docs/app-store-privacy.md`.
+
+## Monitoring
+
+`.github/workflows/monitor.yml` runs every five minutes and checks production `/health`, `/privacy.html`, and `/support.html`. The monitor uses `vars.DAILY_PRODUCTION_BASE_URL` when set, otherwise it checks `https://daily-checklist.jim-greco.com`.
+
+Add `DAILY_MONITOR_WEBHOOK_URL` as a repository secret to send failure notifications to a Slack-compatible or Discord-compatible incoming webhook. GitHub Actions failure notifications still work without the webhook.
+
 ## Offline and conflict behavior
 
 The local cache is authoritative while offline. Every add, edit, completion, deletion, and evening-alert change is appended to a durable mutation queue. After authentication and whenever connectivity returns, queued mutations are uploaded.
