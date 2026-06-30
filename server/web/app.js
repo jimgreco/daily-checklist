@@ -235,7 +235,7 @@
   }
 
   function renderGroup(name, items, groupID, realGroup) {
-    if (!items.length && !realGroup) return "";
+    if (!items.length) return "";
     const todo = items.filter((item) => !complete(item));
     const done = items.filter(complete);
     const ordered = realGroup && todo.length ? [...todo, ...done] : items;
@@ -265,7 +265,7 @@
     const grouped = groups.map((group) => ({
       group,
       items: items.filter((item) => item.groupID === group.id)
-    })).filter((entry) => entry.items.length || canDeleteGroup(entry.group.id));
+    })).filter((entry) => entry.items.length);
     const todoBody = [
       renderGroup("Ungrouped", ungroupedTodo, "", false),
       ...grouped.filter((entry) => entry.items.some((item) => !complete(item)))

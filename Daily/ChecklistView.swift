@@ -363,7 +363,7 @@ struct ChecklistView: View {
                     let groupItems = store.visibleItems.filter { $0.groupID == group.id }
                     let groupIsComplete = !groupItems.isEmpty
                         && groupItems.allSatisfy { $0.isComplete(on: store.selectedDate) }
-                    if groupIsComplete == isCompletedSection {
+                    if !groupItems.isEmpty && groupIsComplete == isCompletedSection {
                         groupBlock(
                             title: group.name,
                             groupID: group.id,
