@@ -250,10 +250,9 @@
     const canDelete = realGroup && canDeleteGroup(groupID);
     return `<section class="group">
       <div class="group-head">
-        <div class="group-title">${escapeHTML(name)} <span>${groupProgress(items)}</span></div>
+        <div class="group-title">${escapeHTML(name)}<span>${groupProgress(items)}</span>${realGroup ? `<button class="group-action group-title-action" data-action="rename-group" data-group="${groupID}" aria-label="Rename ${escapeHTML(name)}">✎</button>` : ""}</div>
         <div class="group-actions">
-          ${todo.length ? `<button class="complete-all" data-action="complete-group" data-group="${groupID || ""}">✓ Complete all</button>` : ""}
-          ${realGroup ? `<button class="group-action" data-action="rename-group" data-group="${groupID}" aria-label="Rename ${escapeHTML(name)}">✎</button>` : ""}
+          ${todo.length ? `<button class="complete-all" data-action="complete-group" data-group="${groupID || ""}">✓ All</button>` : ""}
           ${canDelete ? `<button class="group-action danger" data-action="delete-group" data-group="${groupID}" aria-label="Delete ${escapeHTML(name)}">⌫</button>` : ""}
         </div>
       </div>
@@ -312,7 +311,7 @@
       </div>
       <div class="section-head">
         <span class="section-label">To do</span>
-        ${remaining ? `<button class="complete-all" data-action="complete-all">✓ Complete all&nbsp;&nbsp;${remaining}</button>` : ""}
+        ${remaining ? `<button class="complete-all" data-action="complete-all">✓ All&nbsp;&nbsp;${remaining}</button>` : ""}
       </div>
       ${todoBody || `<div class="empty">${completedBody ? "Everything is complete." : "Nothing is scheduled for this day."}</div>`}
       ${completedBody ? `<div class="section-head"><span class="section-label">Completed</span></div>${completedBody}` : ""}

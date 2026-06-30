@@ -311,7 +311,7 @@ struct ChecklistView: View {
                             store.completeAllForSelectedDate()
                         }
                     } label: {
-                        Label("Complete all", systemImage: "checkmark.circle.fill")
+                        Label("All", systemImage: "checkmark.circle.fill")
                             .font(.system(size: 12, weight: .semibold))
                     }
                     .buttonStyle(.plain)
@@ -457,21 +457,6 @@ struct ChecklistView: View {
             Text(completedCount == totalCount ? "\(totalCount)" : "\(completedCount)/\(totalCount)")
                 .font(.system(size: 11, weight: .bold, design: .rounded))
                 .foregroundStyle(.secondary)
-            Spacer()
-            if showsCompleteAll {
-                Button(action: completeAll) {
-                    Label("Complete all", systemImage: "checkmark.circle.fill")
-                        .font(.system(size: 11, weight: .semibold))
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(accent)
-                .accessibilityHint("Marks every task in \(title) as complete")
-            }
-            if isRealGroup, isEditingChecklist, store.sortMode == .manual {
-                Image(systemName: "line.3.horizontal")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(.secondary)
-            }
             if isRealGroup, isEditingChecklist {
                 Menu {
                     Button(action: rename) {
@@ -489,6 +474,21 @@ struct ChecklistView: View {
                         .frame(width: 30, height: 30)
                 }
                 .accessibilityLabel("Group actions for \(title)")
+            }
+            Spacer()
+            if showsCompleteAll {
+                Button(action: completeAll) {
+                    Label("All", systemImage: "checkmark.circle.fill")
+                        .font(.system(size: 11, weight: .semibold))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(accent)
+                .accessibilityHint("Marks every task in \(title) as complete")
+            }
+            if isRealGroup, isEditingChecklist, store.sortMode == .manual {
+                Image(systemName: "line.3.horizontal")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.secondary)
             }
         }
         .padding(.horizontal, 4)
