@@ -27,13 +27,20 @@ test.after(async () => {
   if (listener) await new Promise((resolve) => listener.close(resolve));
 });
 
-test("serves the mobile website and public auth configuration", async () => {
-  const page = await fetch(`${baseURL}/`);
-  assert.equal(page.status, 200);
-  assert.match(page.headers.get("content-type"), /^text\/html/);
-  assert.match(page.headers.get("content-security-policy"), /frame-ancestors 'none'/);
-  assert.equal(page.headers.get("x-frame-options"), "DENY");
-  assert.match(await page.text(), /Daily Checklist/);
+test("serves the public landing page, web app, and auth configuration", async () => {
+  const landing = await fetch(`${baseURL}/`);
+  assert.equal(landing.status, 200);
+  assert.match(landing.headers.get("content-type"), /^text\/html/);
+  assert.match(landing.headers.get("content-security-policy"), /frame-ancestors 'none'/);
+  assert.equal(landing.headers.get("x-frame-options"), "DENY");
+  const landingHTML = await landing.text();
+  assert.match(landingHTML, /Keep recurring routines from slipping/);
+  assert.match(landingHTML, /href="\/app"/);
+
+  const app = await fetch(`${baseURL}/app`);
+  assert.equal(app.status, 200);
+  assert.match(app.headers.get("content-type"), /^text\/html/);
+  assert.match(await app.text(), /Daily Checklist/);
 
   const config = await fetch(`${baseURL}/auth/config`);
   assert.equal(config.status, 200);

@@ -58,8 +58,11 @@ function noContent(response, headers = {}) {
 const contentTypes = {
   ".css": "text/css; charset=utf-8",
   ".html": "text/html; charset=utf-8",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
   ".js": "text/javascript; charset=utf-8",
   ".json": "application/json; charset=utf-8",
+  ".png": "image/png",
   ".webmanifest": "application/manifest+json; charset=utf-8"
 };
 
@@ -775,7 +778,9 @@ const server = http.createServer(async (request, response) => {
       return noContent(response, { "set-cookie": clearRefreshCookie() });
     }
     if (request.method === "GET") {
-      const relativePath = pathname === "/" ? "index.html" : pathname.slice(1);
+      const relativePath = pathname === "/"
+        ? "landing.html"
+        : (pathname === "/app" || pathname === "/app/" ? "index.html" : pathname.slice(1));
       if (await sendWebFile(response, relativePath)) return;
     }
     return send(response, 404, { error: "Not found" });
