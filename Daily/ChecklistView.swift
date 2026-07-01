@@ -475,19 +475,11 @@ struct ChecklistView: View {
                 }
             }
         } label: {
-            HStack(spacing: 6) {
-                ForEach(ChecklistSort.allCases) { option in
-                    let isSelected = store.sortMode == option
-                    Image(systemName: option.icon)
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(isSelected ? .white : ink.opacity(0.62))
-                        .frame(width: 30, height: 30)
-                        .background(isSelected ? accent : Color.clear, in: Circle())
-                        .accessibilityHidden(true)
-                }
-            }
-            .padding(5)
-            .background(controlSurface, in: Capsule())
+            Image(systemName: store.sortMode.icon)
+                .font(.system(size: 13, weight: .bold))
+                .foregroundStyle(ink)
+                .frame(width: 35, height: 35)
+                .background(controlSurface, in: Circle())
         }
         .accessibilityLabel("Sort checklist")
         .accessibilityValue(store.sortMode.title)
