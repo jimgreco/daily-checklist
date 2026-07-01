@@ -344,7 +344,6 @@
           <button class="${state.mode === "archive" ? "active" : ""}" data-action="mode" data-mode="archive">Archive</button>
         </div>
         <div class="toolbar">
-          <button class="sort-button" data-action="templates">▦ Templates</button>
           <button class="sort-button" data-action="sort">⇅ ${state.sort === "manual" ? "Manual" : state.sort === "name" ? "Name" : "Time"}</button>
         </div>
         <label class="search-field"><span>⌕</span><input data-search placeholder="Search tasks" value="${escapeHTML(state.search)}"></label>
@@ -419,18 +418,6 @@
             <button class="danger" data-action="sign-out"><span>Sign out</span></button>
             <button class="danger" data-action="delete-account"><span>Delete account</span><small>Remove synced account data</small></button>
           </div>
-        </div>
-        <div class="modal-actions"><span></span><button class="secondary" data-action="close">Done</button></div>
-      </section></div>`;
-    }
-    if (state.modal.type === "templates") {
-      return `<div class="scrim" data-action="close"><section class="modal" data-modal>
-        <h2>Templates</h2>
-        <div class="template-list">
-          ${templates.map((template) => `<button class="template-option" data-action="apply-template" data-template="${template.id}">
-            <strong>${escapeHTML(template.title)}</strong>
-            <span>${escapeHTML(template.items.join(" · "))}</span>
-          </button>`).join("")}
         </div>
         <div class="modal-actions"><span></span><button class="secondary" data-action="close">Done</button></div>
       </section></div>`;
@@ -887,8 +874,6 @@
       state.sort = state.sort === "manual" ? "time" : state.sort === "time" ? "name" : "manual";
       render();
     }
-    if (action === "templates") { state.modal = { type: "templates" }; render(); }
-    if (action === "apply-template") applyTemplate(target.dataset.template);
     if (action === "add") { state.modal = { type: "editor", item: null }; render(); }
     if (action === "edit") {
       state.modal = { type: "editor", item: state.items.find((item) => item.id === target.dataset.id) };

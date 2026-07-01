@@ -26,7 +26,6 @@ struct ChecklistView: View {
     @EnvironmentObject private var authStore: AuthStore
     @State private var editingItem: ChecklistItem?
     @State private var showingNewItem = false
-    @State private var showingTemplates = false
     @State private var showingAccount = false
     @State private var searchText = ""
     @State private var historyItem: ChecklistItem?
@@ -94,17 +93,8 @@ struct ChecklistView: View {
                         .padding(.horizontal, 20)
                     }
 
-                    Menu {
-                        Button {
-                            showingNewItem = true
-                        } label: {
-                            Label("New item", systemImage: "plus")
-                        }
-                        Button {
-                            showingTemplates = true
-                        } label: {
-                            Label("Templates", systemImage: "square.grid.2x2")
-                        }
+                    Button {
+                        showingNewItem = true
                     } label: {
                         Image(systemName: "plus")
                             .font(.system(size: 25, weight: .semibold))
@@ -115,6 +105,17 @@ struct ChecklistView: View {
                     }
                     .accessibilityLabel("Add item")
                     .padding(24)
+                }
+                .overlay {
+                    if isSearchPresented {
+                        Color.clear
+                            .contentShape(Rectangle())
+                            .ignoresSafeArea()
+                            .onTapGesture {
+                                dismissSearch()
+                            }
+                            .zIndex(4)
+                    }
                 }
                 .overlay(alignment: .top) {
                     if isSearchPresented {
@@ -141,12 +142,6 @@ struct ChecklistView: View {
                     onCreateGroup: { store.createGroup(named: $0) },
                     onDelete: { store.delete($0) }
                 )
-            }
-            .sheet(isPresented: $showingTemplates) {
-                TemplatePickerView { template in
-                    store.applyTemplate(template)
-                    showingTemplates = false
-                }
             }
             .sheet(item: $historyItem) { item in
                 ItemHistoryView(item: item)
@@ -366,7 +361,7 @@ struct ChecklistView: View {
 
     private var expandedSearchOverlay: some View {
         VStack(spacing: 12) {
-            HStack(spacing: 10) {
+            HStack {
                 HStack(spacing: 8) {
                     Image(systemName: "magnifyingglass")
                         .foregroundStyle(.secondary)
@@ -387,15 +382,10 @@ struct ChecklistView: View {
                 .font(.system(size: 17, weight: .medium))
                 .padding(.horizontal, 14)
                 .frame(height: 46)
+                .frame(maxWidth: .infinity)
                 .glassEffect(.regular.interactive(), in: Capsule())
                 .glassEffectID("checklist-search", in: searchGlassNamespace)
                 .glassEffectTransition(.matchedGeometry)
-
-                Button("Cancel") {
-                    dismissSearch()
-                }
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(accent)
             }
             .padding(.horizontal, 20)
             .padding(.top, 12)
@@ -436,14 +426,18 @@ struct ChecklistView: View {
                 }
             }
         } label: {
-            HStack(spacing: 7) {
-                Image(systemName: "arrow.up.arrow.down")
-                Text(store.sortMode.title)
+            HStack(spacing: 6) {
+                ForEach(ChecklistSort.allCases) { option in
+                    let isSelected = store.sortMode == option
+                    Image(systemName: option.icon)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(isSelected ? .white : ink.opacity(0.62))
+                        .frame(width: 30, height: 30)
+                        .background(isSelected ? accent : Color.clear, in: Circle())
+                        .accessibilityHidden(true)
+                }
             }
-            .font(.system(size: 13, weight: .semibold))
-            .foregroundStyle(ink)
-            .padding(.horizontal, 13)
-            .padding(.vertical, 9)
+            .padding(5)
             .background(controlSurface, in: Capsule())
         }
         .accessibilityLabel("Sort checklist")
@@ -1004,38 +998,6 @@ private struct ItemRow: View {
         .background(color.opacity(0.12), in: Capsule())
         .fixedSize()
         .accessibilityLabel(accessibilityLabel)
-    }
-}
-
-private struct TemplatePickerView: View {
-    @Environment(\.dismiss) private var dismiss
-    let apply: (RoutineTemplate) -> Void
-
-    var body: some View {
-        NavigationStack {
-            List(RoutineTemplate.builtIns) { template in
-                Button {
-                    apply(template)
-                } label: {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text(template.title)
-                            .font(.headline)
-                            .foregroundStyle(ink)
-                        Text(template.items.joined(separator: " · "))
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                    }
-                    .padding(.vertical, 6)
-                }
-            }
-            .navigationTitle("Templates")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
-                }
-            }
-        }
     }
 }
 
