@@ -30,7 +30,12 @@ img { display: block; max-width: 100%; }
   gap: 18px;
   min-height: 72px;
   padding: max(14px, env(safe-area-inset-top)) clamp(18px, 4vw, 54px) 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(17, 21, 32, 0.72);
+  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.18);
   color: white;
+  backdrop-filter: blur(18px) saturate(135%);
+  -webkit-backdrop-filter: blur(18px) saturate(135%);
 }
 
 .brand-link, .nav-links, .hero-actions, .download-actions, .site-footer nav {
@@ -317,6 +322,7 @@ h1 {
     min-height: 64px;
     padding-left: 16px;
     padding-right: 16px;
+    background: rgba(17, 21, 32, 0.82);
   }
 
   .nav-links { gap: 12px; font-size: 13px; }

@@ -56,9 +56,6 @@ h1 { margin: 0; font-size: clamp(48px, 14vw, 68px); line-height: .96; letter-spa
 .group-title { display: flex; min-width: 0; align-items: center; gap: 7px; font-size: 16px; font-weight: 800; }
 .group-title span { color: var(--muted); font-size: 13px; font-weight: 650; }
 .group-actions { display: flex; align-items: center; gap: 7px; }
-.group-action { display: grid; width: 30px; height: 30px; place-items: center; border-radius: 999px; background: white; color: var(--muted); box-shadow: 0 6px 18px rgba(25,25,40,.04); font-size: 14px; font-weight: 800; }
-.group-title-action { flex: 0 0 auto; }
-.group-action.danger { color: #b5362f; }
 .empty-group { padding: 13px 14px; border-radius: 16px; background: var(--soft); color: var(--muted); font-size: 13px; font-weight: 650; text-align: center; }
 .task-list { display: grid; gap: 12px; }
 .task { position: relative; display: grid; grid-template-columns: auto 1fr auto; gap: 14px; align-items: start; min-height: 82px; padding: 16px 14px 14px 18px; border-radius: 24px; background: var(--card); box-shadow: 0 8px 28px rgba(25,25,40,.025); }
@@ -79,7 +76,6 @@ h1 { margin: 0; font-size: clamp(48px, 14vw, 68px); line-height: .96; letter-spa
 .mini-button.danger { background: var(--danger-soft); color: var(--danger); }
 .empty { padding: 48px 18px; color: var(--muted); text-align: center; }
 .fab { position: fixed; right: max(24px, calc((100vw - 720px) / 2 + 24px)); bottom: calc(var(--safe-bottom) + 24px); display: grid; width: 70px; height: 70px; place-items: center; border-radius: 50%; background: var(--accent); color: white; font-size: 42px; box-shadow: 0 18px 45px rgba(98,84,245,.32); }
-.status { position: fixed; bottom: calc(var(--safe-bottom) + 32px); left: max(20px, calc((100vw - 720px) / 2 + 20px)); color: var(--muted); font-size: 12px; }
 
 .auth-shell { display: grid; width: min(100%, 520px); min-height: 100svh; margin: 0 auto; place-content: center; padding: calc(var(--safe-top) + 28px) 24px calc(var(--safe-bottom) + 28px); text-align: center; }
 .auth-mark { display: grid; width: 84px; height: 84px; margin: 0 auto 24px; place-items: center; border-radius: 28px; background: var(--accent); color: white; font-size: 45px; box-shadow: 0 20px 50px rgba(98,84,245,.26); }

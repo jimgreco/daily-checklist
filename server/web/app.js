@@ -265,10 +265,6 @@
     return done === items.length ? String(items.length) : `${done}/${items.length}`;
   }
 
-  function canDeleteGroup(groupID) {
-    return !state.items.some((item) => item.groupID === groupID && !item.endedAt);
-  }
-
   function renderTask(item) {
     const isComplete = complete(item);
     const isSkipped = skipped(item) && !isComplete;
@@ -297,15 +293,11 @@
     const todo = items.filter((item) => !complete(item));
     const done = items.filter(complete);
     const ordered = realGroup && todo.length ? [...todo, ...done] : items;
-    const canDelete = realGroup && canDeleteGroup(groupID);
     return `<section class="group">
       <div class="group-head">
-        <div class="group-title">${escapeHTML(name)}<span>${groupProgress(items)}</span>${realGroup ? `<button class="group-action group-title-action" data-action="rename-group" data-group="${groupID}" aria-label="Rename ${escapeHTML(name)}">${icon("pencil")}</button>` : ""}</div>
+        <div class="group-title">${escapeHTML(name)}<span>${groupProgress(items)}</span></div>
         <div class="group-actions">
           ${allowsBulkActions && todo.length ? `<button class="complete-all" data-action="complete-group" data-group="${groupID || ""}">${icon("check")} All</button>` : ""}
-          ${realGroup ? `<button class="group-action" data-action="duplicate-group" data-group="${groupID}" aria-label="Duplicate ${escapeHTML(name)}">${icon("copy")}</button>` : ""}
-          ${realGroup ? `<button class="group-action" data-action="start-group-tomorrow" data-group="${groupID}" aria-label="Start ${escapeHTML(name)} tomorrow">${icon("startTomorrow")}</button>` : ""}
-          ${canDelete ? `<button class="group-action danger" data-action="delete-group" data-group="${groupID}" aria-label="Delete ${escapeHTML(name)}">${icon("trash")}</button>` : ""}
         </div>
       </div>
       <div class="task-list">${ordered.length ? ordered.map(renderTask).join("") : `<div class="empty-group">No tasks</div>`}</div>
@@ -386,7 +378,6 @@
       ${todoBody || `<div class="empty">${completedBody ? "Everything is complete." : "Nothing is scheduled for this day."}</div>`}
       ${skippedBody ? `<div class="section-head"><span class="section-label">Skipped</span></div>${skippedBody}` : ""}
       ${completedBody ? `<div class="section-head"><span class="section-label">Completed</span></div>${completedBody}` : ""}`}
-      <div class="status">${state.syncing ? "Syncing…" : state.pending.length ? "Saved offline" : "Synced"}</div>
       <button class="fab" data-action="add" aria-label="Add checklist item">+</button>
       ${renderModal()}
       ${state.toast ? `<div class="toast">${escapeHTML(state.toast)}</div>` : ""}
@@ -797,101 +788,12 @@
     void sync();
   }
 
-  function renameGroup(groupID) {
-    const group = state.groups.find((candidate) => candidate.id === groupID);
-    if (!group) return;
-    const name = prompt("Rename this group", group.name);
-    const trimmed = name?.trim();
-    if (!trimmed || trimmed === group.name) return;
-    if (state.groups.some((candidate) => candidate.id !== groupID && candidate.name.toLowerCase() === trimmed.toLowerCase())) {
-      showToast("A group with that name already exists.");
-      return;
-    }
-    group.name = trimmed;
-    state.pending = state.pending.filter((entry) => !(
-      entry.kind === "groupUpsert"
-        && entry.groupID === groupID
-        && entry.changedFields?.length === 1
-        && entry.changedFields[0] === "name"
-    ));
-    queue(mutation("groupUpsert", {
-      groupID,
-      changedFields: ["name"],
-      group: { name: group.name, sortOrder: group.sortOrder }
-    }));
-  }
-
-  function deleteGroup(groupID) {
-    const group = state.groups.find((candidate) => candidate.id === groupID);
-    if (!group || !canDeleteGroup(groupID)) return;
-    if (!confirm(`Delete "${group.name}"?`)) return;
-    state.groups = state.groups.filter((candidate) => candidate.id !== groupID);
-    state.pending = state.pending.filter((entry) => entry.groupID !== groupID || (entry.kind !== "groupUpsert" && entry.kind !== "groupDelete"));
-    queue(mutation("groupDelete", { groupID }));
-  }
-
   function permanentlyDeleteItem(itemID) {
     const item = state.items.find((candidate) => candidate.id === itemID);
     if (!item?.endedAt) return;
     if (!confirm(`Permanently delete "${item.title}"?`)) return;
     state.items = state.items.filter((candidate) => candidate.id !== itemID);
     queue(mutation("delete", { itemID }));
-  }
-
-  function duplicateGroup(groupID) {
-    const source = state.groups.find((candidate) => candidate.id === groupID);
-    if (!source) return;
-    let name = `${source.name} Copy`;
-    let suffix = 2;
-    while (state.groups.some((candidate) => candidate.name.toLowerCase() === name.toLowerCase())) {
-      name = `${source.name} Copy ${suffix++}`;
-    }
-    const group = { id: crypto.randomUUID(), name, sortOrder: state.groups.length };
-    state.groups.push(group);
-    state.pending.push(mutation("groupUpsert", {
-      groupID: group.id,
-      changedFields: ["name", "sortOrder"],
-      group: { name: group.name, sortOrder: group.sortOrder }
-    }));
-    const sourceItems = state.items
-      .filter((item) => item.groupID === groupID && !item.endedAt)
-      .sort((left, right) => (left.sortOrder ?? 9999) - (right.sortOrder ?? 9999));
-    sourceItems.forEach((sourceItem, index) => {
-      const item = {
-        ...sourceItem,
-        id: crypto.randomUUID(),
-        completedDates: [],
-        skippedDates: [],
-        openDates: [],
-        createdAt: new Date().toISOString(),
-        groupID: group.id,
-        sortOrder: index
-      };
-      state.items.push(item);
-      state.pending.push(mutation("upsert", {
-        itemID: item.id,
-        changedFields: ["title","notes","schedule","customWeekdays","reminderMinutes","skippedDates","openDates","createdAt","startDate","endedAt","groupID","sortOrder"],
-        item
-      }));
-    });
-    persistData();
-    render();
-    void sync();
-  }
-
-  function startGroupTomorrow(groupID) {
-    const startDate = addDays(new Date(), 1).toISOString();
-    state.items.filter((item) => item.groupID === groupID && !item.endedAt).forEach((item) => {
-      item.startDate = startDate;
-      state.pending.push(mutation("upsert", {
-        itemID: item.id,
-        changedFields: ["startDate"],
-        item: { startDate }
-      }));
-    });
-    persistData();
-    render();
-    void sync();
   }
 
   function saveEditor(form) {
@@ -979,10 +881,6 @@
       const id = target.dataset.group || null;
       completeItems(visibleItems().filter((item) => (item.groupID || null) === id));
     }
-    if (action === "rename-group") renameGroup(target.dataset.group);
-    if (action === "duplicate-group") duplicateGroup(target.dataset.group);
-    if (action === "start-group-tomorrow") startGroupTomorrow(target.dataset.group);
-    if (action === "delete-group") deleteGroup(target.dataset.group);
     if (action === "account") { state.modal = { type: "account" }; render(); }
     if (action === "sign-out") await signOut();
     if (action === "export-data") {
