@@ -326,6 +326,30 @@ test("skipped dates sync independently from completion history", () => {
   assert.deepEqual(item.completedDates, ["2026-06-25"]);
 });
 
+test("open dates sync independently from completion and skip history", () => {
+  const state = account();
+  applyMutation(state, {
+    id: "create",
+    itemID: "item-1",
+    kind: "upsert",
+    stamp: "2026-06-24T10:00:00.000Z",
+    changedFields: ["title", "openDates"],
+    item: { title: "Pills", openDates: ["2026-06-24"] }
+  }, "device-a");
+  applyMutation(state, {
+    id: "skip",
+    itemID: "item-1",
+    kind: "upsert",
+    stamp: "2026-06-24T12:00:00.000Z",
+    changedFields: ["skippedDates"],
+    item: { skippedDates: ["2026-06-25"] }
+  }, "device-a");
+
+  const item = materializeAccount(state).items[0];
+  assert.deepEqual(item.openDates, ["2026-06-24"]);
+  assert.deepEqual(item.skippedDates, ["2026-06-25"]);
+});
+
 test("rejects invalid skipped date payloads", () => {
   assert.equal(validSyncRequest({
     deviceID: "device-1234",
@@ -336,6 +360,20 @@ test("rejects invalid skipped date payloads", () => {
       stamp: "2026-06-24T10:00:00.000Z",
       changedFields: ["skippedDates"],
       item: { skippedDates: ["06/24/2026"] }
+    }]
+  }), false);
+});
+
+test("rejects invalid open date payloads", () => {
+  assert.equal(validSyncRequest({
+    deviceID: "device-1234",
+    mutations: [{
+      id: "bad-open",
+      itemID: "item-1",
+      kind: "upsert",
+      stamp: "2026-06-24T10:00:00.000Z",
+      changedFields: ["openDates"],
+      item: { openDates: ["06/24/2026"] }
     }]
   }), false);
 });

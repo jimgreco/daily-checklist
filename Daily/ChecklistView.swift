@@ -1215,15 +1215,17 @@ private struct ItemHistoryView: View {
     }
 
     private func availableStates(for date: Date) -> [ChecklistHistoryState] {
-        let neutralState = date < Calendar.current.startOfDay(for: .now)
-            ? ChecklistHistoryState.missed
-            : ChecklistHistoryState.open
+        var states: [ChecklistHistoryState] = [.done, .open]
 
-        if currentItem.occurs(on: date) {
-            return [.done, neutralState, .skipped]
+        if currentItem.occurs(on: date),
+           Calendar.current.startOfDay(for: date) < Calendar.current.startOfDay(for: .now) {
+            states.append(.missed)
+        } else if !currentItem.occurs(on: date) {
+            states.append(.off)
         }
 
-        return [.done, .off, .skipped]
+        states.append(.skipped)
+        return states
     }
 
     private func color(for state: ChecklistHistoryState) -> Color {

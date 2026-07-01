@@ -44,6 +44,7 @@ struct ChecklistItem: Identifiable, Codable, Hashable {
         case reminderMinutes
         case completedDates
         case skippedDates
+        case openDates
         case createdAt
         case startDate
         case endedAt
@@ -59,6 +60,7 @@ struct ChecklistItem: Identifiable, Codable, Hashable {
     var reminderMinutes: Int?
     var completedDates: Set<String>
     var skippedDates: Set<String>
+    var openDates: Set<String>
     var createdAt: Date
     var startDate: Date?
     var endedAt: Date?
@@ -74,6 +76,7 @@ struct ChecklistItem: Identifiable, Codable, Hashable {
         reminderMinutes: Int? = nil,
         completedDates: Set<String> = [],
         skippedDates: Set<String> = [],
+        openDates: Set<String> = [],
         createdAt: Date = .now,
         startDate: Date? = nil,
         endedAt: Date? = nil,
@@ -88,6 +91,7 @@ struct ChecklistItem: Identifiable, Codable, Hashable {
         self.reminderMinutes = reminderMinutes
         self.completedDates = completedDates
         self.skippedDates = skippedDates
+        self.openDates = openDates
         self.createdAt = createdAt
         self.startDate = startDate
         self.endedAt = endedAt
@@ -105,6 +109,7 @@ struct ChecklistItem: Identifiable, Codable, Hashable {
         reminderMinutes = try container.decodeIfPresent(Int.self, forKey: .reminderMinutes)
         completedDates = try container.decodeIfPresent(Set<String>.self, forKey: .completedDates) ?? []
         skippedDates = try container.decodeIfPresent(Set<String>.self, forKey: .skippedDates) ?? []
+        openDates = try container.decodeIfPresent(Set<String>.self, forKey: .openDates) ?? []
         createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? .now
         startDate = try container.decodeIfPresent(Date.self, forKey: .startDate)
         endedAt = try container.decodeIfPresent(Date.self, forKey: .endedAt)
@@ -139,8 +144,23 @@ struct ChecklistItem: Identifiable, Codable, Hashable {
         skippedDates.contains(DateKey.string(from: date))
     }
 
+    func isExplicitlyOpen(on date: Date) -> Bool {
+        openDates.contains(DateKey.string(from: date))
+    }
+
     func hasRecordedState(on date: Date) -> Bool {
-        isComplete(on: date) || isSkipped(on: date)
+        isComplete(on: date) || isSkipped(on: date) || isExplicitlyOpen(on: date)
+    }
+
+    func historyState(on date: Date, calendar: Calendar = .current) -> ChecklistHistoryState {
+        let day = calendar.startOfDay(for: date)
+        if isComplete(on: day) { return .done }
+        if isSkipped(on: day) { return .skipped }
+        if isExplicitlyOpen(on: day) { return .open }
+        if occurs(on: day, calendar: calendar) {
+            return day < calendar.startOfDay(for: .now) ? .missed : .open
+        }
+        return .off
     }
 
     func consecutiveMissedDays(asOf date: Date, calendar: Calendar = .current) -> Int {
@@ -235,6 +255,7 @@ struct ItemPayload: Codable {
         case customWeekdays
         case reminderMinutes
         case skippedDates
+        case openDates
         case createdAt
         case startDate
         case endedAt
@@ -248,6 +269,7 @@ struct ItemPayload: Codable {
     var customWeekdays: Set<Int>
     var reminderMinutes: Int?
     var skippedDates: Set<String>
+    var openDates: Set<String>
     var createdAt: Date
     var startDate: Date?
     var endedAt: Date?
@@ -261,6 +283,7 @@ struct ItemPayload: Codable {
         customWeekdays: Set<Int>,
         reminderMinutes: Int?,
         skippedDates: Set<String>,
+        openDates: Set<String>,
         createdAt: Date,
         startDate: Date?,
         endedAt: Date?,
@@ -273,6 +296,7 @@ struct ItemPayload: Codable {
         self.customWeekdays = customWeekdays
         self.reminderMinutes = reminderMinutes
         self.skippedDates = skippedDates
+        self.openDates = openDates
         self.createdAt = createdAt
         self.startDate = startDate
         self.endedAt = endedAt
@@ -288,6 +312,7 @@ struct ItemPayload: Codable {
         customWeekdays = try container.decodeIfPresent(Set<Int>.self, forKey: .customWeekdays) ?? []
         reminderMinutes = try container.decodeIfPresent(Int.self, forKey: .reminderMinutes)
         skippedDates = try container.decodeIfPresent(Set<String>.self, forKey: .skippedDates) ?? []
+        openDates = try container.decodeIfPresent(Set<String>.self, forKey: .openDates) ?? []
         createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? .now
         startDate = try container.decodeIfPresent(Date.self, forKey: .startDate)
         endedAt = try container.decodeIfPresent(Date.self, forKey: .endedAt)
@@ -337,6 +362,7 @@ struct SyncMutation: Identifiable, Codable {
                 customWeekdays: item.customWeekdays,
                 reminderMinutes: item.reminderMinutes,
                 skippedDates: item.skippedDates,
+                openDates: item.openDates,
                 createdAt: item.createdAt,
                 startDate: item.startDate,
                 endedAt: item.endedAt,

@@ -221,7 +221,9 @@
 
   function hasRecordedStateOnDate(item, date) {
     const key = dateKey(date);
-    return (item.completedDates || []).includes(key) || (item.skippedDates || []).includes(key);
+    return (item.completedDates || []).includes(key)
+      || (item.skippedDates || []).includes(key)
+      || (item.openDates || []).includes(key);
   }
 
   function complete(item) { return (item.completedDates || []).includes(dateKey(state.selectedDate)); }
@@ -611,14 +613,21 @@
   function toggle(item) {
     const key = dateKey(state.selectedDate);
     item.completedDates ||= [];
+    item.skippedDates ||= [];
+    item.openDates ||= [];
     const completed = !item.completedDates.includes(key);
     item.completedDates = completed ? [...item.completedDates, key] : item.completedDates.filter((date) => date !== key);
-    if (completed) item.skippedDates = (item.skippedDates || []).filter((date) => date !== key);
     if (completed) {
+      item.skippedDates = item.skippedDates.filter((date) => date !== key);
+      item.openDates = item.openDates.filter((date) => date !== key);
+    } else if (!occursOnDate(item, state.selectedDate) && !item.openDates.includes(key)) {
+      item.openDates.push(key);
+    }
+    if (completed || item.openDates.includes(key)) {
       state.pending.push(mutation("upsert", {
         itemID: item.id,
-        changedFields: ["skippedDates"],
-        item: { skippedDates: item.skippedDates || [] }
+        changedFields: ["skippedDates", "openDates"],
+        item: { skippedDates: item.skippedDates, openDates: item.openDates }
       }));
     }
     queue(mutation("completion", { itemID: item.id, completionDate: key, completed }));
@@ -630,12 +639,13 @@
     changed.forEach((item) => {
       item.completedDates ||= [];
       item.skippedDates = (item.skippedDates || []).filter((date) => date !== key);
+      item.openDates = (item.openDates || []).filter((date) => date !== key);
       item.completedDates.push(key);
       state.pending.push(mutation("completion", { itemID: item.id, completionDate: key, completed: true }));
       state.pending.push(mutation("upsert", {
         itemID: item.id,
-        changedFields: ["skippedDates"],
-        item: { skippedDates: item.skippedDates }
+        changedFields: ["skippedDates", "openDates"],
+        item: { skippedDates: item.skippedDates, openDates: item.openDates }
       }));
     });
     persistData();
@@ -647,18 +657,21 @@
     if (!item) return;
     const key = dateKey(state.selectedDate);
     item.skippedDates ||= [];
+    item.openDates ||= [];
     item.completedDates ||= [];
     if (shouldSkip) {
       if (!item.skippedDates.includes(key)) item.skippedDates.push(key);
       item.completedDates = item.completedDates.filter((date) => date !== key);
+      item.openDates = item.openDates.filter((date) => date !== key);
       state.pending.push(mutation("completion", { itemID: item.id, completionDate: key, completed: false }));
     } else {
       item.skippedDates = item.skippedDates.filter((date) => date !== key);
+      if (!occursOnDate(item, state.selectedDate) && !item.openDates.includes(key)) item.openDates.push(key);
     }
     queue(mutation("upsert", {
       itemID: item.id,
-      changedFields: ["skippedDates"],
-      item: { skippedDates: item.skippedDates }
+      changedFields: ["skippedDates", "openDates"],
+      item: { skippedDates: item.skippedDates, openDates: item.openDates }
     }));
   }
 
@@ -669,6 +682,7 @@
       let stateLabel = "Off";
       if ((item.completedDates || []).includes(dateKey(date))) stateLabel = "Done";
       else if ((item.skippedDates || []).includes(dateKey(date))) stateLabel = "Skipped";
+      else if ((item.openDates || []).includes(dateKey(date))) stateLabel = "Open";
       else if (occursOnDate(item, date) && date < startOfDay(new Date())) stateLabel = "Missed";
       else if (occursOnDate(item, date)) stateLabel = "Open";
       return {
@@ -681,10 +695,11 @@
 
   function historyOptions(item, dateKeyValue, currentState) {
     const date = dateFromInput(dateKeyValue);
-    const neutral = occursOnDate(item, date)
-      ? (date < startOfDay(new Date()) ? "Missed" : "Open")
-      : "Off";
-    return ["Done", neutral, "Skipped"].map((option) => (
+    const options = ["Done", "Open"];
+    if (occursOnDate(item, date) && date < startOfDay(new Date())) options.push("Missed");
+    else if (!occursOnDate(item, date)) options.push("Off");
+    options.push("Skipped");
+    return options.map((option) => (
       `<option value="${option.toLowerCase()}" ${option === currentState ? "selected" : ""}>${option}</option>`
     )).join("");
   }
@@ -694,32 +709,42 @@
     if (!item) return;
     item.completedDates ||= [];
     item.skippedDates ||= [];
+    item.openDates ||= [];
     const wasCompleted = item.completedDates.includes(key);
     const wasSkipped = item.skippedDates.includes(key);
+    const wasOpen = item.openDates.includes(key);
 
     if (nextState === "done") {
       if (!item.completedDates.includes(key)) item.completedDates.push(key);
       item.skippedDates = item.skippedDates.filter((date) => date !== key);
+      item.openDates = item.openDates.filter((date) => date !== key);
     } else if (nextState === "skipped") {
       item.completedDates = item.completedDates.filter((date) => date !== key);
       if (!item.skippedDates.includes(key)) item.skippedDates.push(key);
+      item.openDates = item.openDates.filter((date) => date !== key);
+    } else if (nextState === "open") {
+      item.completedDates = item.completedDates.filter((date) => date !== key);
+      item.skippedDates = item.skippedDates.filter((date) => date !== key);
+      if (!item.openDates.includes(key)) item.openDates.push(key);
     } else {
       item.completedDates = item.completedDates.filter((date) => date !== key);
       item.skippedDates = item.skippedDates.filter((date) => date !== key);
+      item.openDates = item.openDates.filter((date) => date !== key);
     }
 
     const isCompleted = item.completedDates.includes(key);
     const isSkipped = item.skippedDates.includes(key);
-    if (wasCompleted === isCompleted && wasSkipped === isSkipped) return;
+    const isOpen = item.openDates.includes(key);
+    if (wasCompleted === isCompleted && wasSkipped === isSkipped && wasOpen === isOpen) return;
 
     if (wasCompleted !== isCompleted || (!isCompleted && (isSkipped || wasSkipped))) {
       state.pending.push(mutation("completion", { itemID: item.id, completionDate: key, completed: isCompleted }));
     }
-    if (wasSkipped !== isSkipped) {
+    if (wasSkipped !== isSkipped || wasOpen !== isOpen) {
       state.pending.push(mutation("upsert", {
         itemID: item.id,
-        changedFields: ["skippedDates"],
-        item: { skippedDates: item.skippedDates }
+        changedFields: ["skippedDates", "openDates"],
+        item: { skippedDates: item.skippedDates, openDates: item.openDates }
       }));
     }
     persistData();
@@ -752,6 +777,7 @@
         reminderMinutes: null,
         completedDates: [],
         skippedDates: [],
+        openDates: [],
         createdAt: new Date().toISOString(),
         startDate: null,
         endedAt: null,
@@ -761,7 +787,7 @@
       state.items.push(item);
       state.pending.push(mutation("upsert", {
         itemID: item.id,
-        changedFields: ["title","notes","schedule","customWeekdays","reminderMinutes","skippedDates","createdAt","startDate","endedAt","groupID","sortOrder"],
+        changedFields: ["title","notes","schedule","customWeekdays","reminderMinutes","skippedDates","openDates","createdAt","startDate","endedAt","groupID","sortOrder"],
         item
       }));
     }
@@ -836,6 +862,7 @@
         id: crypto.randomUUID(),
         completedDates: [],
         skippedDates: [],
+        openDates: [],
         createdAt: new Date().toISOString(),
         groupID: group.id,
         sortOrder: index
@@ -843,7 +870,7 @@
       state.items.push(item);
       state.pending.push(mutation("upsert", {
         itemID: item.id,
-        changedFields: ["title","notes","schedule","customWeekdays","reminderMinutes","skippedDates","createdAt","startDate","endedAt","groupID","sortOrder"],
+        changedFields: ["title","notes","schedule","customWeekdays","reminderMinutes","skippedDates","openDates","createdAt","startDate","endedAt","groupID","sortOrder"],
         item
       }));
     });
@@ -897,6 +924,7 @@
       reminderMinutes: reminder ? hours * 60 + minutes : null,
       completedDates: existing?.completedDates || [],
       skippedDates: existing?.skippedDates || [],
+      openDates: existing?.openDates || [],
       createdAt: existing?.createdAt || new Date().toISOString(),
       startDate,
       endedAt,
@@ -909,11 +937,11 @@
     state.modal = null;
     queue(mutation("upsert", {
       itemID: item.id,
-      changedFields: ["title","notes","schedule","customWeekdays","reminderMinutes","skippedDates","createdAt","startDate","endedAt","groupID","sortOrder"],
+      changedFields: ["title","notes","schedule","customWeekdays","reminderMinutes","skippedDates","openDates","createdAt","startDate","endedAt","groupID","sortOrder"],
       item: {
         title: item.title, notes: item.notes, schedule: item.schedule,
         customWeekdays: item.customWeekdays, reminderMinutes: item.reminderMinutes,
-        skippedDates: item.skippedDates,
+        skippedDates: item.skippedDates, openDates: item.openDates,
         createdAt: item.createdAt, startDate: item.startDate, endedAt: item.endedAt,
         groupID: item.groupID, sortOrder: item.sortOrder
       }

@@ -197,31 +197,44 @@ final class ChecklistStore: ObservableObject {
     func toggle(_ item: ChecklistItem) {
         guard let index = items.firstIndex(where: { $0.id == item.id }) else { return }
         let key = DateKey.string(from: selectedDate)
+        let wasSkipped = items[index].skippedDates.contains(key)
+        let wasOpen = items[index].openDates.contains(key)
         if items[index].completedDates.contains(key) {
             items[index].completedDates.remove(key)
+            if !items[index].occurs(on: selectedDate) {
+                items[index].openDates.insert(key)
+            }
         } else {
             items[index].completedDates.insert(key)
             items[index].skippedDates.remove(key)
+            items[index].openDates.remove(key)
         }
         pendingMutations.append(.completion(
             itemID: item.id,
             date: key,
             completed: items[index].completedDates.contains(key)
         ))
-        pendingMutations.append(.upsert(item: items[index], changedFields: ["skippedDates"]))
+        queueDaySetMutationIfNeeded(for: items[index], wasSkipped: wasSkipped, wasOpen: wasOpen, key: key)
         persistAndSchedule()
     }
 
     func setSkipped(_ item: ChecklistItem, skipped: Bool, on date: Date? = nil) {
         guard let index = items.firstIndex(where: { $0.id == item.id }) else { return }
-        let key = DateKey.string(from: date ?? selectedDate)
+        let targetDate = date ?? selectedDate
+        let key = DateKey.string(from: targetDate)
+        let wasSkipped = items[index].skippedDates.contains(key)
+        let wasOpen = items[index].openDates.contains(key)
         if skipped {
             items[index].skippedDates.insert(key)
             items[index].completedDates.remove(key)
+            items[index].openDates.remove(key)
         } else {
             items[index].skippedDates.remove(key)
+            if !items[index].occurs(on: targetDate) {
+                items[index].openDates.insert(key)
+            }
         }
-        pendingMutations.append(.upsert(item: items[index], changedFields: ["skippedDates"]))
+        queueDaySetMutationIfNeeded(for: items[index], wasSkipped: wasSkipped, wasOpen: wasOpen, key: key)
         if skipped {
             pendingMutations.append(.completion(itemID: items[index].id, date: key, completed: false))
         }
@@ -231,10 +244,13 @@ final class ChecklistStore: ObservableObject {
     func complete(itemID: UUID, on date: Date) {
         guard let index = items.firstIndex(where: { $0.id == itemID }) else { return }
         let key = DateKey.string(from: date)
+        let wasSkipped = items[index].skippedDates.contains(key)
+        let wasOpen = items[index].openDates.contains(key)
         items[index].completedDates.insert(key)
         items[index].skippedDates.remove(key)
+        items[index].openDates.remove(key)
         pendingMutations.append(.completion(itemID: itemID, date: key, completed: true))
-        pendingMutations.append(.upsert(item: items[index], changedFields: ["skippedDates"]))
+        queueDaySetMutationIfNeeded(for: items[index], wasSkipped: wasSkipped, wasOpen: wasOpen, key: key)
         persistAndSchedule()
     }
 
@@ -249,29 +265,36 @@ final class ChecklistStore: ObservableObject {
         let key = DateKey.string(from: date)
         let wasCompleted = items[index].completedDates.contains(key)
         let wasSkipped = items[index].skippedDates.contains(key)
+        let wasOpen = items[index].openDates.contains(key)
 
         switch state {
         case .done:
             items[index].completedDates.insert(key)
             items[index].skippedDates.remove(key)
+            items[index].openDates.remove(key)
         case .skipped:
             items[index].completedDates.remove(key)
             items[index].skippedDates.insert(key)
-        case .missed, .open, .off:
+            items[index].openDates.remove(key)
+        case .open:
             items[index].completedDates.remove(key)
             items[index].skippedDates.remove(key)
+            items[index].openDates.insert(key)
+        case .missed, .off:
+            items[index].completedDates.remove(key)
+            items[index].skippedDates.remove(key)
+            items[index].openDates.remove(key)
         }
 
         let isCompleted = items[index].completedDates.contains(key)
         let isSkipped = items[index].skippedDates.contains(key)
-        guard wasCompleted != isCompleted || wasSkipped != isSkipped else { return }
+        let isOpen = items[index].openDates.contains(key)
+        guard wasCompleted != isCompleted || wasSkipped != isSkipped || wasOpen != isOpen else { return }
 
         if wasCompleted != isCompleted || (!isCompleted && (isSkipped || wasSkipped)) {
             pendingMutations.append(.completion(itemID: itemID, date: key, completed: isCompleted))
         }
-        if wasSkipped != isSkipped {
-            pendingMutations.append(.upsert(item: items[index], changedFields: ["skippedDates"]))
-        }
+        queueDaySetMutationIfNeeded(for: items[index], wasSkipped: wasSkipped, wasOpen: wasOpen, key: key)
 
         persistAndSchedule()
     }
@@ -294,6 +317,7 @@ final class ChecklistStore: ObservableObject {
                   !items[index].completedDates.contains(key) else { continue }
             items[index].completedDates.insert(key)
             items[index].skippedDates.remove(key)
+            items[index].openDates.remove(key)
             completedItemIDs.append(items[index].id)
         }
 
@@ -302,7 +326,7 @@ final class ChecklistStore: ObservableObject {
             .completion(itemID: $0, date: key, completed: true)
         })
         pendingMutations.append(contentsOf: items.filter { completedItemIDs.contains($0.id) }.map {
-            .upsert(item: $0, changedFields: ["skippedDates"])
+            .upsert(item: $0, changedFields: ["skippedDates", "openDates"])
         })
         persistAndSchedule()
     }
@@ -551,19 +575,7 @@ final class ChecklistStore: ObservableObject {
             guard let date = Calendar.current.date(byAdding: .day, value: -offset, to: Calendar.current.startOfDay(for: selectedDate)) else {
                 return nil
             }
-            let state: ChecklistHistoryState
-            if item.isComplete(on: date) {
-                state = .done
-            } else if item.isSkipped(on: date) {
-                state = .skipped
-            } else if item.occurs(on: date) && date < Calendar.current.startOfDay(for: .now) {
-                state = .missed
-            } else if item.occurs(on: date) {
-                state = .open
-            } else {
-                state = .off
-            }
-            return (date, state)
+            return (date, item.historyState(on: date))
         }
     }
 
@@ -680,7 +692,7 @@ final class ChecklistStore: ObservableObject {
     }
 
     static let allFields: Set<String> = [
-        "title", "notes", "schedule", "customWeekdays", "reminderMinutes", "skippedDates", "createdAt", "startDate", "endedAt", "groupID", "sortOrder"
+        "title", "notes", "schedule", "customWeekdays", "reminderMinutes", "skippedDates", "openDates", "createdAt", "startDate", "endedAt", "groupID", "sortOrder"
     ]
     static let allGroupFields: Set<String> = ["name", "sortOrder"]
 
@@ -692,11 +704,26 @@ final class ChecklistStore: ObservableObject {
         if old.customWeekdays != new.customWeekdays { changed.insert("customWeekdays") }
         if old.reminderMinutes != new.reminderMinutes { changed.insert("reminderMinutes") }
         if old.skippedDates != new.skippedDates { changed.insert("skippedDates") }
+        if old.openDates != new.openDates { changed.insert("openDates") }
         if old.startDate != new.startDate { changed.insert("startDate") }
         if old.endedAt != new.endedAt { changed.insert("endedAt") }
         if old.groupID != new.groupID { changed.insert("groupID") }
         if old.sortOrder != new.sortOrder { changed.insert("sortOrder") }
         return changed
+    }
+
+    private func queueDaySetMutationIfNeeded(
+        for item: ChecklistItem,
+        wasSkipped: Bool,
+        wasOpen: Bool,
+        key: String
+    ) {
+        let changedFields = [
+            wasSkipped != item.skippedDates.contains(key) ? "skippedDates" : nil,
+            wasOpen != item.openDates.contains(key) ? "openDates" : nil
+        ].compactMap { $0 }
+        guard !changedFields.isEmpty else { return }
+        pendingMutations.append(.upsert(item: item, changedFields: Set(changedFields)))
     }
 
     private static func isOrderedBefore(_ lhs: ChecklistItem, _ rhs: ChecklistItem) -> Bool {

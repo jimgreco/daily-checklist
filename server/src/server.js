@@ -382,7 +382,7 @@ function stampWins(incoming, current) {
   return incoming.deviceID > current.deviceID;
 }
 
-const itemFields = ["title", "notes", "schedule", "customWeekdays", "reminderMinutes", "skippedDates", "createdAt", "startDate", "endedAt", "groupID", "sortOrder"];
+const itemFields = ["title", "notes", "schedule", "customWeekdays", "reminderMinutes", "skippedDates", "openDates", "createdAt", "startDate", "endedAt", "groupID", "sortOrder"];
 const groupFields = ["name", "sortOrder"];
 
 function validID(value) {
@@ -429,6 +429,11 @@ function validItemPayload(item = {}) {
       Array.isArray(item.skippedDates)
       && item.skippedDates.length <= 5000
       && item.skippedDates.every(validDateKey)
+    ))
+    && (item.openDates == null || (
+      Array.isArray(item.openDates)
+      && item.openDates.length <= 5000
+      && item.openDates.every(validDateKey)
     ))
     && validISODate(item.createdAt)
     && validISODate(item.startDate)
@@ -565,6 +570,7 @@ function materializeAccount(account) {
         customWeekdays: value.customWeekdays || [],
         reminderMinutes: value.reminderMinutes,
         skippedDates: value.skippedDates || [],
+        openDates: value.openDates || [],
         startDate: value.startDate,
         endedAt: value.endedAt,
         groupID: value.groupID,

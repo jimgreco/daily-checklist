@@ -89,7 +89,8 @@ struct NotificationManager {
         for dayOffset in 0..<60 {
             guard let date = calendar.date(byAdding: .day, value: dayOffset, to: .now) else { continue }
             for item in items {
-                guard let minutes = item.reminderMinutes, item.occurs(on: date) else { continue }
+                guard let minutes = item.reminderMinutes,
+                      item.occurs(on: date) || item.isExplicitlyOpen(on: date) else { continue }
                 var fireDate = calendar.dateComponents([.year, .month, .day], from: date)
                 fireDate.hour = minutes / 60
                 fireDate.minute = minutes % 60
@@ -122,7 +123,11 @@ struct NotificationManager {
         guard let eveningMinutes else { return }
         for dayOffset in 0..<7 {
             guard let date = calendar.date(byAdding: .day, value: dayOffset, to: .now) else { continue }
-            let remaining = items.filter { $0.occurs(on: date) && !$0.isComplete(on: date) }.count
+            let remaining = items.filter {
+                ($0.occurs(on: date) || $0.isExplicitlyOpen(on: date))
+                    && !$0.isComplete(on: date)
+                    && !$0.isSkipped(on: date)
+            }.count
             guard remaining > 0 else { continue }
 
             var fireDate = calendar.dateComponents([.year, .month, .day], from: date)
