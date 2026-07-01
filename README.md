@@ -84,7 +84,7 @@ Per-date state is exclusive. For a given date, an item should not remain in more
 
 `Open` is stored only when it needs to override the schedule. This matters when an item is normally Off for a date but the user changes it to Open, or when a completed/skipped item on an Off date is changed back to Open. Once that explicitly opened date is marked Done or Skipped, the Open marker is removed and the Done or Skipped record becomes the source of truth.
 
-Visibility and streaks use the same tracked-day rule: a date counts for an item when the item either occurs by schedule or has any recorded state on that date. This keeps Off -> Open -> Done items visible in history and included in completion streaks.
+Visibility and streaks use the same tracked-day rule: a date counts for an item when the item either occurs by schedule or has any recorded state on that date. Recorded state can extend the tracked window earlier than the item's creation/start date, which lets manually backfilled Off -> Open -> Done history show up in streaks.
 
 ## Publishing
 

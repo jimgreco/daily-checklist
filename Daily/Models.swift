@@ -156,6 +156,15 @@ struct ChecklistItem: Identifiable, Codable, Hashable {
         occurs(on: date, calendar: calendar) || hasRecordedState(on: date)
     }
 
+    func firstTrackedDate(calendar: Calendar = .current) -> Date {
+        let firstActiveDate = calendar.startOfDay(for: startDate ?? createdAt)
+        let recordedDates = (completedDates.union(skippedDates).union(openDates))
+            .compactMap(DateKey.date(from:))
+            .map { calendar.startOfDay(for: $0) }
+        guard let firstRecordedDate = recordedDates.min() else { return firstActiveDate }
+        return min(firstActiveDate, firstRecordedDate)
+    }
+
     func historyState(on date: Date, calendar: Calendar = .current) -> ChecklistHistoryState {
         let day = calendar.startOfDay(for: date)
         if isComplete(on: day) { return .done }
@@ -170,7 +179,7 @@ struct ChecklistItem: Identifiable, Codable, Hashable {
     func consecutiveMissedDays(asOf date: Date, calendar: Calendar = .current) -> Int {
         let today = calendar.startOfDay(for: .now)
         var cursor = min(calendar.startOfDay(for: date), today)
-        let firstEligibleDate = calendar.startOfDay(for: startDate ?? createdAt)
+        let firstEligibleDate = firstTrackedDate(calendar: calendar)
         var missedDays = 0
 
         // The current day is still in progress, so it cannot be considered missed yet.
@@ -202,7 +211,7 @@ struct ChecklistItem: Identifiable, Codable, Hashable {
         let today = calendar.startOfDay(for: .now)
         let selectedDay = calendar.startOfDay(for: date)
         var cursor = min(selectedDay, today)
-        let firstEligibleDate = calendar.startOfDay(for: startDate ?? createdAt)
+        let firstEligibleDate = firstTrackedDate(calendar: calendar)
         var completedDays = 0
 
         if cursor >= today && !isComplete(on: cursor) {

@@ -39,7 +39,21 @@ targets:
           CODE_SIGN_IDENTITY: Apple Distribution
           PROVISIONING_PROFILE_SPECIFIER: "$(IOS_PROFILE_NAME)"
     scheme:
-      testTargets: []
+      testTargets:
+        - DailyTests
+  DailyTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: DailyTests
+    dependencies:
+      - target: Daily
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.jimgreco.dailychecklist.tests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Daily.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Daily"
+        BUNDLE_LOADER: "$(TEST_HOST)"
   DailyScreenshots:
     type: bundle.ui-testing
     platform: iOS
