@@ -63,6 +63,29 @@ The local cache is authoritative while offline. Every add, edit, completion, del
 
 The server merges item fields independently using timestamp plus device-ID ordering, merges completion state separately for each calendar date, deduplicates mutations, and keeps deletion tombstones so a stale device cannot recreate deleted tasks.
 
+## Checklist state model
+
+Each checklist item has a schedule plus per-date state sets. The schedule answers whether the item naturally occurs on a date. The per-date sets record user intent for dates that have been touched.
+
+- `completedDates`: the item is Done on that date.
+- `skippedDates`: the item was intentionally skipped on that date.
+- `openDates`: the item is explicitly Open on that date, even if the schedule would otherwise make it Off.
+
+Per-date state is exclusive. For a given date, an item should not remain in more than one of `completedDates`, `skippedDates`, or `openDates`. State precedence is:
+
+1. Done when the date is in `completedDates`.
+2. Skipped when the date is in `skippedDates`.
+3. Open when the date is in `openDates`.
+4. Missed when the item occurs by schedule on a past date and has no recorded state.
+5. Open when the item occurs by schedule today or in the future and has no recorded state.
+6. Off when the item does not occur by schedule and has no recorded state.
+
+`Missed` and `Off` are derived states. They are not stored directly. Moving a date to `Missed` or `Off` clears recorded state for that date so the schedule can speak for itself again.
+
+`Open` is stored only when it needs to override the schedule. This matters when an item is normally Off for a date but the user changes it to Open, or when a completed/skipped item on an Off date is changed back to Open. Once that explicitly opened date is marked Done or Skipped, the Open marker is removed and the Done or Skipped record becomes the source of truth.
+
+Visibility and streaks use the same tracked-day rule: a date counts for an item when the item either occurs by schedule or has any recorded state on that date. This keeps Off -> Open -> Done items visible in history and included in completion streaks.
+
 ## Publishing
 
 Every push to `main` runs `.github/workflows/publish.yml`:

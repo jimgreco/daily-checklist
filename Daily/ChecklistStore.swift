@@ -119,7 +119,7 @@ final class ChecklistStore: ObservableObject {
         let scoped: [ChecklistItem]
         switch scope {
         case .today:
-            scoped = items.filter { $0.occurs(on: selectedDate) || $0.hasRecordedState(on: selectedDate) }
+            scoped = items.filter { $0.isTracked(on: selectedDate) }
         case .all:
             scoped = items.filter { $0.isActive(on: selectedDate) || $0.hasRecordedState(on: selectedDate) }
         case .archive:

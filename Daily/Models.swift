@@ -152,6 +152,10 @@ struct ChecklistItem: Identifiable, Codable, Hashable {
         isComplete(on: date) || isSkipped(on: date) || isExplicitlyOpen(on: date)
     }
 
+    func isTracked(on date: Date, calendar: Calendar = .current) -> Bool {
+        occurs(on: date, calendar: calendar) || hasRecordedState(on: date)
+    }
+
     func historyState(on date: Date, calendar: Calendar = .current) -> ChecklistHistoryState {
         let day = calendar.startOfDay(for: date)
         if isComplete(on: day) { return .done }
@@ -178,7 +182,7 @@ struct ChecklistItem: Identifiable, Codable, Hashable {
         }
 
         while cursor >= firstEligibleDate {
-            if occurs(on: cursor, calendar: calendar) {
+            if isTracked(on: cursor, calendar: calendar) {
                 if isComplete(on: cursor) || isSkipped(on: cursor) {
                     break
                 }
@@ -211,7 +215,7 @@ struct ChecklistItem: Identifiable, Codable, Hashable {
         }
 
         while cursor >= firstEligibleDate {
-            if occurs(on: cursor, calendar: calendar) {
+            if isTracked(on: cursor, calendar: calendar) {
                 guard isComplete(on: cursor) else { break }
                 completedDays += 1
             }
