@@ -71,5 +71,5 @@ jobs:
             if (payload.ok !== true) process.exit(1);
           ' "$health_body"
 
-          check_get "/privacy.html" "Data Daily Stores"
+          check_get "/privacy.html" "Data Ritual Cue Stores"
           check_get "/support.html" "Account Requests"
