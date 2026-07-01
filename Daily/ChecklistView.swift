@@ -37,6 +37,8 @@ struct ChecklistView: View {
     @State private var deletingGroup: ChecklistGroup?
     @State private var permanentlyDeletingItem: ChecklistItem?
     @State private var isSearchPresented = false
+    @State private var showingTutorial = false
+    @AppStorage("hasSeenChecklistTutorial") private var hasSeenChecklistTutorial = false
     @FocusState private var searchIsFocused: Bool
     @Namespace private var searchGlassNamespace
 
@@ -67,18 +69,22 @@ struct ChecklistView: View {
                                     emptyText: "Nothing left for now",
                                     showsCompleteAll: store.scope == .today && !filtered(store.todoItems).isEmpty,
                                     isCompletedSection: false,
-                                    displayCount: filtered(store.todoItems).count
+                                    displayCount: store.scope == .today
+                                        ? filtered(store.todoItems).count
+                                        : filtered(todoSectionItems).count
                                 )
                                     .padding(.top, 28)
-                                section(
-                                    title: "SKIPPED",
-                                    items: filtered(store.skippedItems),
-                                    emptyText: nil,
-                                    showsCompleteAll: false,
-                                    isCompletedSection: false
-                                )
-                                    .padding(.top, 32)
-                                    .opacity(filtered(store.skippedItems).isEmpty ? 0 : 1)
+                                if store.scope == .today {
+                                    section(
+                                        title: "SKIPPED",
+                                        items: filtered(store.skippedItems),
+                                        emptyText: nil,
+                                        showsCompleteAll: false,
+                                        isCompletedSection: false
+                                    )
+                                        .padding(.top, 32)
+                                        .opacity(filtered(store.skippedItems).isEmpty ? 0 : 1)
+                                }
                                 section(
                                     title: "COMPLETED",
                                     items: filtered(completedSectionItems),
@@ -150,6 +156,16 @@ struct ChecklistView: View {
                 AccountView()
                     .environmentObject(store)
             }
+            .sheet(isPresented: $showingTutorial) {
+                ChecklistTutorialView(
+                    createSamples: {
+                        store.applyBuiltInTemplates()
+                        finishTutorial()
+                    },
+                    startEmpty: finishTutorial
+                )
+                .interactiveDismissDisabled()
+            }
             .alert("Rename Group", isPresented: Binding(
                 get: { renamingGroupID != nil },
                 set: { if !$0 { renamingGroupID = nil } }
@@ -210,6 +226,10 @@ struct ChecklistView: View {
             }
         }
         .tint(accent)
+        .onAppear(perform: maybeShowTutorial)
+        .onChange(of: store.hasLoaded) { _, _ in
+            maybeShowTutorial()
+        }
     }
 
     private var header: some View {
@@ -296,7 +316,7 @@ struct ChecklistView: View {
     }
 
     private var activeVisibleItems: [ChecklistItem] {
-        store.visibleItems.filter { !$0.isSkipped(on: store.selectedDate) }
+        store.visibleItems.filter { store.scope == .all || !$0.isSkipped(on: store.selectedDate) }
     }
 
     private var todoSectionItems: [ChecklistItem] {
@@ -401,6 +421,21 @@ struct ChecklistView: View {
             searchIsFocused = false
             isSearchPresented = false
         }
+    }
+
+    private func maybeShowTutorial() {
+        guard store.hasLoaded,
+              !hasSeenChecklistTutorial,
+              !showingTutorial,
+              store.items.isEmpty,
+              store.groups.isEmpty,
+              UserDefaults.standard.data(forKey: "cachedAuthUser") == nil else { return }
+        showingTutorial = true
+    }
+
+    private func finishTutorial() {
+        hasSeenChecklistTutorial = true
+        showingTutorial = false
     }
 
     private func filtered(_ items: [ChecklistItem]) -> [ChecklistItem] {
@@ -821,6 +856,128 @@ struct ChecklistView: View {
     }
 }
 
+private struct ChecklistTutorialView: View {
+    let createSamples: () -> Void
+    let startEmpty: () -> Void
+    @State private var selection = 0
+
+    private let pages = [
+        TutorialPage(
+            title: "Build Daily Around Real Routines",
+            body: "Group recurring tasks by moment or context, then keep today focused on what is actually due.",
+            systemImage: "checklist"
+        ),
+        TutorialPage(
+            title: "Check, Skip, Or Review",
+            body: "Tap the circle to finish a task, use Skip when today is not the day, and review history when you want the full trail.",
+            systemImage: "clock.arrow.circlepath"
+        ),
+        TutorialPage(
+            title: "Keep It Synced When You Want",
+            body: "Daily works offline first. Sign in to back up changes and carry the same checklist across devices.",
+            systemImage: "icloud"
+        ),
+        TutorialPage(
+            title: "Start With Sample Routines",
+            body: "Create the Morning, Evening, Pet Care, and Household groups from the starter templates, or begin with a clean slate.",
+            systemImage: "sparkles"
+        )
+    ]
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 18) {
+                TabView(selection: $selection) {
+                    ForEach(Array(pages.enumerated()), id: \.element.id) { index, page in
+                        VStack(spacing: 22) {
+                            Image(systemName: page.systemImage)
+                                .font(.system(size: 46, weight: .semibold))
+                                .foregroundStyle(accent)
+                                .frame(width: 96, height: 96)
+                                .background(accent.opacity(0.12), in: Circle())
+                            VStack(spacing: 10) {
+                                Text(page.title)
+                                    .font(.system(size: 26, weight: .bold, design: .rounded))
+                                    .foregroundStyle(ink)
+                                    .multilineTextAlignment(.center)
+                                Text(page.body)
+                                    .font(.system(size: 16, weight: .medium))
+                                    .foregroundStyle(.secondary)
+                                    .multilineTextAlignment(.center)
+                                    .lineSpacing(3)
+                            }
+                        }
+                        .padding(.horizontal, 28)
+                        .tag(index)
+                    }
+                }
+                .tabViewStyle(.page(indexDisplayMode: .always))
+                .frame(minHeight: 360)
+
+                VStack(spacing: 10) {
+                    if selection < pages.count - 1 {
+                        Button {
+                            withAnimation(.snappy) {
+                                selection += 1
+                            }
+                        } label: {
+                            Text("Next")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(TutorialPrimaryButtonStyle())
+
+                        Button("Start empty", action: startEmpty)
+                            .buttonStyle(TutorialSecondaryButtonStyle())
+                    } else {
+                        Button(action: createSamples) {
+                            Text("Create sample routines")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(TutorialPrimaryButtonStyle())
+
+                        Button("Start empty", action: startEmpty)
+                            .buttonStyle(TutorialSecondaryButtonStyle())
+                    }
+                }
+                .padding(.horizontal, 24)
+            }
+            .padding(.vertical, 22)
+            .background(canvas.ignoresSafeArea())
+            .navigationTitle("Welcome to Daily")
+            .navigationBarTitleDisplayMode(.inline)
+        }
+        .presentationDetents([.large])
+        .presentationDragIndicator(.hidden)
+    }
+}
+
+private struct TutorialPage: Identifiable {
+    let id = UUID()
+    let title: String
+    let body: String
+    let systemImage: String
+}
+
+private struct TutorialPrimaryButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 17, weight: .bold))
+            .foregroundStyle(.white)
+            .padding(.vertical, 15)
+            .background(accent.opacity(configuration.isPressed ? 0.78 : 1), in: Capsule())
+    }
+}
+
+private struct TutorialSecondaryButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 15, weight: .semibold))
+            .foregroundStyle(ink.opacity(configuration.isPressed ? 0.55 : 0.72))
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 12)
+    }
+}
+
 private struct AccountToolbarImage: View {
     let url: URL?
 
@@ -1019,25 +1176,21 @@ private struct ItemHistoryView: View {
                 HStack {
                     Text(entry.date.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day()))
                     Spacer()
-                    if entry.state == .off {
-                        statePill(entry.state)
-                    } else {
-                        Menu {
-                            ForEach(availableStates(for: entry.date)) { state in
-                                Button {
-                                    withAnimation(.snappy) {
-                                        store.setHistoryState(state, for: currentItem.id, on: entry.date)
-                                    }
-                                } label: {
-                                    Label(state.rawValue, systemImage: state == entry.state ? "checkmark" : icon(for: state))
+                    Menu {
+                        ForEach(availableStates(for: entry.date)) { state in
+                            Button {
+                                withAnimation(.snappy) {
+                                    store.setHistoryState(state, for: currentItem.id, on: entry.date)
                                 }
+                            } label: {
+                                Label(state.rawValue, systemImage: state == entry.state ? "checkmark" : icon(for: state))
                             }
-                        } label: {
-                            statePill(entry.state)
                         }
-                        .accessibilityLabel("Change \(entry.date.formatted(.dateTime.month(.wide).day())) state")
-                        .accessibilityValue(entry.state.rawValue)
+                    } label: {
+                        statePill(entry.state)
                     }
+                    .accessibilityLabel("Change \(entry.date.formatted(.dateTime.month(.wide).day())) state")
+                    .accessibilityValue(entry.state.rawValue)
                 }
             }
             .navigationTitle(currentItem.title)
@@ -1063,7 +1216,7 @@ private struct ItemHistoryView: View {
             return [.done, neutralState, .skipped]
         }
 
-        return [.done, .skipped]
+        return [.done, .off, .skipped]
     }
 
     private func color(for state: ChecklistHistoryState) -> Color {

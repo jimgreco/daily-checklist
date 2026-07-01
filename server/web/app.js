@@ -197,15 +197,21 @@
 
   function occurs(item, date) {
     if (state.mode === "archive") return Boolean(item.endedAt);
+    if (state.mode === "all") return isActiveOnDate(item, date);
     return occursOnDate(item, date);
   }
 
-  function occursOnDate(item, date) {
+  function isActiveOnDate(item, date) {
     const day = startOfDay(date);
     const first = startOfDay(new Date(item.startDate || item.createdAt));
     if (day < first) return false;
     if (item.endedAt && day >= startOfDay(new Date(item.endedAt))) return false;
-    if (state.mode === "all") return true;
+    return true;
+  }
+
+  function occursOnDate(item, date) {
+    if (!isActiveOnDate(item, date)) return false;
+    const day = startOfDay(date);
     const weekday = day.getDay() + 1;
     if (item.schedule === "weekdays") return weekday >= 2 && weekday <= 6;
     if (item.schedule === "weekends") return weekday === 1 || weekday === 7;
@@ -290,10 +296,8 @@
         <div class="group-title">${escapeHTML(name)}<span>${groupProgress(items)}</span>${realGroup ? `<button class="group-action group-title-action" data-action="rename-group" data-group="${groupID}" aria-label="Rename ${escapeHTML(name)}">${icon("pencil")}</button>` : ""}</div>
         <div class="group-actions">
           ${allowsBulkActions && todo.length ? `<button class="complete-all" data-action="complete-group" data-group="${groupID || ""}">${icon("check")} All</button>` : ""}
-          ${allowsBulkActions && todo.length ? `<button class="complete-all" data-action="skip-group" data-group="${groupID || ""}">Skip</button>` : ""}
           ${realGroup ? `<button class="group-action" data-action="duplicate-group" data-group="${groupID}" aria-label="Duplicate ${escapeHTML(name)}">${icon("copy")}</button>` : ""}
           ${realGroup ? `<button class="group-action" data-action="start-group-tomorrow" data-group="${groupID}" aria-label="Start ${escapeHTML(name)} tomorrow">${icon("startTomorrow")}</button>` : ""}
-          ${realGroup ? `<button class="group-action danger" data-action="end-group" data-group="${groupID}" aria-label="End all items in ${escapeHTML(name)}">${icon("minus")}</button>` : ""}
           ${canDelete ? `<button class="group-action danger" data-action="delete-group" data-group="${groupID}" aria-label="Delete ${escapeHTML(name)}">${icon("trash")}</button>` : ""}
         </div>
       </div>
@@ -312,8 +316,9 @@
     const subtitle = state.mode === "archive"
       ? `${items.length} ${items.length === 1 ? "archived item" : "archived items"}.`
       : `${remaining} ${remaining === 1 ? "thing" : "things"} left today.`;
-    const ungroupedTodo = ungrouped.filter((item) => !complete(item) && !skipped(item));
-    const ungroupedSkipped = ungrouped.filter((item) => skipped(item) && !complete(item));
+    const separatesSkipped = state.mode === "today";
+    const ungroupedTodo = ungrouped.filter((item) => !complete(item) && (!separatesSkipped || !skipped(item)));
+    const ungroupedSkipped = separatesSkipped ? ungrouped.filter((item) => skipped(item) && !complete(item)) : [];
     const ungroupedDone = ungrouped.filter(complete);
     const grouped = groups.map((group) => ({
       group,
@@ -321,12 +326,12 @@
     })).filter((entry) => entry.items.length);
     const todoBody = [
       renderGroup("Ungrouped", ungroupedTodo, "", false, { allowsBulkActions: true }),
-      ...grouped.filter((entry) => entry.items.some((item) => !complete(item) && !skipped(item)))
-        .map((entry) => renderGroup(entry.group.name, entry.items.filter((item) => !complete(item) && !skipped(item)), entry.group.id, true, { allowsBulkActions: true }))
+      ...grouped.filter((entry) => entry.items.some((item) => !complete(item) && (!separatesSkipped || !skipped(item))))
+        .map((entry) => renderGroup(entry.group.name, entry.items.filter((item) => !complete(item) && (!separatesSkipped || !skipped(item))), entry.group.id, true, { allowsBulkActions: true }))
     ].join("");
     const skippedBody = [
       renderGroup("Ungrouped", ungroupedSkipped, "", false),
-      ...grouped.filter((entry) => entry.items.some((item) => skipped(item) && !complete(item)))
+      ...grouped.filter((entry) => separatesSkipped && entry.items.some((item) => skipped(item) && !complete(item)))
         .map((entry) => renderGroup(entry.group.name, entry.items.filter((item) => skipped(item) && !complete(item)), entry.group.id, true))
     ].join("");
     const completedBody = [
@@ -448,7 +453,9 @@
         <div class="history-list">
           ${historyFor(item).map((entry) => `<div class="history-row">
             <span>${escapeHTML(entry.label)}</span>
-            <strong class="${entry.state.toLowerCase()}">${escapeHTML(entry.state)}</strong>
+            <select class="history-state ${entry.state.toLowerCase()}" data-history-state data-id="${item.id}" data-date="${entry.key}" aria-label="Change state for ${escapeHTML(entry.label)}">
+              ${historyOptions(item, entry.key, entry.state)}
+            </select>
           </div>`).join("")}
         </div>
         <div class="modal-actions"><span></span><button class="secondary" data-action="close">Done</button></div>
@@ -661,9 +668,59 @@
       else if (occursOnDate(item, date)) stateLabel = "Open";
       return {
         label: date.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" }),
+        key: dateKey(date),
         state: stateLabel
       };
     });
+  }
+
+  function historyOptions(item, dateKeyValue, currentState) {
+    const date = dateFromInput(dateKeyValue);
+    const neutral = occursOnDate(item, date)
+      ? (date < startOfDay(new Date()) ? "Missed" : "Open")
+      : "Off";
+    return ["Done", neutral, "Skipped"].map((option) => (
+      `<option value="${option.toLowerCase()}" ${option === currentState ? "selected" : ""}>${option}</option>`
+    )).join("");
+  }
+
+  function setHistoryState(itemID, key, nextState) {
+    const item = state.items.find((candidate) => candidate.id === itemID);
+    if (!item) return;
+    item.completedDates ||= [];
+    item.skippedDates ||= [];
+    const wasCompleted = item.completedDates.includes(key);
+    const wasSkipped = item.skippedDates.includes(key);
+
+    if (nextState === "done") {
+      if (!item.completedDates.includes(key)) item.completedDates.push(key);
+      item.skippedDates = item.skippedDates.filter((date) => date !== key);
+    } else if (nextState === "skipped") {
+      item.completedDates = item.completedDates.filter((date) => date !== key);
+      if (!item.skippedDates.includes(key)) item.skippedDates.push(key);
+    } else {
+      item.completedDates = item.completedDates.filter((date) => date !== key);
+      item.skippedDates = item.skippedDates.filter((date) => date !== key);
+    }
+
+    const isCompleted = item.completedDates.includes(key);
+    const isSkipped = item.skippedDates.includes(key);
+    if (wasCompleted === isCompleted && wasSkipped === isSkipped) return;
+
+    if (wasCompleted !== isCompleted || (!isCompleted && (isSkipped || wasSkipped))) {
+      state.pending.push(mutation("completion", { itemID: item.id, completionDate: key, completed: isCompleted }));
+    }
+    if (wasSkipped !== isSkipped) {
+      state.pending.push(mutation("upsert", {
+        itemID: item.id,
+        changedFields: ["skippedDates"],
+        item: { skippedDates: item.skippedDates }
+      }));
+    }
+    persistData();
+    state.modal = { type: "history", item };
+    render();
+    void sync();
   }
 
   function applyTemplate(templateID) {
@@ -750,12 +807,6 @@
     queue(mutation("delete", { itemID }));
   }
 
-  function skipGroup(groupID) {
-    visibleItems()
-      .filter((item) => (item.groupID || "") === (groupID || "") && !complete(item))
-      .forEach((item) => setSkipped(item, true));
-  }
-
   function duplicateGroup(groupID) {
     const source = state.groups.find((candidate) => candidate.id === groupID);
     if (!source) return;
@@ -789,22 +840,6 @@
         itemID: item.id,
         changedFields: ["title","notes","schedule","customWeekdays","reminderMinutes","skippedDates","createdAt","startDate","endedAt","groupID","sortOrder"],
         item
-      }));
-    });
-    persistData();
-    render();
-    void sync();
-  }
-
-  function endGroup(groupID) {
-    if (!confirm("End every active item in this group?")) return;
-    const endedAt = startOfDay(new Date()).toISOString();
-    state.items.filter((item) => item.groupID === groupID && !item.endedAt).forEach((item) => {
-      item.endedAt = endedAt;
-      state.pending.push(mutation("upsert", {
-        itemID: item.id,
-        changedFields: ["endedAt"],
-        item: { endedAt }
       }));
     });
     persistData();
@@ -912,10 +947,8 @@
       completeItems(visibleItems().filter((item) => (item.groupID || null) === id));
     }
     if (action === "rename-group") renameGroup(target.dataset.group);
-    if (action === "skip-group") skipGroup(target.dataset.group || "");
     if (action === "duplicate-group") duplicateGroup(target.dataset.group);
     if (action === "start-group-tomorrow") startGroupTomorrow(target.dataset.group);
-    if (action === "end-group") endGroup(target.dataset.group);
     if (action === "delete-group") deleteGroup(target.dataset.group);
     if (action === "account") { state.modal = { type: "account" }; render(); }
     if (action === "sign-out") await signOut();
@@ -950,6 +983,10 @@
   });
 
   app.addEventListener("change", (event) => {
+    if (event.target.matches("[data-history-state]")) {
+      setHistoryState(event.target.dataset.id, event.target.dataset.date, event.target.value);
+      return;
+    }
     if (event.target.name === "schedule") {
       const custom = event.target.closest("form").querySelector("[data-custom-days]");
       custom.hidden = event.target.value !== "custom";

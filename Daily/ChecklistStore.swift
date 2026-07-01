@@ -85,6 +85,7 @@ final class ChecklistStore: ObservableObject {
     @Published var selectedDate = Calendar.current.startOfDay(for: .now)
     @Published var eveningReminderMinutes: Int? = 20 * 60
     @Published private(set) var syncState = "Saved locally"
+    @Published private(set) var hasLoaded = false
     @Published var sortMode: ChecklistSort {
         didSet { UserDefaults.standard.set(sortMode.rawValue, forKey: "checklistSortMode") }
     }
@@ -168,19 +169,9 @@ final class ChecklistStore: ObservableObject {
         guard !hasStarted else { return }
         hasStarted = true
         loadCache()
+        hasLoaded = true
         await notifications.requestAuthorization()
-        if items.isEmpty {
-            let vitamins = ChecklistItem(title: "Take vitamins", notes: "With breakfast", reminderMinutes: 8 * 60)
-            let dog = ChecklistItem(title: "Walk the dog", schedule: .everyDay, reminderMinutes: 18 * 60)
-            items = [vitamins, dog]
-            pendingMutations = [
-                .upsert(item: vitamins, changedFields: Self.allFields),
-                .upsert(item: dog, changedFields: Self.allFields)
-            ]
-            persistAndSchedule()
-        } else {
-            await notifications.reschedule(items: items, eveningMinutes: eveningReminderMinutes)
-        }
+        await notifications.reschedule(items: items, eveningMinutes: eveningReminderMinutes)
     }
 
     func connect(to authStore: AuthStore) {
@@ -253,8 +244,7 @@ final class ChecklistStore: ObservableObject {
     }
 
     func setHistoryState(_ state: ChecklistHistoryState, for itemID: UUID, on date: Date) {
-        guard state != .off,
-              let index = items.firstIndex(where: { $0.id == itemID }) else { return }
+        guard let index = items.firstIndex(where: { $0.id == itemID }) else { return }
 
         let key = DateKey.string(from: date)
         let wasCompleted = items[index].completedDates.contains(key)
@@ -267,11 +257,9 @@ final class ChecklistStore: ObservableObject {
         case .skipped:
             items[index].completedDates.remove(key)
             items[index].skippedDates.insert(key)
-        case .missed, .open:
+        case .missed, .open, .off:
             items[index].completedDates.remove(key)
             items[index].skippedDates.remove(key)
-        case .off:
-            return
         }
 
         let isCompleted = items[index].completedDates.contains(key)
@@ -493,6 +481,10 @@ final class ChecklistStore: ObservableObject {
         items.append(contentsOf: createdItems)
         pendingMutations.append(contentsOf: createdItems.map { .upsert(item: $0, changedFields: Self.allFields) })
         persistAndSchedule()
+    }
+
+    func applyBuiltInTemplates() {
+        RoutineTemplate.builtIns.forEach(applyTemplate)
     }
 
     func skipGroup(_ groupID: UUID?) {
