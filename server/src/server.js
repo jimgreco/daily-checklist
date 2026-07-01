@@ -21,14 +21,14 @@ function securityHeaders() {
     "x-frame-options": "DENY",
     "referrer-policy": "same-origin",
     "permissions-policy": "camera=(), microphone=(), geolocation=()",
-    "cross-origin-opener-policy": "same-origin",
+    "cross-origin-opener-policy": "same-origin-allow-popups",
     "content-security-policy": [
       "default-src 'self'",
       "base-uri 'self'",
       "object-src 'none'",
       "frame-ancestors 'none'",
       "script-src 'self' https://accounts.google.com https://appleid.cdn-apple.com",
-      "style-src 'self' 'unsafe-inline'",
+      "style-src 'self' 'unsafe-inline' https://accounts.google.com",
       "img-src 'self' https: data:",
       "connect-src 'self'",
       "frame-src https://accounts.google.com https://appleid.apple.com"
