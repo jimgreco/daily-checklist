@@ -345,7 +345,7 @@
         </div>
         <div class="toolbar">
           <button class="sort-button" data-action="templates">▦ Templates</button>
-          <button class="sort-button" data-action="sort">⇅ ${state.sort === "manual" ? "Manual" : state.sort === "name" ? "Name" : "Reminder time"}</button>
+          <button class="sort-button" data-action="sort">⇅ ${state.sort === "manual" ? "Manual" : state.sort === "name" ? "Name" : "Time"}</button>
         </div>
         <label class="search-field"><span>⌕</span><input data-search placeholder="Search tasks" value="${escapeHTML(state.search)}"></label>
       </div>

@@ -11,7 +11,7 @@ enum ChecklistSort: String, CaseIterable, Identifiable {
         switch self {
         case .manual: "Manual"
         case .name: "Name"
-        case .reminderTime: "Reminder time"
+        case .reminderTime: "Time"
         }
     }
 
