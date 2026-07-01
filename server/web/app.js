@@ -48,6 +48,25 @@
     })[character]);
   }
 
+  function icon(name, className = "") {
+    const paths = {
+      arrowDownUp: '<path d="m7 3-4 4 4 4"/><path d="M3 7h18"/><path d="m17 21 4-4-4-4"/><path d="M21 17H3"/>',
+      chevronLeft: '<path d="m15 18-6-6 6-6"/>',
+      chevronRight: '<path d="m9 18 6-6-6-6"/>',
+      check: '<path d="M20 6 9 17l-5-5"/>',
+      clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+      copy: '<rect x="8" y="8" width="12" height="12" rx="2"/><rect x="4" y="4" width="12" height="12" rx="2"/>',
+      minus: '<path d="M5 12h14"/>',
+      pencil: '<path d="M4 20h4l10.5-10.5a2.1 2.1 0 0 0-3-3L5 17v3z"/><path d="m14 7 3 3"/>',
+      repeat: '<path d="m17 2 4 4-4 4"/><path d="M3 11V9a3 3 0 0 1 3-3h15"/><path d="m7 22-4-4 4-4"/><path d="M21 13v2a3 3 0 0 1-3 3H3"/>',
+      search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>',
+      startTomorrow: '<path d="M7 17 17 7"/><path d="M9 7h8v8"/>',
+      trash: '<path d="M4 7h16"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M6 7l1 14h10l1-14"/><path d="M9 7V4h6v3"/>',
+      user: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>'
+    };
+    return `<svg class="icon ${className}" aria-hidden="true" focusable="false" viewBox="0 0 24 24">${paths[name] || ""}</svg>`;
+  }
+
   function startOfDay(date) {
     return new Date(date.getFullYear(), date.getMonth(), date.getDate());
   }
@@ -241,12 +260,12 @@
     const isComplete = complete(item);
     const isSkipped = skipped(item) && !isComplete;
     return `<article class="task ${isComplete ? "complete" : ""} ${isSkipped ? "skipped" : ""}">
-      <button class="check" data-action="toggle" data-id="${item.id}" aria-label="${complete(item) ? "Mark incomplete" : "Mark complete"}">${complete(item) ? "✓" : ""}</button>
+      <button class="check" data-action="toggle" data-id="${item.id}" aria-label="${complete(item) ? "Mark incomplete" : "Mark complete"}">${complete(item) ? icon("check") : ""}</button>
       <div class="task-copy">
         <div class="task-title">${escapeHTML(item.title)}</div>
         <div class="task-meta">
-          <span>↻ ${escapeHTML(scheduleText(item))}</span>
-          ${item.reminderMinutes == null ? "" : `<span>♟ ${escapeHTML(timeText(item.reminderMinutes))}</span>`}
+          <span>${icon("repeat", "meta-icon")} ${escapeHTML(scheduleText(item))}</span>
+          ${item.reminderMinutes == null ? "" : `<span>${icon("clock", "meta-icon")} ${escapeHTML(timeText(item.reminderMinutes))}</span>`}
           ${isSkipped ? "<span>Skipped today</span>" : ""}
         </div>
         ${item.notes ? `<p class="notes">${escapeHTML(item.notes)}</p>` : ""}
@@ -255,7 +274,7 @@
         ${isSkipped ? `<button class="mini-button" data-action="unskip" data-id="${item.id}">Undo</button>` : !isComplete ? `<button class="mini-button accent" data-action="skip" data-id="${item.id}">Skip</button>` : ""}
         <button class="mini-button" data-action="history" data-id="${item.id}" aria-label="History for ${escapeHTML(item.title)}">History</button>
         ${state.mode === "archive" ? `<button class="mini-button danger" data-action="delete-item" data-id="${item.id}" aria-label="Delete ${escapeHTML(item.title)} permanently">Delete</button>` : ""}
-        <button class="edit-button" data-action="edit" data-id="${item.id}" aria-label="Edit ${escapeHTML(item.title)}">✎</button>
+        <button class="edit-button" data-action="edit" data-id="${item.id}" aria-label="Edit ${escapeHTML(item.title)}">${icon("pencil")}</button>
       </div>
     </article>`;
   }
@@ -268,14 +287,14 @@
     const canDelete = realGroup && canDeleteGroup(groupID);
     return `<section class="group">
       <div class="group-head">
-        <div class="group-title">${escapeHTML(name)}<span>${groupProgress(items)}</span>${realGroup ? `<button class="group-action group-title-action" data-action="rename-group" data-group="${groupID}" aria-label="Rename ${escapeHTML(name)}">✎</button>` : ""}</div>
+        <div class="group-title">${escapeHTML(name)}<span>${groupProgress(items)}</span>${realGroup ? `<button class="group-action group-title-action" data-action="rename-group" data-group="${groupID}" aria-label="Rename ${escapeHTML(name)}">${icon("pencil")}</button>` : ""}</div>
         <div class="group-actions">
-          ${allowsBulkActions && todo.length ? `<button class="complete-all" data-action="complete-group" data-group="${groupID || ""}">✓ All</button>` : ""}
+          ${allowsBulkActions && todo.length ? `<button class="complete-all" data-action="complete-group" data-group="${groupID || ""}">${icon("check")} All</button>` : ""}
           ${allowsBulkActions && todo.length ? `<button class="complete-all" data-action="skip-group" data-group="${groupID || ""}">Skip</button>` : ""}
-          ${realGroup ? `<button class="group-action" data-action="duplicate-group" data-group="${groupID}" aria-label="Duplicate ${escapeHTML(name)}">⧉</button>` : ""}
-          ${realGroup ? `<button class="group-action" data-action="start-group-tomorrow" data-group="${groupID}" aria-label="Start ${escapeHTML(name)} tomorrow">↷</button>` : ""}
-          ${realGroup ? `<button class="group-action danger" data-action="end-group" data-group="${groupID}" aria-label="End all items in ${escapeHTML(name)}">–</button>` : ""}
-          ${canDelete ? `<button class="group-action danger" data-action="delete-group" data-group="${groupID}" aria-label="Delete ${escapeHTML(name)}">⌫</button>` : ""}
+          ${realGroup ? `<button class="group-action" data-action="duplicate-group" data-group="${groupID}" aria-label="Duplicate ${escapeHTML(name)}">${icon("copy")}</button>` : ""}
+          ${realGroup ? `<button class="group-action" data-action="start-group-tomorrow" data-group="${groupID}" aria-label="Start ${escapeHTML(name)} tomorrow">${icon("startTomorrow")}</button>` : ""}
+          ${realGroup ? `<button class="group-action danger" data-action="end-group" data-group="${groupID}" aria-label="End all items in ${escapeHTML(name)}">${icon("minus")}</button>` : ""}
+          ${canDelete ? `<button class="group-action danger" data-action="delete-group" data-group="${groupID}" aria-label="Delete ${escapeHTML(name)}">${icon("trash")}</button>` : ""}
         </div>
       </div>
       <div class="task-list">${ordered.length ? ordered.map(renderTask).join("") : `<div class="empty-group">No tasks</div>`}</div>
@@ -329,8 +348,8 @@
         </div>
         <div>
           <div class="date-nav">
-            <button class="circle-button" data-action="previous" aria-label="Previous day">‹</button>
-            <button class="circle-button" data-action="next" aria-label="Next day">›</button>
+            <button class="circle-button" data-action="previous" aria-label="Previous day">${icon("chevronLeft")}</button>
+            <button class="circle-button" data-action="next" aria-label="Next day">${icon("chevronRight")}</button>
           </div>
           <div class="date-nav account-nav">
             ${renderAccountButton()}
@@ -344,13 +363,13 @@
           <button class="${state.mode === "archive" ? "active" : ""}" data-action="mode" data-mode="archive">Archive</button>
         </div>
         <div class="toolbar">
-          <button class="sort-button" data-action="sort">⇅ ${state.sort === "manual" ? "Manual" : state.sort === "name" ? "Name" : "Time"}</button>
+          <button class="sort-button" data-action="sort">${icon("arrowDownUp")} ${state.sort === "manual" ? "Manual" : state.sort === "name" ? "Name" : "Time"}</button>
         </div>
-        <label class="search-field"><span>⌕</span><input data-search placeholder="Search tasks" value="${escapeHTML(state.search)}"></label>
+        <label class="search-field"><span>${icon("search")}</span><input data-search placeholder="Search tasks" value="${escapeHTML(state.search)}"></label>
       </div>
       ${state.mode === "archive" ? `<div class="section-head"><span class="section-label">Archive</span></div>${archiveBody || `<div class="empty">No ended tasks.</div>`}` : `<div class="section-head">
         <span class="section-label">To do</span>
-        ${remaining ? `<button class="complete-all" data-action="complete-all">✓ All&nbsp;&nbsp;${remaining}</button>` : ""}
+        ${remaining ? `<button class="complete-all" data-action="complete-all">${icon("check")} All&nbsp;&nbsp;${remaining}</button>` : ""}
       </div>
       ${todoBody || `<div class="empty">${completedBody ? "Everything is complete." : "Nothing is scheduled for this day."}</div>`}
       ${skippedBody ? `<div class="section-head"><span class="section-label">Skipped</span></div>${skippedBody}` : ""}
@@ -365,7 +384,7 @@
   function renderAccountButton() {
     const photo = state.user?.profileImageURL;
     return `<button class="account-button" data-action="account" aria-label="Account">${
-      photo ? `<img class="account-avatar" src="${escapeHTML(photo)}" alt="">` : "◉"
+      photo ? `<img class="account-avatar" src="${escapeHTML(photo)}" alt="">` : icon("user")
     }</button>`;
   }
 
@@ -405,7 +424,7 @@
         <h2>Account</h2>
         <div class="account-card">
           <div class="account-profile">
-            <div class="account-photo">${photo ? `<img src="${escapeHTML(photo)}" alt="">` : "◉"}</div>
+            <div class="account-photo">${photo ? `<img src="${escapeHTML(photo)}" alt="">` : icon("user")}</div>
             <strong>${escapeHTML(displayName)}</strong>
             <p>${escapeHTML(email)}</p>
           </div>
