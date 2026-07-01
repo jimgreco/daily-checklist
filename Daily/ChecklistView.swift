@@ -64,10 +64,11 @@ struct ChecklistView: View {
                             } else {
                                 section(
                                     title: "TO DO",
-                                    items: filtered(store.todoItems),
+                                    items: filtered(todoSectionItems),
                                     emptyText: "Nothing left for now",
                                     showsCompleteAll: store.scope == .today && !filtered(store.todoItems).isEmpty,
-                                    isCompletedSection: false
+                                    isCompletedSection: false,
+                                    displayCount: filtered(store.todoItems).count
                                 )
                                     .padding(.top, 28)
                                 section(
@@ -81,12 +82,12 @@ struct ChecklistView: View {
                                     .opacity(filtered(store.skippedItems).isEmpty ? 0 : 1)
                                 section(
                                     title: "COMPLETED",
-                                    items: filtered(store.completedItems),
+                                    items: filtered(completedSectionItems),
                                     emptyText: nil,
                                     isCompletedSection: true
                                 )
                                     .padding(.top, 32)
-                                    .opacity(filtered(store.completedItems).isEmpty ? 0 : 1)
+                                    .opacity(filtered(completedSectionItems).isEmpty ? 0 : 1)
                             }
                             Spacer(minLength: 120)
                         }
@@ -295,6 +296,37 @@ struct ChecklistView: View {
         return count == 1 ? "One thing left \(day)." : "\(count) things left \(day)."
     }
 
+    private var knownGroupIDs: Set<UUID> {
+        Set(store.groups.map(\.id))
+    }
+
+    private var activeVisibleItems: [ChecklistItem] {
+        store.visibleItems.filter { !$0.isSkipped(on: store.selectedDate) }
+    }
+
+    private var todoSectionItems: [ChecklistItem] {
+        activeVisibleItems.filter { item in
+            guard let groupID = item.groupID, knownGroupIDs.contains(groupID) else {
+                return !item.isComplete(on: store.selectedDate)
+            }
+            return !groupIsComplete(groupID)
+        }
+    }
+
+    private var completedSectionItems: [ChecklistItem] {
+        activeVisibleItems.filter { item in
+            guard let groupID = item.groupID, knownGroupIDs.contains(groupID) else {
+                return item.isComplete(on: store.selectedDate)
+            }
+            return groupIsComplete(groupID)
+        }
+    }
+
+    private func groupIsComplete(_ groupID: UUID) -> Bool {
+        let items = activeVisibleItems.filter { $0.groupID == groupID }
+        return !items.isEmpty && items.allSatisfy { $0.isComplete(on: store.selectedDate) }
+    }
+
     private var filter: some View {
         HStack(spacing: 4) {
             ForEach(ChecklistScope.allCases) { scope in
@@ -454,7 +486,8 @@ struct ChecklistView: View {
         emptyText: String?,
         showsCompleteAll: Bool = false,
         isCompletedSection: Bool,
-        allowsPermanentDelete: Bool = false
+        allowsPermanentDelete: Bool = false,
+        displayCount: Int? = nil
     ) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
@@ -476,7 +509,7 @@ struct ChecklistView: View {
                     .foregroundStyle(accent)
                     .accessibilityHint("Marks every task scheduled for today as complete")
                 }
-                Text("\(items.count)")
+                Text("\(displayCount ?? items.count)")
                     .font(.system(size: 12, weight: .bold, design: .rounded))
                     .foregroundStyle(.secondary)
             }
@@ -530,9 +563,8 @@ struct ChecklistView: View {
                 }
                 ForEach(store.orderedGroups) { group in
                     let groupItems = items.filter { $0.groupID == group.id }
-                    let groupIsComplete = !groupItems.isEmpty
-                        && groupItems.allSatisfy { $0.isComplete(on: store.selectedDate) }
-                    if !groupItems.isEmpty && groupIsComplete == isCompletedSection {
+                    let isCompleteGroup = groupIsComplete(group.id)
+                    if !groupItems.isEmpty && isCompleteGroup == isCompletedSection {
                         groupBlock(
                             title: group.name,
                             groupID: group.id,
