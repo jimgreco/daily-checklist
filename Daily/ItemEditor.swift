@@ -211,7 +211,7 @@ struct ItemEditor: View {
                         item.customWeekdays.insert(day)
                     }
                 } label: {
-                    Text(Calendar.current.veryShortWeekdaySymbols[day - 1])
+                    Text(WeekdayAbbreviation.twoLetter[day - 1])
                         .font(.system(size: 13, weight: .bold))
                         .foregroundStyle(selected ? .white : .secondary)
                         .frame(width: 34, height: 34)

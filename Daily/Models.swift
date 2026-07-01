@@ -1,5 +1,9 @@
 import Foundation
 
+enum WeekdayAbbreviation {
+    static let twoLetter = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"]
+}
+
 enum ScheduleKind: String, Codable, CaseIterable, Identifiable {
     case everyDay
     case weekdays
@@ -166,12 +170,42 @@ struct ChecklistItem: Identifiable, Codable, Hashable {
         return missedDays
     }
 
+    func consecutiveCompletedDays(asOf date: Date, calendar: Calendar = .current) -> Int {
+        let today = calendar.startOfDay(for: .now)
+        let selectedDay = calendar.startOfDay(for: date)
+        var cursor = min(selectedDay, today)
+        let firstEligibleDate = calendar.startOfDay(for: startDate ?? createdAt)
+        var completedDays = 0
+
+        if cursor >= today && !isComplete(on: cursor) {
+            guard let previousDay = calendar.date(byAdding: .day, value: -1, to: cursor) else {
+                return 0
+            }
+            cursor = previousDay
+        } else if selectedDay < today && !isComplete(on: cursor) {
+            return 0
+        }
+
+        while cursor >= firstEligibleDate {
+            if occurs(on: cursor, calendar: calendar) {
+                guard isComplete(on: cursor) else { break }
+                completedDays += 1
+            }
+
+            guard let previousDay = calendar.date(byAdding: .day, value: -1, to: cursor) else {
+                break
+            }
+            cursor = previousDay
+        }
+
+        return completedDays
+    }
+
     var scheduleSummary: String {
         guard schedule == .custom else { return schedule.title }
-        let symbols = Calendar.current.veryShortWeekdaySymbols
         return (1...7)
             .filter(customWeekdays.contains)
-            .map { symbols[$0 - 1] }
+            .map { WeekdayAbbreviation.twoLetter[$0 - 1] }
             .joined(separator: " · ")
     }
 }
@@ -383,6 +417,16 @@ enum SyncStamp {
     static var now: String {
         formatter.string(from: Date())
     }
+}
+
+enum ChecklistHistoryState: String, CaseIterable, Identifiable {
+    case done = "Done"
+    case skipped = "Skipped"
+    case missed = "Missed"
+    case open = "Open"
+    case off = "Off"
+
+    var id: String { rawValue }
 }
 
 enum DateKey {

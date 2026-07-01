@@ -2,7 +2,7 @@ name: Daily
 options:
   bundleIdPrefix: com.example
   deploymentTarget:
-    iOS: "17.0"
+    iOS: "26.0"
 packages:
   GoogleSignIn:
     url: https://github.com/google/GoogleSignIn-iOS

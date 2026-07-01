@@ -216,7 +216,7 @@
     if (item.schedule === "weekdays") return "Weekdays";
     if (item.schedule === "weekends") return "Weekends";
     if (item.schedule === "custom") {
-      const labels = ["S", "M", "T", "W", "T", "F", "S"];
+      const labels = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"];
       return (item.customWeekdays || []).map((day) => labels[day - 1]).join(" · ") || "Custom";
     }
     return "Every day";

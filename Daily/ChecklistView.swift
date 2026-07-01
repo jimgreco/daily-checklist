@@ -19,6 +19,7 @@ let surface = adaptiveColor(light: (1.00, 1.00, 1.00), dark: (0.13, 0.14, 0.16))
 let softSurface = adaptiveColor(light: (0.985, 0.982, 0.965), dark: (0.10, 0.11, 0.13))
 let controlSurface = adaptiveColor(light: (1.00, 1.00, 1.00), dark: (0.18, 0.19, 0.22))
 let subtleFill = adaptiveColor(light: (0.91, 0.90, 0.87), dark: (0.19, 0.20, 0.23))
+let success = adaptiveColor(light: (0.12, 0.52, 0.29), dark: (0.34, 0.84, 0.50))
 
 struct ChecklistView: View {
     @EnvironmentObject private var store: ChecklistStore
@@ -36,91 +37,93 @@ struct ChecklistView: View {
     @State private var renameGroupName = ""
     @State private var deletingGroup: ChecklistGroup?
     @State private var permanentlyDeletingItem: ChecklistItem?
+    @State private var isSearchPresented = false
     @FocusState private var searchIsFocused: Bool
+    @Namespace private var searchGlassNamespace
 
     var body: some View {
         NavigationStack {
-            ZStack(alignment: .bottomTrailing) {
-                canvas.ignoresSafeArea()
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 0) {
-                        header
-                        filter
-                            .padding(.top, 22)
-                        searchField
-                            .padding(.top, 14)
-                        if store.scope == .archive {
-                            section(
-                                title: "ARCHIVE",
-                                items: filtered(store.visibleItems),
-                                emptyText: "No ended tasks",
-                                showsCompleteAll: false,
-                                isCompletedSection: false,
-                                allowsPermanentDelete: true
-                            )
-                                .padding(.top, 28)
-                        } else {
-                            section(
-                                title: "TO DO",
-                                items: filtered(store.todoItems),
-                                emptyText: "Nothing left for now",
-                                showsCompleteAll: store.scope == .today && !filtered(store.todoItems).isEmpty,
-                                isCompletedSection: false
-                            )
-                                .padding(.top, 28)
-                            section(
-                                title: "SKIPPED",
-                                items: filtered(store.skippedItems),
-                                emptyText: nil,
-                                showsCompleteAll: false,
-                                isCompletedSection: false
-                            )
-                                .padding(.top, 32)
-                                .opacity(filtered(store.skippedItems).isEmpty ? 0 : 1)
-                            section(
-                                title: "COMPLETED",
-                                items: filtered(store.completedItems),
-                                emptyText: nil,
-                                isCompletedSection: true
-                            )
-                                .padding(.top, 32)
-                                .opacity(filtered(store.completedItems).isEmpty ? 0 : 1)
+            GlassEffectContainer(spacing: 10) {
+                ZStack(alignment: .bottomTrailing) {
+                    canvas.ignoresSafeArea()
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 0) {
+                            header
+                            filter
+                                .padding(.top, 22)
+                            if store.scope == .archive {
+                                section(
+                                    title: "ARCHIVE",
+                                    items: filtered(store.visibleItems),
+                                    emptyText: "No ended tasks",
+                                    showsCompleteAll: false,
+                                    isCompletedSection: false,
+                                    allowsPermanentDelete: true
+                                )
+                                    .padding(.top, 28)
+                            } else {
+                                section(
+                                    title: "TO DO",
+                                    items: filtered(store.todoItems),
+                                    emptyText: "Nothing left for now",
+                                    showsCompleteAll: store.scope == .today && !filtered(store.todoItems).isEmpty,
+                                    isCompletedSection: false
+                                )
+                                    .padding(.top, 28)
+                                section(
+                                    title: "SKIPPED",
+                                    items: filtered(store.skippedItems),
+                                    emptyText: nil,
+                                    showsCompleteAll: false,
+                                    isCompletedSection: false
+                                )
+                                    .padding(.top, 32)
+                                    .opacity(filtered(store.skippedItems).isEmpty ? 0 : 1)
+                                section(
+                                    title: "COMPLETED",
+                                    items: filtered(store.completedItems),
+                                    emptyText: nil,
+                                    isCompletedSection: true
+                                )
+                                    .padding(.top, 32)
+                                    .opacity(filtered(store.completedItems).isEmpty ? 0 : 1)
+                            }
+                            Spacer(minLength: 120)
                         }
-                        Spacer(minLength: 120)
+                        .padding(.horizontal, 20)
                     }
-                    .padding(.horizontal, 20)
-                }
 
-                Menu {
-                    Button {
-                        showingNewItem = true
+                    Menu {
+                        Button {
+                            showingNewItem = true
+                        } label: {
+                            Label("New item", systemImage: "plus")
+                        }
+                        Button {
+                            showingTemplates = true
+                        } label: {
+                            Label("Templates", systemImage: "square.grid.2x2")
+                        }
                     } label: {
-                        Label("New item", systemImage: "plus")
+                        Image(systemName: "plus")
+                            .font(.system(size: 25, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .frame(width: 64, height: 64)
+                            .background(accent, in: Circle())
+                            .shadow(color: accent.opacity(0.3), radius: 18, y: 8)
                     }
-                    Button {
-                        showingTemplates = true
-                    } label: {
-                        Label("Templates", systemImage: "square.grid.2x2")
-                    }
-                } label: {
-                    Image(systemName: "plus")
-                        .font(.system(size: 25, weight: .semibold))
-                        .foregroundStyle(.white)
-                        .frame(width: 64, height: 64)
-                        .background(accent, in: Circle())
-                        .shadow(color: accent.opacity(0.3), radius: 18, y: 8)
+                    .accessibilityLabel("Add item")
+                    .padding(24)
                 }
-                .accessibilityLabel("Add item")
-                .padding(24)
+                .overlay(alignment: .top) {
+                    if isSearchPresented {
+                        expandedSearchOverlay
+                            .transition(.move(edge: .top).combined(with: .opacity))
+                            .zIndex(5)
+                    }
+                }
             }
             .toolbar(.hidden, for: .navigationBar)
-            .overlay(alignment: .top) {
-                if searchIsFocused {
-                    expandedSearchOverlay
-                        .transition(.move(edge: .top).combined(with: .opacity))
-                        .zIndex(5)
-                }
-            }
             .sheet(isPresented: $showingNewItem) {
                 ItemEditor(
                     item: ChecklistItem(title: ""),
@@ -145,7 +148,7 @@ struct ChecklistView: View {
                 }
             }
             .sheet(item: $historyItem) { item in
-                ItemHistoryView(item: item, history: store.completionHistory(for: item))
+                ItemHistoryView(item: item)
             }
             .sheet(isPresented: $showingAccount) {
                 AccountView()
@@ -267,6 +270,10 @@ struct ChecklistView: View {
                     }
                     Spacer(minLength: 10)
                     HStack(spacing: 8) {
+                        if !isSearchPresented {
+                            searchButton
+                                .transition(.scale(scale: 0.85).combined(with: .opacity))
+                        }
                         sortControl
                         editModeButton
                     }
@@ -303,28 +310,26 @@ struct ChecklistView: View {
         .background(subtleFill, in: Capsule())
     }
 
-    private var searchField: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "magnifyingglass")
-                .foregroundStyle(.secondary)
-            TextField("Search tasks", text: $searchText)
-                .textInputAutocapitalization(.never)
-                .focused($searchIsFocused)
-            if !searchText.isEmpty {
-                Button {
-                    searchText = ""
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundStyle(.secondary)
-                }
-                .accessibilityLabel("Clear search")
+    private var searchButton: some View {
+        Button {
+            withAnimation(.snappy) {
+                isSearchPresented = true
             }
+            DispatchQueue.main.async {
+                searchIsFocused = true
+            }
+        } label: {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 13, weight: .bold))
+                .foregroundStyle(searchText.isEmpty ? ink : accent)
+                .frame(width: 35, height: 35)
+                .glassEffect(.regular.interactive(), in: Circle())
+                .glassEffectID("checklist-search", in: searchGlassNamespace)
+                .glassEffectTransition(.matchedGeometry)
         }
-        .font(.system(size: 15, weight: .medium))
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        .background(controlSurface, in: Capsule())
-        .opacity(searchIsFocused ? 0 : 1)
+        .accessibilityLabel("Search checklist")
+        .accessibilityValue(searchText.isEmpty ? "No search" : searchText)
+        .accessibilityHint("Shows the search field")
     }
 
     private var expandedSearchOverlay: some View {
@@ -335,6 +340,7 @@ struct ChecklistView: View {
                         .foregroundStyle(.secondary)
                     TextField("Search tasks", text: $searchText)
                         .textInputAutocapitalization(.never)
+                        .submitLabel(.search)
                         .focused($searchIsFocused)
                     if !searchText.isEmpty {
                         Button {
@@ -349,12 +355,12 @@ struct ChecklistView: View {
                 .font(.system(size: 17, weight: .medium))
                 .padding(.horizontal, 14)
                 .frame(height: 46)
-                .background(controlSurface, in: Capsule())
+                .glassEffect(.regular.interactive(), in: Capsule())
+                .glassEffectID("checklist-search", in: searchGlassNamespace)
+                .glassEffectTransition(.matchedGeometry)
 
                 Button("Cancel") {
-                    withAnimation(.snappy) {
-                        searchIsFocused = false
-                    }
+                    dismissSearch()
                 }
                 .font(.system(size: 15, weight: .semibold))
                 .foregroundStyle(accent)
@@ -364,8 +370,15 @@ struct ChecklistView: View {
             .padding(.bottom, 10)
         }
         .frame(maxWidth: .infinity)
-        .background(.regularMaterial)
-        .shadow(color: .black.opacity(0.08), radius: 18, y: 8)
+        .padding(.bottom, 4)
+    }
+
+    private func dismissSearch() {
+        withAnimation(.snappy) {
+            searchText = ""
+            searchIsFocused = false
+            isSearchPresented = false
+        }
     }
 
     private func filtered(_ items: [ChecklistItem]) -> [ChecklistItem] {
@@ -830,10 +843,15 @@ private struct ItemRow: View {
     private var completed: Bool { item.isComplete(on: date) }
     private var skipped: Bool { item.isSkipped(on: date) }
     private var missedDays: Int { item.consecutiveMissedDays(asOf: date) }
+    private var completionStreak: Int { item.consecutiveCompletedDays(asOf: date) }
 
     var body: some View {
         HStack(spacing: 14) {
-            Button(action: onToggle) {
+            Button {
+                withAnimation(.snappy) {
+                    onToggle()
+                }
+            } label: {
                 ZStack {
                     Circle()
                         .stroke(completed ? accent : Color.primary.opacity(0.22), lineWidth: 2)
@@ -856,22 +874,21 @@ private struct ItemRow: View {
                         .strikethrough(completed, color: .secondary)
                         .lineLimit(1)
                         .layoutPriority(1)
-                    if missedDays > 0 {
-                        HStack(spacing: 4) {
-                            Image(systemName: "calendar.badge.exclamationmark")
-                                .font(.system(size: 10, weight: .bold))
-                            Text("\(missedDays) \(missedDays == 1 ? "day" : "days")")
-                        }
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundStyle(Color(red: 0.72, green: 0.22, blue: 0.20))
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 4)
-                        .background(
-                            Color(red: 0.72, green: 0.22, blue: 0.20).opacity(0.1),
-                            in: Capsule()
+                    if completionStreak > 0 {
+                        statusBadge(
+                            "\(completionStreak) \(completionStreak == 1 ? "day" : "days")",
+                            systemImage: "checkmark.seal.fill",
+                            color: success,
+                            accessibilityLabel: "\(completionStreak) day completion streak"
                         )
-                        .fixedSize()
-                        .accessibilityLabel("\(missedDays) consecutive missed \(missedDays == 1 ? "day" : "days")")
+                        .transition(.scale(scale: 0.86).combined(with: .opacity))
+                    } else if missedDays > 0 {
+                        statusBadge(
+                            "\(missedDays) \(missedDays == 1 ? "day" : "days")",
+                            systemImage: "calendar.badge.exclamationmark",
+                            color: Color(red: 0.72, green: 0.22, blue: 0.20),
+                            accessibilityLabel: "\(missedDays) consecutive missed \(missedDays == 1 ? "day" : "days")"
+                        )
                     }
                 }
                 HStack(spacing: 8) {
@@ -936,6 +953,26 @@ private struct ItemRow: View {
         }
         .accessibilityHint("Long press for edit, history, and skip actions")
     }
+
+    private func statusBadge(
+        _ text: String,
+        systemImage: String,
+        color: Color,
+        accessibilityLabel: String
+    ) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: systemImage)
+                .font(.system(size: 10, weight: .bold))
+            Text(text)
+        }
+        .font(.system(size: 11, weight: .bold))
+        .foregroundStyle(color)
+        .padding(.horizontal, 7)
+        .padding(.vertical, 4)
+        .background(color.opacity(0.12), in: Capsule())
+        .fixedSize()
+        .accessibilityLabel(accessibilityLabel)
+    }
 }
 
 private struct TemplatePickerView: View {
@@ -971,8 +1008,16 @@ private struct TemplatePickerView: View {
 }
 
 private struct ItemHistoryView: View {
+    @EnvironmentObject private var store: ChecklistStore
     let item: ChecklistItem
-    let history: [(date: Date, state: String)]
+
+    private var currentItem: ChecklistItem {
+        store.items.first(where: { $0.id == item.id }) ?? item
+    }
+
+    private var history: [(date: Date, state: ChecklistHistoryState)] {
+        store.completionHistory(for: currentItem)
+    }
 
     var body: some View {
         NavigationStack {
@@ -980,26 +1025,69 @@ private struct ItemHistoryView: View {
                 HStack {
                     Text(entry.date.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day()))
                     Spacer()
-                    Text(entry.state)
-                        .font(.system(size: 13, weight: .bold))
-                        .foregroundStyle(color(for: entry.state))
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 5)
-                        .background(color(for: entry.state).opacity(0.12), in: Capsule())
+                    if entry.state == .off {
+                        statePill(entry.state)
+                    } else {
+                        Menu {
+                            ForEach(availableStates(for: entry.date)) { state in
+                                Button {
+                                    withAnimation(.snappy) {
+                                        store.setHistoryState(state, for: currentItem.id, on: entry.date)
+                                    }
+                                } label: {
+                                    Label(state.rawValue, systemImage: state == entry.state ? "checkmark" : icon(for: state))
+                                }
+                            }
+                        } label: {
+                            statePill(entry.state)
+                        }
+                        .accessibilityLabel("Change \(entry.date.formatted(.dateTime.month(.wide).day())) state")
+                        .accessibilityValue(entry.state.rawValue)
+                    }
                 }
             }
-            .navigationTitle(item.title)
+            .navigationTitle(currentItem.title)
             .navigationBarTitleDisplayMode(.inline)
         }
     }
 
-    private func color(for state: String) -> Color {
+    private func statePill(_ state: ChecklistHistoryState) -> some View {
+        Text(state.rawValue)
+            .font(.system(size: 13, weight: .bold))
+            .foregroundStyle(color(for: state))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(color(for: state).opacity(0.12), in: Capsule())
+    }
+
+    private func availableStates(for date: Date) -> [ChecklistHistoryState] {
+        let neutralState = date < Calendar.current.startOfDay(for: .now)
+            ? ChecklistHistoryState.missed
+            : ChecklistHistoryState.open
+
+        if currentItem.occurs(on: date) {
+            return [.done, neutralState, .skipped]
+        }
+
+        return [.done, .skipped]
+    }
+
+    private func color(for state: ChecklistHistoryState) -> Color {
         switch state {
-        case "Done": accent
-        case "Skipped": .secondary
-        case "Missed": Color(red: 0.72, green: 0.22, blue: 0.20)
-        case "Open": Color(red: 0.13, green: 0.48, blue: 0.34)
-        default: .secondary
+        case .done: success
+        case .skipped, .off: .secondary
+        case .missed: Color(red: 0.72, green: 0.22, blue: 0.20)
+        case .open: Color(red: 0.13, green: 0.48, blue: 0.34)
+        }
+    }
+
+    private func icon(for state: ChecklistHistoryState) -> String {
+        switch state {
+        case .done: "checkmark.circle.fill"
+        case .skipped: "forward.end.fill"
+        case .missed: "xmark.circle.fill"
+        case .open: "circle"
+        case .off: "minus.circle"
         }
     }
 }

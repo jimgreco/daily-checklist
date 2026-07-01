@@ -252,6 +252,42 @@ final class ChecklistStore: ObservableObject {
         setSkipped(item, skipped: true, on: date)
     }
 
+    func setHistoryState(_ state: ChecklistHistoryState, for itemID: UUID, on date: Date) {
+        guard state != .off,
+              let index = items.firstIndex(where: { $0.id == itemID }) else { return }
+
+        let key = DateKey.string(from: date)
+        let wasCompleted = items[index].completedDates.contains(key)
+        let wasSkipped = items[index].skippedDates.contains(key)
+
+        switch state {
+        case .done:
+            items[index].completedDates.insert(key)
+            items[index].skippedDates.remove(key)
+        case .skipped:
+            items[index].completedDates.remove(key)
+            items[index].skippedDates.insert(key)
+        case .missed, .open:
+            items[index].completedDates.remove(key)
+            items[index].skippedDates.remove(key)
+        case .off:
+            return
+        }
+
+        let isCompleted = items[index].completedDates.contains(key)
+        let isSkipped = items[index].skippedDates.contains(key)
+        guard wasCompleted != isCompleted || wasSkipped != isSkipped else { return }
+
+        if wasCompleted != isCompleted || (!isCompleted && (isSkipped || wasSkipped)) {
+            pendingMutations.append(.completion(itemID: itemID, date: key, completed: isCompleted))
+        }
+        if wasSkipped != isSkipped {
+            pendingMutations.append(.upsert(item: items[index], changedFields: ["skippedDates"]))
+        }
+
+        persistAndSchedule()
+    }
+
     func snooze(itemID: UUID, minutes: Int = 60) {
         guard let item = items.first(where: { $0.id == itemID }) else { return }
         Task { await notifications.snooze(item: item, minutes: minutes) }
@@ -511,22 +547,22 @@ final class ChecklistStore: ObservableObject {
         persistAndSchedule()
     }
 
-    func completionHistory(for item: ChecklistItem, days: Int = 21) -> [(date: Date, state: String)] {
+    func completionHistory(for item: ChecklistItem, days: Int = 21) -> [(date: Date, state: ChecklistHistoryState)] {
         (0..<days).compactMap { offset in
             guard let date = Calendar.current.date(byAdding: .day, value: -offset, to: Calendar.current.startOfDay(for: selectedDate)) else {
                 return nil
             }
-            let state: String
+            let state: ChecklistHistoryState
             if item.isComplete(on: date) {
-                state = "Done"
+                state = .done
             } else if item.isSkipped(on: date) {
-                state = "Skipped"
+                state = .skipped
             } else if item.occurs(on: date) && date < Calendar.current.startOfDay(for: .now) {
-                state = "Missed"
+                state = .missed
             } else if item.occurs(on: date) {
-                state = "Open"
+                state = .open
             } else {
-                state = "Off"
+                state = .off
             }
             return (date, state)
         }
