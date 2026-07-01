@@ -4,6 +4,8 @@ import SwiftUI
 import UIKit
 
 struct AccountView: View {
+    let onShowTutorial: () -> Void
+
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
     @EnvironmentObject private var authStore: AuthStore
@@ -24,6 +26,7 @@ struct AccountView: View {
                         accountActions
                     } else {
                         signedOutContent
+                        tutorialCard
                     }
 
                     if let error = authStore.errorMessage {
@@ -158,6 +161,10 @@ struct AccountView: View {
 
     private var accountActions: some View {
         VStack(spacing: 0) {
+            AccountActionRow(title: "Run tutorial again", subtitle: "Review the basics and starter routines", systemImage: "graduationcap") {
+                onShowTutorial()
+            }
+            Divider().padding(.leading, 48)
             AccountActionRow(title: "Privacy", subtitle: nil, systemImage: "hand.raised") {
                 if let url = URL(string: "https://ritualcue.com/privacy.html") {
                     openURL(url)
@@ -177,6 +184,15 @@ struct AccountView: View {
             Divider().padding(.leading, 48)
             AccountActionRow(title: "Delete account", subtitle: "Remove synced account data", systemImage: "trash", role: .destructive) {
                 showingDeleteConfirmation = true
+            }
+        }
+        .background(surface, in: RoundedRectangle(cornerRadius: 18))
+    }
+
+    private var tutorialCard: some View {
+        VStack(spacing: 0) {
+            AccountActionRow(title: "Run tutorial again", subtitle: "Review the basics and starter routines", systemImage: "graduationcap") {
+                onShowTutorial()
             }
         }
         .background(surface, in: RoundedRectangle(cornerRadius: 18))

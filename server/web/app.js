@@ -197,8 +197,8 @@
 
   function occurs(item, date) {
     if (state.mode === "archive") return Boolean(item.endedAt);
-    if (state.mode === "all") return isActiveOnDate(item, date);
-    return occursOnDate(item, date);
+    if (state.mode === "all") return isActiveOnDate(item, date) || hasRecordedStateOnDate(item, date);
+    return occursOnDate(item, date) || hasRecordedStateOnDate(item, date);
   }
 
   function isActiveOnDate(item, date) {
@@ -217,6 +217,11 @@
     if (item.schedule === "weekends") return weekday === 1 || weekday === 7;
     if (item.schedule === "custom") return (item.customWeekdays || []).includes(weekday);
     return true;
+  }
+
+  function hasRecordedStateOnDate(item, date) {
+    const key = dateKey(date);
+    return (item.completedDates || []).includes(key) || (item.skippedDates || []).includes(key);
   }
 
   function complete(item) { return (item.completedDates || []).includes(dateKey(state.selectedDate)); }

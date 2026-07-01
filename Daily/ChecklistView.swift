@@ -153,7 +153,7 @@ struct ChecklistView: View {
                 ItemHistoryView(item: item)
             }
             .sheet(isPresented: $showingAccount) {
-                AccountView()
+                AccountView(onShowTutorial: showTutorialFromAccount)
                     .environmentObject(store)
             }
             .sheet(isPresented: $showingTutorial) {
@@ -436,6 +436,13 @@ struct ChecklistView: View {
     private func finishTutorial() {
         hasSeenChecklistTutorial = true
         showingTutorial = false
+    }
+
+    private func showTutorialFromAccount() {
+        showingAccount = false
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+            showingTutorial = true
+        }
     }
 
     private func filtered(_ items: [ChecklistItem]) -> [ChecklistItem] {

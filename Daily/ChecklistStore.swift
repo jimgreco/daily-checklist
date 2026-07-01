@@ -119,9 +119,9 @@ final class ChecklistStore: ObservableObject {
         let scoped: [ChecklistItem]
         switch scope {
         case .today:
-            scoped = items.filter { $0.occurs(on: selectedDate) }
+            scoped = items.filter { $0.occurs(on: selectedDate) || $0.hasRecordedState(on: selectedDate) }
         case .all:
-            scoped = items.filter { $0.isActive(on: selectedDate) }
+            scoped = items.filter { $0.isActive(on: selectedDate) || $0.hasRecordedState(on: selectedDate) }
         case .archive:
             scoped = items.filter { $0.endedAt != nil }
         }
@@ -468,8 +468,15 @@ final class ChecklistStore: ObservableObject {
     func applyTemplate(_ template: RoutineTemplate) {
         let group = createGroup(named: template.groupName) ?? groups.first { $0.name == template.groupName }
         let groupID = group?.id
+        let existingTitles = Set(items
+            .filter { $0.groupID == groupID && $0.endedAt == nil }
+            .map { $0.title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() })
+        let missingTitles = template.items.filter {
+            !existingTitles.contains($0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())
+        }
+        guard !missingTitles.isEmpty else { return }
         let firstOrder = nextItemSortOrder(in: groupID)
-        let createdItems = template.items.enumerated().map { offset, title in
+        let createdItems = missingTitles.enumerated().map { offset, title in
             ChecklistItem(
                 title: title,
                 schedule: .everyDay,

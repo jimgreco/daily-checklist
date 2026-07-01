@@ -139,6 +139,10 @@ struct ChecklistItem: Identifiable, Codable, Hashable {
         skippedDates.contains(DateKey.string(from: date))
     }
 
+    func hasRecordedState(on date: Date) -> Bool {
+        isComplete(on: date) || isSkipped(on: date)
+    }
+
     func consecutiveMissedDays(asOf date: Date, calendar: Calendar = .current) -> Int {
         let today = calendar.startOfDay(for: .now)
         var cursor = min(calendar.startOfDay(for: date), today)
