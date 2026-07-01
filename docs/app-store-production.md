@@ -45,7 +45,7 @@ Apple still requires some one-time or review-specific fields in App Store Connec
 - fill demo account notes if Apple requests credentials;
 - choose the uploaded build and submit for review.
 
-Daily sets `ITSAppUsesNonExemptEncryption` to `false`, so the export-compliance answer should match standard platform encryption only.
+Ritual Cue sets `ITSAppUsesNonExemptEncryption` to `false`, so the export-compliance answer should match standard platform encryption only.
 
 ## Local Screenshot Review
 

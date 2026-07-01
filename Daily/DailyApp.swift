@@ -3,13 +3,13 @@ import GoogleSignIn
 import UserNotifications
 
 @main
-struct DailyApp: App {
+struct RitualCueApp: App {
     @Environment(\.scenePhase) private var scenePhase
     @StateObject private var store = ChecklistStore()
     @StateObject private var authStore = AuthStore()
 
     init() {
-        UNUserNotificationCenter.current().delegate = DailyNotificationDelegate.shared
+        UNUserNotificationCenter.current().delegate = RitualNotificationDelegate.shared
         if let clientID = Bundle.main.object(forInfoDictionaryKey: "GIDClientID") as? String,
            !clientID.hasPrefix("YOUR_") {
             GIDSignIn.sharedInstance.configuration = GIDConfiguration(clientID: clientID)
@@ -38,18 +38,18 @@ struct DailyApp: App {
                     guard phase == .active else { return }
                     Task { await store.sync(using: authStore) }
                 }
-                .onReceive(NotificationCenter.default.publisher(for: .dailyNotificationAction)) { notification in
+                .onReceive(NotificationCenter.default.publisher(for: .ritualNotificationAction)) { notification in
                     guard let rawID = notification.userInfo?["itemID"] as? String,
                           let itemID = UUID(uuidString: rawID),
                           let action = notification.userInfo?["action"] as? String else { return }
                     let date = (notification.userInfo?["date"] as? String)
                         .flatMap(DateKey.date(from:)) ?? Date()
                     switch action {
-                    case DailyNotificationAction.complete:
+                    case RitualNotificationAction.complete:
                         store.complete(itemID: itemID, on: date)
-                    case DailyNotificationAction.skip:
+                    case RitualNotificationAction.skip:
                         store.skip(itemID: itemID, on: date)
-                    case DailyNotificationAction.snooze:
+                    case RitualNotificationAction.snooze:
                         store.snooze(itemID: itemID)
                     default:
                         break

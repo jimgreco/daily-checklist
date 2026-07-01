@@ -161,7 +161,7 @@ private enum KeychainStore {
         let data = Data(value.utf8)
         SecItemAdd([
             kSecClass: kSecClassGenericPassword,
-            kSecAttrService: Bundle.main.bundleIdentifier ?? "Daily",
+            kSecAttrService: Bundle.main.bundleIdentifier ?? "Ritual Cue",
             kSecAttrAccount: key,
             kSecValueData: data,
             kSecAttrAccessible: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
@@ -171,7 +171,7 @@ private enum KeychainStore {
     static func read(_ key: String) -> String? {
         let query = [
             kSecClass: kSecClassGenericPassword,
-            kSecAttrService: Bundle.main.bundleIdentifier ?? "Daily",
+            kSecAttrService: Bundle.main.bundleIdentifier ?? "Ritual Cue",
             kSecAttrAccount: key,
             kSecReturnData: true,
             kSecMatchLimit: kSecMatchLimitOne
@@ -185,7 +185,7 @@ private enum KeychainStore {
     static func delete(_ key: String) {
         SecItemDelete([
             kSecClass: kSecClassGenericPassword,
-            kSecAttrService: Bundle.main.bundleIdentifier ?? "Daily",
+            kSecAttrService: Bundle.main.bundleIdentifier ?? "Ritual Cue",
             kSecAttrAccount: key
         ] as CFDictionary)
     }

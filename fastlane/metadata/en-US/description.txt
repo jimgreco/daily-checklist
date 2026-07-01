@@ -1,14 +1,14 @@
-Daily is a focused checklist for repeatable routines.
+Ritual Cue is a focused checklist for repeatable routines.
 
 Use it for morning tasks, household reminders, weekly planning, and simple habits that need to stay visible without turning into a full project manager.
 
 Features:
-- Daily, weekday, weekend, and custom schedules
+- Every day, weekday, weekend, and custom schedules
 - Groups for organizing routines
 - Per-task reminders
 - Evening unfinished-task check-in
 - Offline-first iPhone experience
-- Sync with the Daily web app when signed in
+- Sync with the Ritual Cue web app when signed in
 - Data export and account deletion from Account
 
-Daily is intentionally small and direct: open the app, see what is left, check things off, and move on.
+Ritual Cue is intentionally small and direct: open the app, see what is left, check things off, and move on.

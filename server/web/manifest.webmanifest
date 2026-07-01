@@ -1,6 +1,6 @@
 {
-  "name": "Daily Checklist",
-  "short_name": "Daily",
+  "name": "Ritual Cue",
+  "short_name": "Ritual Cue",
   "description": "A calm checklist for the things you do every day.",
   "start_url": "/app",
   "scope": "/",

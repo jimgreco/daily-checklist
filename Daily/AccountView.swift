@@ -87,7 +87,7 @@ struct AccountView: View {
         VStack(spacing: 12) {
             AccountProfileImage(url: user.profileImageURL)
             VStack(spacing: 4) {
-                Text(user.name.isEmpty ? "Daily account" : user.name)
+                Text(user.name.isEmpty ? "Ritual Cue account" : user.name)
                     .font(.system(size: 26, weight: .bold, design: .rounded))
                     .foregroundStyle(ink)
                 Text(user.email)
@@ -125,7 +125,7 @@ struct AccountView: View {
                     }
                 ), displayedComponents: .hourAndMinute)
             }
-            Text("Daily will tell you how many scheduled tasks are still unfinished.")
+            Text("Ritual Cue will tell you how many scheduled tasks are still unfinished.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
         }
@@ -206,7 +206,7 @@ struct AccountView: View {
             VStack(spacing: 8) {
                 Text("Keep your checklist in sync")
                     .font(.title2.bold())
-                Text("Daily works fully offline. Sign in when you want changes backed up and shared across devices.")
+                Text("Ritual Cue works fully offline. Sign in when you want changes backed up and shared across devices.")
                     .multilineTextAlignment(.center)
                     .foregroundStyle(.secondary)
             }

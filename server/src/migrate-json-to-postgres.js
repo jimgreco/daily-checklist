@@ -38,14 +38,14 @@ async function main() {
   const store = new PostgresStore(databaseURL);
   await store.update((target) => {
     if (hasData(target)) {
-      console.log("Postgres already contains Daily data; skipping JSON migration.");
+      console.log("Postgres already contains Ritual Cue data; skipping JSON migration.");
       return null;
     }
     target.users = source.users || {};
     target.identities = source.identities || {};
     target.sessions = source.sessions || {};
     target.accounts = source.accounts || {};
-    console.log(`Migrated Daily JSON data from ${sourceFile} into Postgres.`);
+    console.log(`Migrated Ritual Cue JSON data from ${sourceFile} into Postgres.`);
     return null;
   });
   await store.pool.end();

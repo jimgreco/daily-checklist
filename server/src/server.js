@@ -627,8 +627,8 @@ async function handleAuth(request, response, pathname) {
     if (enforceRateLimit(request, response, "auth-dev", { limit: 10, windowMs: 15 * 60_000 })) return true;
     if (process.env.NODE_ENV === "production") return send(response, 404, { error: "Not found" });
     const auth = await store.update((database) => {
-      const user = upsertUser(database, "dev", body.email || "dev@daily.local", {
-        email: body.email || "dev@daily.local",
+      const user = upsertUser(database, "dev", body.email || "dev@ritualcue.local", {
+        email: body.email || "dev@ritualcue.local",
         name: body.name || "Local Dev"
       });
       return createSession(database, user);
@@ -769,7 +769,7 @@ const server = http.createServer(async (request, response) => {
         user,
         checklist: materializeAccount(account)
       }, {
-        "content-disposition": "attachment; filename=\"daily-checklist-export.json\""
+        "content-disposition": "attachment; filename=\"ritual-cue-export.json\""
       });
     }
     if (request.method === "DELETE" && pathname === "/api/account") {
@@ -808,7 +808,7 @@ const server = http.createServer(async (request, response) => {
 
 if (require.main === module) {
   server.listen(port, "0.0.0.0", () => {
-    console.log(`Daily server listening on http://0.0.0.0:${port}`);
+    console.log(`Ritual Cue server listening on http://0.0.0.0:${port}`);
   });
 }
 

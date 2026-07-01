@@ -239,12 +239,12 @@ struct EveningReminderView: View {
                         DatePicker("Alert time", selection: $time, displayedComponents: .hourAndMinute)
                     }
                 } footer: {
-                    Text("Daily will tell you how many scheduled tasks are still unfinished.")
+                    Text("Ritual Cue will tell you how many scheduled tasks are still unfinished.")
                 }
 
                 Section("Sync") {
                     LabeledContent("Status", value: store.syncState)
-                    Text("Your checklist is cached on this iPhone and synced to the Daily server.")
+                    Text("Your checklist is cached on this iPhone and synced to the Ritual Cue server.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }

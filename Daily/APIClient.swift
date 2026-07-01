@@ -39,7 +39,7 @@ struct APIClient {
 
     #if DEBUG
     func devSignIn() async throws -> AuthResponse {
-        try await post(path: "auth/dev", body: ["email": "dev@daily.local", "name": "Local Dev"])
+        try await post(path: "auth/dev", body: ["email": "dev@ritualcue.local", "name": "Local Dev"])
     }
     #endif
 

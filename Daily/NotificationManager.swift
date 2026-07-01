@@ -2,31 +2,31 @@ import Foundation
 import UserNotifications
 
 extension Notification.Name {
-    static let dailyNotificationAction = Notification.Name("DailyNotificationAction")
+    static let ritualNotificationAction = Notification.Name("RitualNotificationAction")
 }
 
-struct DailyNotificationAction {
-    static let complete = "DAILY_COMPLETE"
-    static let skip = "DAILY_SKIP"
-    static let snooze = "DAILY_SNOOZE"
-    static let itemCategory = "DAILY_ITEM_REMINDER"
+struct RitualNotificationAction {
+    static let complete = "RITUAL_COMPLETE"
+    static let skip = "RITUAL_SKIP"
+    static let snooze = "RITUAL_SNOOZE"
+    static let itemCategory = "RITUAL_ITEM_REMINDER"
 }
 
-final class DailyNotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
-    static let shared = DailyNotificationDelegate()
+final class RitualNotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
+    static let shared = RitualNotificationDelegate()
 
     func userNotificationCenter(
         _ center: UNUserNotificationCenter,
         didReceive response: UNNotificationResponse
     ) async {
         guard [
-            DailyNotificationAction.complete,
-            DailyNotificationAction.skip,
-            DailyNotificationAction.snooze
+            RitualNotificationAction.complete,
+            RitualNotificationAction.skip,
+            RitualNotificationAction.snooze
         ].contains(response.actionIdentifier) else { return }
 
         NotificationCenter.default.post(
-            name: .dailyNotificationAction,
+            name: .ritualNotificationAction,
             object: nil,
             userInfo: [
                 "action": response.actionIdentifier,
@@ -50,23 +50,23 @@ struct NotificationManager {
 
     func configureCategories() {
         let complete = UNNotificationAction(
-            identifier: DailyNotificationAction.complete,
+            identifier: RitualNotificationAction.complete,
             title: "Complete",
             options: []
         )
         let skip = UNNotificationAction(
-            identifier: DailyNotificationAction.skip,
+            identifier: RitualNotificationAction.skip,
             title: "Skip today",
             options: []
         )
         let snooze = UNNotificationAction(
-            identifier: DailyNotificationAction.snooze,
+            identifier: RitualNotificationAction.snooze,
             title: "Snooze",
             options: []
         )
         center.setNotificationCategories([
             UNNotificationCategory(
-                identifier: DailyNotificationAction.itemCategory,
+                identifier: RitualNotificationAction.itemCategory,
                 actions: [complete, skip, snooze],
                 intentIdentifiers: [],
                 options: []
@@ -80,7 +80,7 @@ struct NotificationManager {
         #endif
         let pending = await center.pendingNotificationRequests()
         let managed = pending.map(\.identifier).filter {
-            $0.hasPrefix("daily.item.") || $0.hasPrefix("daily.evening.")
+            $0.hasPrefix("ritual.item.") || $0.hasPrefix("ritual.evening.")
         }
         center.removePendingNotificationRequests(withIdentifiers: managed)
 
@@ -102,9 +102,9 @@ struct NotificationManager {
         for reminder in itemReminders.sorted(by: { $0.date < $1.date }).prefix(50) {
             let content = UNMutableNotificationContent()
             content.title = reminder.item.title
-            content.body = reminder.item.notes.isEmpty ? "Time for your daily task." : reminder.item.notes
+            content.body = reminder.item.notes.isEmpty ? "Time for this task." : reminder.item.notes
             content.sound = .default
-            content.categoryIdentifier = DailyNotificationAction.itemCategory
+            content.categoryIdentifier = RitualNotificationAction.itemCategory
             content.userInfo = [
                 "itemID": reminder.item.id.uuidString,
                 "date": DateKey.string(from: reminder.date)
@@ -114,7 +114,7 @@ struct NotificationManager {
                 repeats: false
             )
             try? await center.add(UNNotificationRequest(
-                identifier: "daily.item.\(reminder.item.id).\(DateKey.string(from: reminder.date))",
+                identifier: "ritual.item.\(reminder.item.id).\(DateKey.string(from: reminder.date))",
                 content: content,
                 trigger: trigger
             ))
@@ -141,7 +141,7 @@ struct NotificationManager {
             content.sound = .default
             let trigger = UNCalendarNotificationTrigger(dateMatching: fireDate, repeats: false)
             try? await center.add(UNNotificationRequest(
-                identifier: "daily.evening.\(DateKey.string(from: date))",
+                identifier: "ritual.evening.\(DateKey.string(from: date))",
                 content: content,
                 trigger: trigger
             ))
@@ -153,14 +153,14 @@ struct NotificationManager {
         content.title = item.title
         content.body = item.notes.isEmpty ? "Snoozed reminder." : item.notes
         content.sound = .default
-        content.categoryIdentifier = DailyNotificationAction.itemCategory
+        content.categoryIdentifier = RitualNotificationAction.itemCategory
         content.userInfo = [
             "itemID": item.id.uuidString,
             "date": DateKey.string(from: .now)
         ]
         let trigger = UNTimeIntervalNotificationTrigger(timeInterval: TimeInterval(max(1, minutes) * 60), repeats: false)
         try? await center.add(UNNotificationRequest(
-            identifier: "daily.snooze.\(item.id).\(Date().timeIntervalSince1970)",
+            identifier: "ritual.snooze.\(item.id).\(Date().timeIntervalSince1970)",
             content: content,
             trigger: trigger
         ))

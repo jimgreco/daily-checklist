@@ -319,7 +319,7 @@
     const ungrouped = items.filter((item) => !item.groupID || !known.has(item.groupID));
     const remaining = items.filter((item) => !complete(item) && !skipped(item)).length;
     const dateLabel = state.selectedDate.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" });
-    const title = sameDay(state.selectedDate, new Date()) ? "Daily" : state.selectedDate.toLocaleDateString([], { month: "short", day: "numeric" });
+    const title = sameDay(state.selectedDate, new Date()) ? "Ritual Cue" : state.selectedDate.toLocaleDateString([], { month: "short", day: "numeric" });
     const subtitle = state.mode === "archive"
       ? `${items.length} ${items.length === 1 ? "archived item" : "archived items"}.`
       : `${remaining} ${remaining === 1 ? "thing" : "things"} left today.`;
@@ -429,7 +429,7 @@
   function renderModal() {
     if (!state.modal) return "";
     if (state.modal.type === "account") {
-      const displayName = state.user?.name || "Daily account";
+      const displayName = state.user?.name || "Ritual Cue account";
       const email = state.user?.email || "";
       const photo = state.user?.profileImageURL;
       return `<div class="scrim" data-action="close"><section class="modal" data-modal>
@@ -443,7 +443,7 @@
           <div class="account-panel">
             <button data-action="export-data"><span>Export data</span><small>Copy a JSON backup</small></button>
             <button data-action="privacy"><span>Privacy</span><small>Review data handling</small></button>
-            <button data-action="support"><span>Support</span><small>Get help with Daily</small></button>
+            <button data-action="support"><span>Support</span><small>Get help with Ritual Cue</small></button>
           </div>
           <div class="account-panel">
             <button class="danger" data-action="sign-out"><span>Sign out</span></button>
@@ -590,7 +590,7 @@
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = "daily-checklist-export.json";
+    link.download = "ritual-cue-export.json";
     document.body.appendChild(link);
     link.click();
     link.remove();
@@ -598,7 +598,7 @@
   }
 
   async function deleteAccount(confirmed = false) {
-    if (!confirmed && !confirm("Delete your Daily account and synced checklist data? This cannot be undone.")) return;
+    if (!confirmed && !confirm("Delete your Ritual Cue account and synced checklist data? This cannot be undone.")) return;
     const response = await fetch("/api/account", {
       method: "DELETE",
       headers: state.token ? { Authorization: `Bearer ${state.token}` } : {}
@@ -1005,7 +1005,7 @@
     if (action === "dev") {
       try {
         applyAuth(await request("/auth/dev", {
-          method: "POST", body: JSON.stringify({ email: "dev@daily.local", name: "Local Dev" })
+          method: "POST", body: JSON.stringify({ email: "dev@ritualcue.local", name: "Local Dev" })
         }, false));
         await sync();
       } catch (error) { showToast(error.message); }

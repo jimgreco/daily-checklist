@@ -40,7 +40,7 @@ test("serves the public landing page, web app, and auth configuration", async ()
   const app = await fetch(`${baseURL}/app`);
   assert.equal(app.status, 200);
   assert.match(app.headers.get("content-type"), /^text\/html/);
-  assert.match(await app.text(), /Daily Checklist/);
+  assert.match(await app.text(), /Ritual Cue/);
 
   const config = await fetch(`${baseURL}/auth/config`);
   assert.equal(config.status, 200);
@@ -54,7 +54,7 @@ test("serves public privacy and support pages", async () => {
   const privacy = await fetch(`${baseURL}/privacy.html`);
   assert.equal(privacy.status, 200);
   assert.match(privacy.headers.get("content-security-policy"), /frame-ancestors 'none'/);
-  assert.match(await privacy.text(), /Daily does not sell personal data/);
+  assert.match(await privacy.text(), /Ritual Cue does not sell personal data/);
 
   const support = await fetch(`${baseURL}/support.html`);
   assert.equal(support.status, 200);
@@ -66,7 +66,7 @@ test("dev sign-in sets an HttpOnly refresh cookie and logout clears it", async (
   const response = await fetch(`${baseURL}/auth/dev`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ email: "cookie-test@daily.local", name: "Cookie Test" })
+    body: JSON.stringify({ email: "cookie-test@ritualcue.local", name: "Cookie Test" })
   });
   assert.equal(response.status, 200);
   const cookie = response.headers.get("set-cookie");
@@ -90,7 +90,7 @@ test("authenticated users can export and delete account data", async () => {
   const login = await fetch(`${baseURL}/auth/dev`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ email: "privacy-test@daily.local", name: "Privacy Test" })
+    body: JSON.stringify({ email: "privacy-test@ritualcue.local", name: "Privacy Test" })
   });
   const auth = await login.json();
   const sync = await fetch(`${baseURL}/api/sync`, {
@@ -117,7 +117,7 @@ test("authenticated users can export and delete account data", async () => {
     headers: { authorization: `Bearer ${auth.token}` }
   });
   assert.equal(exported.status, 200);
-  assert.match(exported.headers.get("content-disposition"), /daily-checklist-export\.json/);
+  assert.match(exported.headers.get("content-disposition"), /ritual-cue-export\.json/);
   assert.equal((await exported.json()).checklist.items[0].title, "Export me");
 
   const deleted = await fetch(`${baseURL}/api/account`, {

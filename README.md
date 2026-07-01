@@ -1,6 +1,6 @@
-# Daily
+# Ritual Cue
 
-A native iPhone and mobile web checklist for repeatable daily tasks, with offline caching, server sync, per-item reminders, and an evening unfinished-task alert.
+A native iPhone and mobile web checklist for repeatable tasks, with offline caching, server sync, per-item reminders, and an evening unfinished-task alert.
 
 ## Run
 
@@ -36,13 +36,13 @@ The authentication contract mirrors CubbyLog:
 - Web Apple: create a Sign in with Apple Services ID for `ritualcue.com`, configure `https://ritualcue.com` as its return URL, and set `APPLE_WEB_CLIENT_ID`, `APPLE_TEAM_ID`, `APPLE_WEB_KEY_ID`, and `APPLE_WEB_PRIVATE_KEY_BASE64`.
 - Set a strong, persistent `SESSION_SECRET` on the server. See `server/.env.example`.
 
-Provider tokens are exchanged for Daily's own short-lived access token and rotating refresh token. Refresh tokens are stored in the iOS Keychain.
+Provider tokens are exchanged for Ritual Cue's own short-lived access token and rotating refresh token. Refresh tokens are stored in the iOS Keychain.
 
 On the web, the rotating refresh token is stored in an `HttpOnly` cookie so the user stays signed in without exposing the refresh token to JavaScript. The iOS app stores refresh tokens in Keychain and is designed to keep users signed in across app launches.
 
 ## Privacy and account management
 
-Daily stores checklist items, groups, completion history, reminder settings, sync metadata, and account identity fields returned by Google or Apple. The iOS app keeps an offline cache in app documents storage, and the web app keeps an offline cache in browser storage.
+Ritual Cue stores checklist items, groups, completion history, reminder settings, sync metadata, and account identity fields returned by Google or Apple. The iOS app keeps an offline cache in app documents storage, and the web app keeps an offline cache in browser storage.
 
 Signed-in users can export their synced checklist data and delete their server-side account from the Account screen. The public web support pages are served at:
 
@@ -83,4 +83,4 @@ Optional runtime secret:
 
 - `DAILY_DATABASE_URL` overrides the default shared Postgres URL `postgresql://admin:${DB_PASSWORD}@db:5432/daily_checklist`.
 
-Before the first upload, create the Daily app record in App Store Connect for bundle ID `com.jimgreco.dailychecklist`. The workflow can register the bundle ID and provisioning profile, but Apple does not expose app-record creation through the same provisioning API.
+Before the first upload, create the Ritual Cue app record in App Store Connect for bundle ID `com.jimgreco.dailychecklist`. The workflow can register the bundle ID and provisioning profile, but Apple does not expose app-record creation through the same provisioning API.

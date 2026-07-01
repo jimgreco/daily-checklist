@@ -1,7 +1,7 @@
 import XCTest
 
 @MainActor
-final class DailyScreenshots: XCTestCase {
+final class RitualCueScreenshots: XCTestCase {
     private var app: XCUIApplication!
 
     override func setUpWithError() throws {
@@ -18,7 +18,7 @@ final class DailyScreenshots: XCTestCase {
         app.launch()
 
         XCUIDevice.shared.orientation = .portrait
-        XCTAssertTrue(app.staticTexts["Daily"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.staticTexts["Ritual Cue"].waitForExistence(timeout: 15))
         XCTAssertTrue(app.staticTexts["Review calendar"].waitForExistence(timeout: 15))
     }
 

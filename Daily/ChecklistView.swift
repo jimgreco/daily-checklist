@@ -269,7 +269,7 @@ struct ChecklistView: View {
                         }
                         .font(.system(size: 13, weight: .semibold))
                     }
-                    Text("Daily")
+                    Text("Ritual Cue")
                         .font(.system(size: 42, weight: .bold, design: .rounded))
                         .foregroundStyle(ink)
                     Text(summary)
@@ -870,7 +870,7 @@ private struct ChecklistTutorialView: View {
 
     private let pages = [
         TutorialPage(
-            title: "Build Daily Around Real Routines",
+            title: "Build Ritual Cue Around Real Routines",
             body: "Group recurring tasks by moment or context, then keep today focused on what is actually due.",
             systemImage: "checklist"
         ),
@@ -881,7 +881,7 @@ private struct ChecklistTutorialView: View {
         ),
         TutorialPage(
             title: "Keep It Synced When You Want",
-            body: "Daily works offline first. Sign in to back up changes and carry the same checklist across devices.",
+            body: "Ritual Cue works offline first. Sign in to back up changes and carry the same checklist across devices.",
             systemImage: "icloud"
         ),
         TutorialPage(
@@ -950,7 +950,7 @@ private struct ChecklistTutorialView: View {
             }
             .padding(.vertical, 22)
             .background(canvas.ignoresSafeArea())
-            .navigationTitle("Welcome to Daily")
+            .navigationTitle("Welcome to Ritual Cue")
             .navigationBarTitleDisplayMode(.inline)
         }
         .presentationDetents([.large])

@@ -4,10 +4,10 @@ Use this source-controlled checklist when updating App Store Connect privacy ans
 
 ## Data Linked to the User
 
-Daily uses this data for app functionality only. It is not used for tracking or third-party advertising.
+Ritual Cue uses this data for app functionality only. It is not used for tracking or third-party advertising.
 
 - Contact Info: name, email address from Google or Apple sign-in.
-- User ID: Daily's account identifier and provider identity mapping.
+- User ID: Ritual Cue's account identifier and provider identity mapping.
 - User Content: checklist items, groups, notes, completion history, reminder settings, and sync metadata.
 
 ## Data Not Collected
