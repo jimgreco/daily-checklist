@@ -204,9 +204,9 @@ struct AccountView: View {
                 .font(.system(size: 58, weight: .medium))
                 .foregroundStyle(accent)
             VStack(spacing: 8) {
-                Text("Keep your checklist in sync")
+                Text("Keep routines backed up")
                     .font(.title2.bold())
-                Text("Ritual Cue works fully offline. Sign in when you want changes backed up and shared across devices.")
+                Text("Ritual Cue works offline first. Sign in when you want routine changes backed up and shared across devices.")
                     .multilineTextAlignment(.center)
                     .foregroundStyle(.secondary)
             }

@@ -263,6 +263,9 @@ struct ChecklistView: View {
                         .foregroundStyle(accent)
                         .textCase(.uppercase)
                         .tracking(1.2)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
+                        .allowsTightening(true)
                     if !store.isSelectedDateToday {
                         Button("Back to today") {
                             withAnimation(.snappy) { store.selectToday() }
@@ -874,23 +877,23 @@ private struct ChecklistTutorialView: View {
 
     private let pages = [
         TutorialPage(
-            title: "Build Ritual Cue Around Real Routines",
-            body: "Group recurring tasks by moment or context, then keep today focused on what is actually due.",
+            title: "Group Repeat Routines",
+            body: "Turn morning, evening, pet care, health, and household rhythms into focused groups so today only shows what is due.",
             systemImage: "checklist"
         ),
         TutorialPage(
             title: "Check, Skip, Or Review",
-            body: "Tap the circle to finish a task, use Skip when today is not the day, and review history when you want the full trail.",
+            body: "Finish a task, skip a one-off day, or open history to correct Done, Open, Missed, and Skipped states later.",
             systemImage: "clock.arrow.circlepath"
         ),
         TutorialPage(
-            title: "Keep It Synced When You Want",
-            body: "Ritual Cue works offline first. Sign in to back up changes and carry the same checklist across devices.",
+            title: "Stay Offline, Sync When Ready",
+            body: "Ritual Cue keeps edits on this device first, then backs up and shares your routines when you sign in.",
             systemImage: "icloud"
         ),
         TutorialPage(
             title: "Start With Sample Routines",
-            body: "Create the Morning, Evening, Pet Care, and Household groups from the starter templates, or begin with a clean slate.",
+            body: "Load starter groups for Morning, Evening, Pet Care, and Household, then tune them to your real schedule.",
             systemImage: "sparkles"
         )
     ]
