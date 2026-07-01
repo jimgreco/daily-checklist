@@ -125,7 +125,7 @@ jobs:
           APPLE_WEB_CLIENT_ID: ${{ secrets.APPLE_WEB_CLIENT_ID }}
           APPLE_WEB_KEY_ID: ${{ secrets.APPLE_WEB_KEY_ID }}
           APPLE_WEB_PRIVATE_KEY_BASE64: ${{ secrets.APPLE_WEB_PRIVATE_KEY_BASE64 }}
-          APPLE_WEB_REDIRECT_URI: ${{ secrets.APPLE_WEB_REDIRECT_URI || 'https://daily-checklist.jim-greco.com' }}
+          APPLE_WEB_REDIRECT_URI: ${{ secrets.APPLE_WEB_REDIRECT_URI || 'https://ritualcue.com' }}
         run: |
           set -euo pipefail
           ssh -i "$HOME/.ssh/daily" \

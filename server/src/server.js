@@ -344,7 +344,7 @@ function appleWebConfig() {
     teamID: envValue("APPLE_TEAM_ID"),
     keyIdentifier: envValue("APPLE_WEB_KEY_ID"),
     privateKey: appleWebPrivateKey(),
-    redirectUri: envValue("APPLE_WEB_REDIRECT_URI") || "https://daily-checklist.jim-greco.com"
+    redirectUri: envValue("APPLE_WEB_REDIRECT_URI") || "https://ritualcue.com"
   };
 }
 

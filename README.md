@@ -32,8 +32,8 @@ The authentication contract mirrors CubbyLog:
 
 - Google: create an iOS OAuth client for bundle ID `com.jimgreco.dailychecklist`. Set `GOOGLE_CLIENT_ID` and `GOOGLE_REVERSED_CLIENT_ID` in `project.yml`, and set the same client ID as `GOOGLE_CLIENT_ID` on the server.
 - Apple: enable Sign in with Apple for `com.jimgreco.dailychecklist` in the Apple Developer portal and set `APPLE_BUNDLE_ID=com.jimgreco.dailychecklist` on the server.
-- Web Google: create a Web OAuth client with `https://daily-checklist.jim-greco.com` as an Authorized JavaScript origin and set `GOOGLE_WEB_CLIENT_ID`. This is separate from the iOS client.
-- Web Apple: create a Sign in with Apple Services ID for `daily-checklist.jim-greco.com`, configure `https://daily-checklist.jim-greco.com` as its return URL, and set `APPLE_WEB_CLIENT_ID`, `APPLE_TEAM_ID`, `APPLE_WEB_KEY_ID`, and `APPLE_WEB_PRIVATE_KEY_BASE64`.
+- Web Google: create a Web OAuth client with `https://ritualcue.com` as an Authorized JavaScript origin and set `GOOGLE_WEB_CLIENT_ID`. This is separate from the iOS client.
+- Web Apple: create a Sign in with Apple Services ID for `ritualcue.com`, configure `https://ritualcue.com` as its return URL, and set `APPLE_WEB_CLIENT_ID`, `APPLE_TEAM_ID`, `APPLE_WEB_KEY_ID`, and `APPLE_WEB_PRIVATE_KEY_BASE64`.
 - Set a strong, persistent `SESSION_SECRET` on the server. See `server/.env.example`.
 
 Provider tokens are exchanged for Daily's own short-lived access token and rotating refresh token. Refresh tokens are stored in the iOS Keychain.
@@ -46,14 +46,14 @@ Daily stores checklist items, groups, completion history, reminder settings, syn
 
 Signed-in users can export their synced checklist data and delete their server-side account from the Account screen. The public web support pages are served at:
 
-- `https://daily-checklist.jim-greco.com/privacy.html`
-- `https://daily-checklist.jim-greco.com/support.html`
+- `https://ritualcue.com/privacy.html`
+- `https://ritualcue.com/support.html`
 
 Keep App Store Connect privacy answers aligned with `Daily/PrivacyInfo.xcprivacy` and `docs/app-store-privacy.md`.
 
 ## Monitoring
 
-`.github/workflows/monitor.yml` runs every five minutes and checks production `/health`, `/privacy.html`, and `/support.html`. The monitor uses `vars.DAILY_PRODUCTION_BASE_URL` when set, otherwise it checks `https://daily-checklist.jim-greco.com`.
+`.github/workflows/monitor.yml` runs every five minutes and checks production `/health`, `/privacy.html`, and `/support.html`. The monitor uses `vars.DAILY_PRODUCTION_BASE_URL` when set, otherwise it checks `https://ritualcue.com`.
 
 Add `DAILY_MONITOR_WEBHOOK_URL` as a repository secret to send failure notifications to a Slack-compatible or Discord-compatible incoming webhook. GitHub Actions failure notifications still work without the webhook.
 

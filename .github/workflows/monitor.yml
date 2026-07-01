@@ -17,7 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
-      BASE_URL: ${{ vars.DAILY_PRODUCTION_BASE_URL || 'https://daily-checklist.jim-greco.com' }}
+      BASE_URL: ${{ vars.DAILY_PRODUCTION_BASE_URL || 'https://ritualcue.com' }}
       ALERT_WEBHOOK_URL: ${{ secrets.DAILY_MONITOR_WEBHOOK_URL }}
     steps:
       - name: Check production health and public privacy pages

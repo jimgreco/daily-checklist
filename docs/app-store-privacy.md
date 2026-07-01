@@ -32,5 +32,5 @@ The iOS app stores offline checklist data in app documents storage, uses UserDef
 
 Signed-in users can export synced checklist data and delete their server-side account from Account. Public support and privacy pages are available at:
 
-- `https://daily-checklist.jim-greco.com/privacy.html`
-- `https://daily-checklist.jim-greco.com/support.html`
+- `https://ritualcue.com/privacy.html`
+- `https://ritualcue.com/support.html`

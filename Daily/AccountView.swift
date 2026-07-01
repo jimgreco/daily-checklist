@@ -159,13 +159,13 @@ struct AccountView: View {
     private var accountActions: some View {
         VStack(spacing: 0) {
             AccountActionRow(title: "Privacy", subtitle: nil, systemImage: "hand.raised") {
-                if let url = URL(string: "https://daily-checklist.jim-greco.com/privacy.html") {
+                if let url = URL(string: "https://ritualcue.com/privacy.html") {
                     openURL(url)
                 }
             }
             Divider().padding(.leading, 48)
             AccountActionRow(title: "Support", subtitle: nil, systemImage: "questionmark.circle") {
-                if let url = URL(string: "https://daily-checklist.jim-greco.com/support.html") {
+                if let url = URL(string: "https://ritualcue.com/support.html") {
                     openURL(url)
                 }
             }
