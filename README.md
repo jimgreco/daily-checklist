@@ -35,6 +35,7 @@ The authentication contract mirrors CubbyLog:
 - Web Google: create a Web OAuth client with `https://ritualcue.com` as an Authorized JavaScript origin and set `GOOGLE_WEB_CLIENT_ID`. This is separate from the iOS client.
 - Web Apple: create a Sign in with Apple Services ID for `ritualcue.com`, configure `https://ritualcue.com` as its return URL, and set `APPLE_WEB_CLIENT_ID`, `APPLE_TEAM_ID`, `APPLE_WEB_KEY_ID`, and `APPLE_WEB_PRIVATE_KEY_BASE64`.
 - Set a strong, persistent `SESSION_SECRET` on the server. See `server/.env.example`.
+- Set `ADMIN_EMAILS=jgreco@gmail.com` to allow the admin page at `/admin`.
 
 Provider tokens are exchanged for Ritual Cue's own short-lived access token and rotating refresh token. Refresh tokens are stored in the iOS Keychain.
 
@@ -99,7 +100,7 @@ Manual Publish runs can also upload source-controlled App Store listing metadata
 Repository secrets required:
 
 - EC2: `EC2_HOST`, `EC2_USER`, `EC2_SSH_KEY`, `EC2_SSH_KNOWN_HOSTS`, `DAILY_SESSION_SECRET`
-- OAuth/runtime: `GOOGLE_IOS_CLIENT_ID`, `GOOGLE_IOS_REVERSED_CLIENT_ID`, `GOOGLE_WEB_CLIENT_ID`, `APPLE_WEB_CLIENT_ID`, `APPLE_WEB_KEY_ID`, `APPLE_WEB_PRIVATE_KEY_BASE64`, `IOS_API_BASE_URL`
+- OAuth/runtime: `GOOGLE_IOS_CLIENT_ID`, `GOOGLE_IOS_REVERSED_CLIENT_ID`, `GOOGLE_WEB_CLIENT_ID`, `APPLE_WEB_CLIENT_ID`, `APPLE_WEB_KEY_ID`, `APPLE_WEB_PRIVATE_KEY_BASE64`, `IOS_API_BASE_URL`; the deploy sets `DAILY_ADMIN_EMAILS=jgreco@gmail.com`
 - Apple delivery: `APP_STORE_CONNECT_KEY_ID`, `APP_STORE_CONNECT_ISSUER_ID`, `APP_STORE_CONNECT_API_KEY`, `IOS_DIST_CERT_P12`, `IOS_DIST_CERT_PASSWORD`, `KEYCHAIN_PASSWORD`
 
 Optional runtime secret:

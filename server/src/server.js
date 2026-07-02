@@ -188,6 +188,26 @@ function createSession(database, user) {
   return { token: issueAccessToken(user, sessionID), refreshToken, user };
 }
 
+function adminEmails() {
+  return new Set((envValue("ADMIN_EMAILS") || envValue("DAILY_ADMIN_EMAILS"))
+    .split(",")
+    .map(normalizeEmail)
+    .filter(Boolean));
+}
+
+function isAdminUser(user) {
+  return Boolean(user && adminEmails().has(normalizeEmail(user.email)));
+}
+
+function disabledError() {
+  return Object.assign(new Error("Account disabled"), { status: 403, quiet: true });
+}
+
+function ensureUserCanSignIn(user) {
+  if (user?.disabledAt) throw disabledError();
+  return user;
+}
+
 function normalizeEmail(email) {
   return String(email || "").trim().toLowerCase();
 }
@@ -320,6 +340,167 @@ function authenticate(request) {
   } catch {
     return null;
   }
+}
+
+function authenticatedUser(database, request) {
+  const claims = authenticate(request);
+  if (!claims) return { claims: null, user: null };
+  const user = database.users[claims.userId] || null;
+  return { claims, user };
+}
+
+function requireActiveUser(database, request) {
+  const auth = authenticatedUser(database, request);
+  if (!auth.claims) return { ...auth, error: { status: 401, message: "Unauthorized" } };
+  if (!auth.user) return { ...auth, error: { status: 404, message: "User not found" } };
+  if (auth.user.disabledAt) return { ...auth, error: { status: 403, message: "Account disabled" } };
+  return auth;
+}
+
+function sendAuthError(response, error) {
+  return send(response, error.status, { error: error.message });
+}
+
+function identityProviders(database, userID) {
+  return Object.entries(database.identities || {})
+    .filter(([, value]) => value === userID)
+    .map(([key]) => key.split(":")[0])
+    .filter(Boolean)
+    .sort();
+}
+
+function maxISO(left, right) {
+  if (!left) return right || null;
+  if (!right) return left || null;
+  return left > right ? left : right;
+}
+
+function accountSummary(account = {}) {
+  let totalItems = 0;
+  let activeItems = 0;
+  let deletedItems = 0;
+  let totalGroups = 0;
+  let activeGroups = 0;
+  let deletedGroups = 0;
+  let completionRecords = 0;
+  let completedRecords = 0;
+  let lastActivityAt = null;
+
+  for (const item of Object.values(account.items || {})) {
+    totalItems += 1;
+    if (item.deleted) deletedItems += 1; else activeItems += 1;
+    lastActivityAt = maxISO(lastActivityAt, item.deleted?.stamp);
+    for (const field of Object.values(item.fields || {})) lastActivityAt = maxISO(lastActivityAt, field?.stamp);
+    for (const completion of Object.values(item.completions || {})) {
+      completionRecords += 1;
+      if (completion.value) completedRecords += 1;
+      lastActivityAt = maxISO(lastActivityAt, completion.stamp);
+    }
+  }
+
+  for (const group of Object.values(account.groups || {})) {
+    totalGroups += 1;
+    if (group.deleted) deletedGroups += 1; else activeGroups += 1;
+    lastActivityAt = maxISO(lastActivityAt, group.deleted?.stamp);
+    for (const field of Object.values(group.fields || {})) lastActivityAt = maxISO(lastActivityAt, field?.stamp);
+  }
+
+  for (const stamp of Object.values(account.appliedMutations || {})) lastActivityAt = maxISO(lastActivityAt, stamp);
+  lastActivityAt = maxISO(lastActivityAt, account.eveningReminder?.stamp);
+
+  return {
+    totalItems,
+    activeItems,
+    deletedItems,
+    totalGroups,
+    activeGroups,
+    deletedGroups,
+    completionRecords,
+    completedRecords,
+    mutationCount: Object.keys(account.appliedMutations || {}).length,
+    lastActivityAt
+  };
+}
+
+function adminOverview(database) {
+  const users = Object.values(database.users || {}).sort((left, right) => {
+    const leftCreated = left.createdAt || "";
+    const rightCreated = right.createdAt || "";
+    return rightCreated.localeCompare(leftCreated) || left.email.localeCompare(right.email);
+  });
+  const now = new Date().toISOString();
+  const sessionCounts = {};
+  const lastSessionExpiresAt = {};
+  let activeSessions = 0;
+  for (const session of Object.values(database.sessions || {})) {
+    if (!session?.userId) continue;
+    sessionCounts[session.userId] = (sessionCounts[session.userId] || 0) + 1;
+    lastSessionExpiresAt[session.userId] = maxISO(lastSessionExpiresAt[session.userId], session.expiresAt);
+    if (!session.expiresAt || session.expiresAt >= now) activeSessions += 1;
+  }
+
+  const userRows = users.map((user) => {
+    const account = accountSummary(database.accounts?.[user.id]);
+    return {
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      profileImageURL: user.profileImageURL || null,
+      createdAt: user.createdAt || null,
+      disabledAt: user.disabledAt || null,
+      disabledBy: user.disabledBy || null,
+      disabledReason: user.disabledReason || null,
+      isAdmin: isAdminUser(user),
+      providers: identityProviders(database, user.id),
+      sessionCount: sessionCounts[user.id] || 0,
+      lastSessionExpiresAt: lastSessionExpiresAt[user.id] || null,
+      ...account
+    };
+  });
+
+  const totals = userRows.reduce((memo, user) => {
+    memo.totalItems += user.totalItems;
+    memo.activeItems += user.activeItems;
+    memo.deletedItems += user.deletedItems;
+    memo.totalGroups += user.totalGroups;
+    memo.activeGroups += user.activeGroups;
+    memo.deletedGroups += user.deletedGroups;
+    memo.completionRecords += user.completionRecords;
+    memo.completedRecords += user.completedRecords;
+    memo.mutationCount += user.mutationCount;
+    return memo;
+  }, {
+    totalUsers: userRows.length,
+    activeUsers: userRows.filter((user) => !user.disabledAt).length,
+    disabledUsers: userRows.filter((user) => user.disabledAt).length,
+    activeSessions,
+    identityCount: Object.keys(database.identities || {}).length,
+    totalItems: 0,
+    activeItems: 0,
+    deletedItems: 0,
+    totalGroups: 0,
+    activeGroups: 0,
+    deletedGroups: 0,
+    completionRecords: 0,
+    completedRecords: 0,
+    mutationCount: 0
+  });
+
+  return { generatedAt: new Date().toISOString(), totals, users: userRows };
+}
+
+async function requireAdmin(request, response) {
+  const database = await store.read();
+  const auth = requireActiveUser(database, request);
+  if (auth.error) {
+    sendAuthError(response, auth.error);
+    return null;
+  }
+  if (!isAdminUser(auth.user)) {
+    send(response, 403, { error: "Forbidden" });
+    return null;
+  }
+  return { database, ...auth };
 }
 
 function envValue(name) {
@@ -631,7 +812,7 @@ async function handleAuth(request, response, pathname) {
         email: body.email || "dev@ritualcue.local",
         name: body.name || "Local Dev"
       });
-      return createSession(database, user);
+      return createSession(database, ensureUserCanSignIn(user));
     });
     return send(response, 200, auth, { "set-cookie": refreshCookie(auth.refreshToken) });
   }
@@ -650,7 +831,7 @@ async function handleAuth(request, response, pathname) {
         name: payload.name || payload.email,
         profileImageURL: payload.picture || body.profileImageURL || null
       });
-      return createSession(database, user);
+      return createSession(database, ensureUserCanSignIn(user));
     });
     return send(response, 200, auth, { "set-cookie": refreshCookie(auth.refreshToken) });
   }
@@ -675,7 +856,7 @@ async function handleAuth(request, response, pathname) {
     const providedName = [body.fullName?.givenName, body.fullName?.familyName].filter(Boolean).join(" ");
     const auth = await store.update((database) => {
       const user = upsertUser(database, "apple", payload.sub, { email, name: providedName || email });
-      return createSession(database, user);
+      return createSession(database, ensureUserCanSignIn(user));
     });
     return send(response, 200, auth, { "set-cookie": refreshCookie(auth.refreshToken) });
   }
@@ -690,7 +871,7 @@ async function handleAuth(request, response, pathname) {
       if (!session || session.expiresAt < new Date().toISOString()) return null;
       delete database.sessions[tokenHash];
       const user = database.users[session.userId];
-      return user ? createSession(database, user) : null;
+      return user && !user.disabledAt ? createSession(database, user) : null;
     });
     return auth
       ? send(response, 200, auth, { "set-cookie": refreshCookie(auth.refreshToken) })
@@ -710,11 +891,9 @@ async function handleAuth(request, response, pathname) {
   }
 
   if (pathname === "/auth/me" && request.method === "GET") {
-    const claims = authenticate(request);
-    if (!claims) return send(response, 401, { error: "Unauthorized" });
     const database = await store.read();
-    const user = database.users[claims.userId];
-    return user ? send(response, 200, user) : send(response, 404, { error: "User not found" });
+    const auth = requireActiveUser(database, request);
+    return auth.error ? sendAuthError(response, auth.error) : send(response, 200, auth.user);
   }
   return false;
 }
@@ -730,14 +909,43 @@ const server = http.createServer(async (request, response) => {
       const handled = await handleAuth(request, response, pathname);
       if (handled !== false) return;
     }
+    if (request.method === "GET" && pathname === "/api/admin/overview") {
+      const admin = await requireAdmin(request, response);
+      if (!admin) return;
+      return send(response, 200, adminOverview(admin.database));
+    }
+    const disableMatch = pathname.match(/^\/api\/admin\/users\/([^/]+)\/disable$/);
+    if (request.method === "POST" && disableMatch) {
+      if (enforceRateLimit(request, response, "api-admin-disable", { limit: 20, windowMs: 15 * 60_000 })) return;
+      const admin = await requireAdmin(request, response);
+      if (!admin) return;
+      const userID = decodeURIComponent(disableMatch[1]);
+      if (userID === admin.user.id) return send(response, 422, { error: "Admins cannot disable their own account" });
+      const body = await readJSON(request);
+      const result = await store.update((database) => {
+        const user = database.users[userID];
+        if (!user) return null;
+        user.disabledAt ||= new Date().toISOString();
+        user.disabledBy ||= admin.user.email;
+        user.disabledReason = String(body.reason || "").trim().slice(0, 240) || null;
+        for (const [tokenHash, session] of Object.entries(database.sessions || {})) {
+          if (session.userId === userID) delete database.sessions[tokenHash];
+        }
+        return user;
+      });
+      return result ? send(response, 200, { user: result }) : send(response, 404, { error: "User not found" });
+    }
     if (request.method === "POST" && pathname === "/api/sync") {
       if (enforceRateLimit(request, response, "api-sync", { limit: 240, windowMs: 15 * 60_000 })) return;
-      const claims = authenticate(request);
-      if (!claims) return send(response, 401, { error: "Unauthorized" });
+      const database = await store.read();
+      const authCheck = requireActiveUser(database, request);
+      if (authCheck.error) return sendAuthError(response, authCheck.error);
       const body = await readJSON(request);
       if (!validSyncRequest(body)) return send(response, 422, { error: "Invalid sync request" });
       const result = await store.update((database) => {
-        const account = database.accounts[claims.userId] ||= {
+        const auth = requireActiveUser(database, request);
+        if (auth.error) throw Object.assign(new Error(auth.error.message), { status: auth.error.status, quiet: true });
+        const account = database.accounts[auth.claims.userId] ||= {
           items: {},
           groups: {},
           appliedMutations: {},
@@ -753,12 +961,10 @@ const server = http.createServer(async (request, response) => {
     }
     if (request.method === "GET" && pathname === "/api/export") {
       if (enforceRateLimit(request, response, "api-export", { limit: 30, windowMs: 15 * 60_000 })) return;
-      const claims = authenticate(request);
-      if (!claims) return send(response, 401, { error: "Unauthorized" });
       const database = await store.read();
-      const user = database.users[claims.userId];
-      if (!user) return send(response, 404, { error: "User not found" });
-      const account = database.accounts[claims.userId] || {
+      const auth = requireActiveUser(database, request);
+      if (auth.error) return sendAuthError(response, auth.error);
+      const account = database.accounts[auth.claims.userId] || {
         items: {},
         groups: {},
         appliedMutations: {},
@@ -766,7 +972,7 @@ const server = http.createServer(async (request, response) => {
       };
       return send(response, 200, {
         exportedAt: new Date().toISOString(),
-        user,
+        user: auth.user,
         checklist: materializeAccount(account)
       }, {
         "content-disposition": "attachment; filename=\"ritual-cue-export.json\""
@@ -774,16 +980,16 @@ const server = http.createServer(async (request, response) => {
     }
     if (request.method === "DELETE" && pathname === "/api/account") {
       if (enforceRateLimit(request, response, "api-delete-account", { limit: 5, windowMs: 60 * 60_000 })) return;
-      const claims = authenticate(request);
-      if (!claims) return send(response, 401, { error: "Unauthorized" });
       await store.update((database) => {
-        delete database.accounts[claims.userId];
-        delete database.users[claims.userId];
+        const auth = requireActiveUser(database, request);
+        if (auth.error) throw Object.assign(new Error(auth.error.message), { status: auth.error.status, quiet: true });
+        delete database.accounts[auth.claims.userId];
+        delete database.users[auth.claims.userId];
         for (const [identity, userID] of Object.entries(database.identities || {})) {
-          if (userID === claims.userId) delete database.identities[identity];
+          if (userID === auth.claims.userId) delete database.identities[identity];
         }
         for (const [tokenHash, session] of Object.entries(database.sessions || {})) {
-          if (session.userId === claims.userId) delete database.sessions[tokenHash];
+          if (session.userId === auth.claims.userId) delete database.sessions[tokenHash];
         }
         return null;
       });
@@ -792,7 +998,8 @@ const server = http.createServer(async (request, response) => {
     if (request.method === "GET") {
       const relativePath = pathname === "/"
         ? "landing.html"
-        : (pathname === "/app" || pathname === "/app/" ? "index.html" : pathname.slice(1));
+        : (pathname === "/app" || pathname === "/app/" ? "index.html"
+          : (pathname === "/admin" || pathname === "/admin/" ? "admin.html" : pathname.slice(1)));
       if (await sendWebFile(response, relativePath)) return;
     }
     return send(response, 404, { error: "Not found" });
@@ -819,5 +1026,6 @@ module.exports = {
   validSyncRequest,
   stampWins,
   appleWebAuthConfigured,
-  upsertUser
+  upsertUser,
+  adminOverview
 };

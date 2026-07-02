@@ -1,5 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const crypto = require("node:crypto");
 const {
   applyMutation,
   appleWebAuthConfigured,
@@ -41,6 +42,11 @@ test("serves the public landing page, web app, and auth configuration", async ()
   assert.equal(app.status, 200);
   assert.match(app.headers.get("content-type"), /^text\/html/);
   assert.match(await app.text(), /Ritual Cue/);
+
+  const admin = await fetch(`${baseURL}/admin`);
+  assert.equal(admin.status, 200);
+  assert.match(admin.headers.get("content-type"), /^text\/html/);
+  assert.match(await admin.text(), /Ritual Cue Admin/);
 
   const config = await fetch(`${baseURL}/auth/config`);
   assert.equal(config.status, 200);
@@ -84,6 +90,99 @@ test("dev sign-in sets an HttpOnly refresh cookie and logout clears it", async (
   });
   assert.equal(logout.status, 204);
   assert.match(logout.headers.get("set-cookie"), /Max-Age=0/);
+});
+
+test("admin users can view stats and disable viewer accounts", async () => {
+  const suffix = crypto.randomUUID();
+  const adminEmail = `admin-${suffix}@ritualcue.local`;
+  const viewerEmail = `viewer-${suffix}@ritualcue.local`;
+  process.env.ADMIN_EMAILS = adminEmail;
+
+  const adminLogin = await fetch(`${baseURL}/auth/dev`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ email: adminEmail, name: "Admin User" })
+  });
+  assert.equal(adminLogin.status, 200);
+  const adminAuth = await adminLogin.json();
+
+  const viewerLogin = await fetch(`${baseURL}/auth/dev`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ email: viewerEmail, name: "Viewer User" })
+  });
+  assert.equal(viewerLogin.status, 200);
+  const viewerCookie = viewerLogin.headers.get("set-cookie");
+  const viewerAuth = await viewerLogin.json();
+
+  const forbidden = await fetch(`${baseURL}/api/admin/overview`, {
+    headers: { authorization: `Bearer ${viewerAuth.token}` }
+  });
+  assert.equal(forbidden.status, 403);
+
+  const sync = await fetch(`${baseURL}/api/sync`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${viewerAuth.token}`
+    },
+    body: JSON.stringify({
+      deviceID: "viewer-device",
+      mutations: [{
+        id: `viewer-create-${suffix}`,
+        itemID: `viewer-item-${suffix}`,
+        kind: "upsert",
+        stamp: "2026-07-02T12:00:00.000Z",
+        changedFields: ["title", "createdAt"],
+        item: { title: "Viewer item", createdAt: "2026-07-02T12:00:00.000Z" }
+      }]
+    })
+  });
+  assert.equal(sync.status, 200);
+
+  const overview = await fetch(`${baseURL}/api/admin/overview`, {
+    headers: { authorization: `Bearer ${adminAuth.token}` }
+  });
+  assert.equal(overview.status, 200);
+  const payload = await overview.json();
+  const viewer = payload.users.find((user) => user.email === viewerEmail);
+  assert.ok(viewer);
+  assert.equal(viewer.activeItems, 1);
+  assert.equal(viewer.sessionCount, 1);
+  assert.ok(payload.totals.totalUsers >= 2);
+
+  const disabled = await fetch(`${baseURL}/api/admin/users/${viewer.id}/disable`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${adminAuth.token}`
+    },
+    body: JSON.stringify({ reason: "test disable" })
+  });
+  assert.equal(disabled.status, 200);
+  assert.equal((await disabled.json()).user.disabledReason, "test disable");
+
+  const afterDisable = await fetch(`${baseURL}/auth/me`, {
+    headers: { authorization: `Bearer ${viewerAuth.token}` }
+  });
+  assert.equal(afterDisable.status, 403);
+
+  const refresh = await fetch(`${baseURL}/auth/refresh`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      cookie: viewerCookie
+    },
+    body: JSON.stringify({})
+  });
+  assert.equal(refresh.status, 401);
+
+  const repeatLogin = await fetch(`${baseURL}/auth/dev`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ email: viewerEmail, name: "Viewer User" })
+  });
+  assert.equal(repeatLogin.status, 403);
 });
 
 test("authenticated users can export and delete account data", async () => {
