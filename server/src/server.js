@@ -14,6 +14,7 @@ const webRoot = path.join(__dirname, "..", "web");
 const store = createStore();
 const isProduction = process.env.NODE_ENV === "production";
 const refreshCookieName = "daily_refresh";
+const defaultAdminEmails = ["jgreco@gmail.com"];
 
 function securityHeaders() {
   return {
@@ -189,7 +190,7 @@ function createSession(database, user) {
 }
 
 function adminEmails() {
-  return new Set([envValue("ADMIN_EMAILS"), envValue("DAILY_ADMIN_EMAILS")]
+  return new Set([...defaultAdminEmails, envValue("ADMIN_EMAILS"), envValue("DAILY_ADMIN_EMAILS")]
     .flatMap((value) => value.split(","))
     .map(normalizeEmail)
     .filter(Boolean));

@@ -127,6 +127,31 @@ test("daily admin emails are additive with generic admin emails", async () => {
   }
 });
 
+test("jgreco@gmail.com is a default admin", async () => {
+  const previousAdminEmails = process.env.ADMIN_EMAILS;
+  const previousDailyAdminEmails = process.env.DAILY_ADMIN_EMAILS;
+  delete process.env.ADMIN_EMAILS;
+  delete process.env.DAILY_ADMIN_EMAILS;
+
+  try {
+    const login = await fetch(`${baseURL}/auth/dev`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email: "jgreco@gmail.com", name: "Jim Greco" })
+    });
+    assert.equal(login.status, 200);
+    const auth = await login.json();
+
+    const overview = await fetch(`${baseURL}/api/admin/overview`, {
+      headers: { authorization: `Bearer ${auth.token}` }
+    });
+    assert.equal(overview.status, 200);
+  } finally {
+    restoreEnv("ADMIN_EMAILS", previousAdminEmails);
+    restoreEnv("DAILY_ADMIN_EMAILS", previousDailyAdminEmails);
+  }
+});
+
 test("admin users can view stats and disable viewer accounts", async () => {
   const suffix = crypto.randomUUID();
   const adminEmail = `admin-${suffix}@ritualcue.local`;
