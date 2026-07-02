@@ -1,0 +1,52 @@
+{
+  "color-space-for-untagged-svg-colors": "display-p3",
+  "fill": {
+    "automatic-gradient": "extended-srgb:0.21961,0.18824,0.87451,1.00000"
+  },
+  "groups": [
+    {
+      "layers": [
+        {
+          "name": "Specular highlights",
+          "image-name": "05-specular-highlights.png",
+          "glass": true
+        },
+        {
+          "name": "Completion checkmark",
+          "image-name": "04-checkmark.png",
+          "glass": true
+        },
+        {
+          "name": "Checklist lines",
+          "image-name": "03-list-lines.png",
+          "glass": true
+        },
+        {
+          "name": "Frosted checklist card",
+          "image-name": "02-frosted-card.png",
+          "glass": true
+        },
+        {
+          "name": "Background glow",
+          "image-name": "01-background.png",
+          "glass": false
+        }
+      ],
+      "lighting": "combined",
+      "shadow": {
+        "kind": "layer-color",
+        "opacity": 0.42
+      },
+      "translucency": {
+        "enabled": true,
+        "value": 0.36
+      }
+    }
+  ],
+  "supported-platforms": {
+    "circles": [
+      "watchOS"
+    ],
+    "squares": "shared"
+  }
+}
