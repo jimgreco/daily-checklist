@@ -126,7 +126,11 @@ func frameScreenshot(at fileURL: URL, design: ScreenshotDesign) throws {
     NSGraphicsContext.current?.imageInterpolation = .high
     drawBackground(size: canvasSize, design: design)
     drawCopy(size: canvasSize, design: design)
-    drawPhone(sourceImage: sourceImage, canvasSize: canvasSize)
+    drawDevice(
+        sourceImage: sourceImage,
+        canvasSize: canvasSize,
+        isIPad: fileURL.lastPathComponent.localizedCaseInsensitiveContains("iPad")
+    )
     NSGraphicsContext.restoreGraphicsState()
 
     guard let jpeg = outputBitmap.representation(using: .jpeg, properties: [.compressionFactor: 0.98]) else {
@@ -193,12 +197,12 @@ func drawCopy(size: NSSize, design: ScreenshotDesign) {
     )
 }
 
-func drawPhone(sourceImage: NSImage, canvasSize: NSSize) {
+func drawDevice(sourceImage: NSImage, canvasSize: NSSize, isIPad: Bool) {
     let aspect = sourceImage.size.height / sourceImage.size.width
-    let frameInset = max(28, canvasSize.width * 0.026)
+    let frameInset = isIPad ? max(26, canvasSize.width * 0.018) : max(28, canvasSize.width * 0.026)
     let phoneTop = canvasSize.height * 0.205
     let bottomMargin = canvasSize.height * 0.035
-    let maxOuterWidth = canvasSize.width * 0.78
+    let maxOuterWidth = canvasSize.width * (isIPad ? 0.88 : 0.78)
     let maxOuterHeight = canvasSize.height - phoneTop - bottomMargin
     let screenWidth = min(maxOuterWidth - frameInset * 2, (maxOuterHeight - frameInset * 2) / aspect)
     let screenHeight = screenWidth * aspect
@@ -213,29 +217,31 @@ func drawPhone(sourceImage: NSImage, canvasSize: NSSize) {
     )
     let screenRect = outerRect.insetBy(dx: frameInset, dy: frameInset)
 
-    let sideButtonWidth = max(8, outerWidth * 0.010)
-    let sideButtonRadius = sideButtonWidth / 2
-    NSColor.black.withAlphaComponent(0.45).setFill()
-    NSBezierPath(
-        roundedRect: NSRect(
-            x: outerRect.minX - sideButtonWidth,
-            y: outerRect.maxY - outerHeight * 0.30,
-            width: sideButtonWidth,
-            height: outerHeight * 0.11
-        ),
-        xRadius: sideButtonRadius,
-        yRadius: sideButtonRadius
-    ).fill()
-    NSBezierPath(
-        roundedRect: NSRect(
-            x: outerRect.maxX,
-            y: outerRect.maxY - outerHeight * 0.36,
-            width: sideButtonWidth,
-            height: outerHeight * 0.15
-        ),
-        xRadius: sideButtonRadius,
-        yRadius: sideButtonRadius
-    ).fill()
+    if !isIPad {
+        let sideButtonWidth = max(8, outerWidth * 0.010)
+        let sideButtonRadius = sideButtonWidth / 2
+        NSColor.black.withAlphaComponent(0.45).setFill()
+        NSBezierPath(
+            roundedRect: NSRect(
+                x: outerRect.minX - sideButtonWidth,
+                y: outerRect.maxY - outerHeight * 0.30,
+                width: sideButtonWidth,
+                height: outerHeight * 0.11
+            ),
+            xRadius: sideButtonRadius,
+            yRadius: sideButtonRadius
+        ).fill()
+        NSBezierPath(
+            roundedRect: NSRect(
+                x: outerRect.maxX,
+                y: outerRect.maxY - outerHeight * 0.36,
+                width: sideButtonWidth,
+                height: outerHeight * 0.15
+            ),
+            xRadius: sideButtonRadius,
+            yRadius: sideButtonRadius
+        ).fill()
+    }
 
     let shadow = NSShadow()
     shadow.shadowBlurRadius = canvasSize.width * 0.045
@@ -246,16 +252,16 @@ func drawPhone(sourceImage: NSImage, canvasSize: NSSize) {
     NSColor(hex: "#090B10").setFill()
     NSBezierPath(
         roundedRect: outerRect,
-        xRadius: outerWidth * 0.115,
-        yRadius: outerWidth * 0.115
+        xRadius: outerWidth * (isIPad ? 0.060 : 0.115),
+        yRadius: outerWidth * (isIPad ? 0.060 : 0.115)
     ).fill()
     NSShadow().set()
 
     NSColor(hex: "#111318").setStroke()
     let rimPath = NSBezierPath(
         roundedRect: outerRect.insetBy(dx: 3, dy: 3),
-        xRadius: outerWidth * 0.108,
-        yRadius: outerWidth * 0.108
+        xRadius: outerWidth * (isIPad ? 0.056 : 0.108),
+        yRadius: outerWidth * (isIPad ? 0.056 : 0.108)
     )
     rimPath.lineWidth = max(2, canvasSize.width * 0.003)
     rimPath.stroke()
@@ -263,8 +269,8 @@ func drawPhone(sourceImage: NSImage, canvasSize: NSSize) {
     NSGraphicsContext.saveGraphicsState()
     NSBezierPath(
         roundedRect: screenRect,
-        xRadius: screenWidth * 0.075,
-        yRadius: screenWidth * 0.075
+        xRadius: screenWidth * (isIPad ? 0.045 : 0.075),
+        yRadius: screenWidth * (isIPad ? 0.045 : 0.075)
     ).addClip()
     sourceImage.draw(
         in: screenRect,
@@ -274,20 +280,22 @@ func drawPhone(sourceImage: NSImage, canvasSize: NSSize) {
     )
     NSGraphicsContext.restoreGraphicsState()
 
-    let islandWidth = screenWidth * 0.30
-    let islandHeight = screenWidth * 0.078
-    let islandRect = NSRect(
-        x: screenRect.midX - islandWidth / 2,
-        y: screenRect.maxY - islandHeight - screenWidth * 0.034,
-        width: islandWidth,
-        height: islandHeight
-    )
-    NSColor.black.setFill()
-    NSBezierPath(
-        roundedRect: islandRect,
-        xRadius: islandHeight / 2,
-        yRadius: islandHeight / 2
-    ).fill()
+    if !isIPad {
+        let islandWidth = screenWidth * 0.30
+        let islandHeight = screenWidth * 0.078
+        let islandRect = NSRect(
+            x: screenRect.midX - islandWidth / 2,
+            y: screenRect.maxY - islandHeight - screenWidth * 0.034,
+            width: islandWidth,
+            height: islandHeight
+        )
+        NSColor.black.setFill()
+        NSBezierPath(
+            roundedRect: islandRect,
+            xRadius: islandHeight / 2,
+            yRadius: islandHeight / 2
+        ).fill()
+    }
 }
 
 func rectFromTop(x: CGFloat, y: CGFloat, width: CGFloat, height: CGFloat, canvasHeight: CGFloat) -> NSRect {

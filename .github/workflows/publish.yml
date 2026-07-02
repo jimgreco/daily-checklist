@@ -29,7 +29,7 @@ on:
         description: Comma-separated simulator names for screenshot capture
         required: true
         type: string
-        default: "iPhone 17 Pro Max"
+        default: "iPhone 17 Pro Max,iPad Pro 13-inch (M5)"
 
 concurrency:
   group: publish-${{ github.ref }}
