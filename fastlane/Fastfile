@@ -26,6 +26,7 @@ PROJECT_PATH = "Daily.xcodeproj"
 SCREENSHOT_SCHEME = "DailyScreenshots"
 SCREENSHOT_OUTPUT = "fastlane/screenshots"
 METADATA_PATH = "fastlane/metadata"
+SCREENSHOT_FRAME_SCRIPT = "fastlane/scripts/frame_screenshots.swift"
 
 def screenshot_devices
   raw_devices = ENV["SCREENSHOT_DEVICES"] || "iPhone 17 Pro Max"
@@ -49,6 +50,7 @@ platform :ios do
       override_status_bar: true,
       skip_open_summary: true
     )
+    sh("xcrun", "swift", SCREENSHOT_FRAME_SCRIPT, SCREENSHOT_OUTPUT)
   end
 
   desc "Upload source-controlled App Store listing metadata to the editable version"

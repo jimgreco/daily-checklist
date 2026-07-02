@@ -134,7 +134,7 @@ struct ChecklistView: View {
             .toolbar(.hidden, for: .navigationBar)
             .sheet(isPresented: $showingNewItem) {
                 ItemEditor(
-                    item: ChecklistItem(title: ""),
+                    item: newItemTemplate,
                     groups: store.orderedGroups,
                     onSave: { store.save($0) },
                     onCreateGroup: { store.createGroup(named: $0) }
@@ -450,6 +450,19 @@ struct ChecklistView: View {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
             showingTutorial = true
         }
+    }
+
+    private var newItemTemplate: ChecklistItem {
+        var item = ChecklistItem(title: "")
+        #if DEBUG
+        if ScreenshotSeedData.isEnabled {
+            item.title = "Prep tomorrow"
+            item.notes = "A quick evening reminder."
+            item.reminderMinutes = 20 * 60
+            item.groupID = store.orderedGroups.first { $0.name == "Planning" }?.id
+        }
+        #endif
+        return item
     }
 
     private func filtered(_ items: [ChecklistItem]) -> [ChecklistItem] {

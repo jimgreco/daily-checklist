@@ -25,17 +25,23 @@ final class RitualCueScreenshots: XCTestCase {
     func testAppStoreScreenshots() throws {
         snapshot("01-Today")
 
-        app.buttons["All items"].tap()
+        let allFilter = app.buttons["All"].firstMatch
+        XCTAssertTrue(allFilter.waitForExistence(timeout: 5))
+        allFilter.tap()
         XCTAssertTrue(app.staticTexts["Plan weekly reset"].waitForExistence(timeout: 5))
-        snapshot("02-All-Items")
-
-        app.buttons["Edit checklist"].tap()
-        XCTAssertTrue(app.buttons["Edit Review calendar"].waitForExistence(timeout: 5))
-        snapshot("03-Edit-Mode")
+        snapshot("02-Groups")
 
         app.buttons["Add item"].tap()
         XCTAssertTrue(app.navigationBars["New item"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.textFields["Title"].waitForExistence(timeout: 5))
-        snapshot("04-New-Item")
+        XCTAssertTrue(app.switches["Remind me"].waitForExistence(timeout: 5))
+        snapshot("03-Reminders")
+
+        app.buttons["Cancel"].tap()
+        XCTAssertTrue(app.staticTexts["Ritual Cue"].waitForExistence(timeout: 5))
+        app.buttons["Account and notification settings"].tap()
+        XCTAssertTrue(app.navigationBars["Account"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Keep routines backed up"].waitForExistence(timeout: 5))
+        snapshot("04-Sync")
     }
 }
