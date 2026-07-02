@@ -26,7 +26,7 @@ PROJECT_PATH = "Daily.xcodeproj"
 SCREENSHOT_SCHEME = "DailyScreenshots"
 SCREENSHOT_OUTPUT = "fastlane/screenshots"
 METADATA_PATH = "fastlane/metadata"
-SCREENSHOT_FRAME_SCRIPT = "fastlane/scripts/frame_screenshots.swift"
+SCREENSHOT_FRAME_SCRIPT = File.expand_path("scripts/frame_screenshots.swift", __dir__)
 
 def screenshot_devices
   raw_devices = ENV["SCREENSHOT_DEVICES"] || "iPhone 17 Pro Max"
