@@ -170,16 +170,16 @@ func drawCopy(size: NSSize, design: ScreenshotDesign) {
 
     let headlineRect = rectFromTop(
         x: size.width * 0.09,
-        y: size.height * 0.048,
+        y: size.height * 0.045,
         width: size.width * 0.82,
-        height: size.height * 0.165,
+        height: size.height * 0.120,
         canvasHeight: size.height
     )
     let subcopyRect = rectFromTop(
         x: size.width * 0.13,
-        y: size.height * 0.225,
+        y: size.height * 0.155,
         width: size.width * 0.74,
-        height: size.height * 0.064,
+        height: size.height * 0.055,
         canvasHeight: size.height
     )
 
@@ -196,7 +196,7 @@ func drawCopy(size: NSSize, design: ScreenshotDesign) {
 func drawPhone(sourceImage: NSImage, canvasSize: NSSize) {
     let aspect = sourceImage.size.height / sourceImage.size.width
     let frameInset = max(28, canvasSize.width * 0.026)
-    let phoneTop = canvasSize.height * 0.315
+    let phoneTop = canvasSize.height * 0.205
     let bottomMargin = canvasSize.height * 0.035
     let maxOuterWidth = canvasSize.width * 0.78
     let maxOuterHeight = canvasSize.height - phoneTop - bottomMargin
