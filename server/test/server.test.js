@@ -14,6 +14,11 @@ const { hasData } = require("../src/migrate-json-to-postgres");
 let listener;
 let baseURL;
 
+function restoreEnv(name, value) {
+  if (value === undefined) delete process.env[name];
+  else process.env[name] = value;
+}
+
 test.before(async () => {
   const { server } = require("../src/server");
   await new Promise((resolve) => {
@@ -90,6 +95,33 @@ test("dev sign-in sets an HttpOnly refresh cookie and logout clears it", async (
   });
   assert.equal(logout.status, 204);
   assert.match(logout.headers.get("set-cookie"), /Max-Age=0/);
+});
+
+test("daily admin emails are additive with generic admin emails", async () => {
+  const previousAdminEmails = process.env.ADMIN_EMAILS;
+  const previousDailyAdminEmails = process.env.DAILY_ADMIN_EMAILS;
+  process.env.ADMIN_EMAILS = "other-admin@ritualcue.local";
+  process.env.DAILY_ADMIN_EMAILS = " jgreco@gmail.com ";
+
+  try {
+    const login = await fetch(`${baseURL}/auth/dev`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email: "jgreco@gmail.com", name: "Jim Greco" })
+    });
+    assert.equal(login.status, 200);
+    const auth = await login.json();
+
+    const overview = await fetch(`${baseURL}/api/admin/overview`, {
+      headers: { authorization: `Bearer ${auth.token}` }
+    });
+    assert.equal(overview.status, 200);
+    const payload = await overview.json();
+    assert.ok(payload.users.some((user) => user.email === "jgreco@gmail.com" && user.isAdmin));
+  } finally {
+    restoreEnv("ADMIN_EMAILS", previousAdminEmails);
+    restoreEnv("DAILY_ADMIN_EMAILS", previousDailyAdminEmails);
+  }
 });
 
 test("admin users can view stats and disable viewer accounts", async () => {

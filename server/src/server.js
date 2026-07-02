@@ -189,8 +189,8 @@ function createSession(database, user) {
 }
 
 function adminEmails() {
-  return new Set((envValue("ADMIN_EMAILS") || envValue("DAILY_ADMIN_EMAILS"))
-    .split(",")
+  return new Set([envValue("ADMIN_EMAILS"), envValue("DAILY_ADMIN_EMAILS")]
+    .flatMap((value) => value.split(","))
     .map(normalizeEmail)
     .filter(Boolean));
 }
