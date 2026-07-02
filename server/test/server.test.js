@@ -51,7 +51,10 @@ test("serves the public landing page, web app, and auth configuration", async ()
   const admin = await fetch(`${baseURL}/admin`);
   assert.equal(admin.status, 200);
   assert.match(admin.headers.get("content-type"), /^text\/html/);
-  assert.match(await admin.text(), /Ritual Cue Admin/);
+  const adminHTML = await admin.text();
+  assert.match(adminHTML, /Ritual Cue Admin/);
+  assert.match(adminHTML, /https:\/\/accounts\.google\.com\/gsi\/client/);
+  assert.match(adminHTML, /admin\.js\?v=20260702-admin-auth/);
 
   const config = await fetch(`${baseURL}/auth/config`);
   assert.equal(config.status, 200);

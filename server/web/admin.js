@@ -4,10 +4,14 @@
   const app = document.getElementById("admin");
   const state = {
     token: "",
+    user: null,
     overview: null,
     search: "",
     loading: true,
-    error: ""
+    error: "",
+    authLoaded: false,
+    googleClientId: "",
+    appleClientId: ""
   };
 
   function escapeHTML(value) {
@@ -57,6 +61,65 @@
       body: JSON.stringify({})
     });
     state.token = auth.token || "";
+    state.user = auth.user || null;
+  }
+
+  function applyAuth(auth) {
+    state.token = auth.token || "";
+    state.user = auth.user || null;
+  }
+
+  async function loadAuthConfig() {
+    try {
+      const config = await request("/auth/config");
+      state.googleClientId = config.google_client_id || config.googleClientId || "";
+      state.appleClientId = config.apple_client_id || config.appleClientId || "";
+    } catch {}
+    state.authLoaded = true;
+    render();
+  }
+
+  function renderGoogleButton() {
+    const host = document.querySelector("[data-google-host]");
+    if (!host || !state.googleClientId || !window.google?.accounts?.id) return;
+    window.google.accounts.id.initialize({ client_id: state.googleClientId, callback: googleCredential });
+    const width = Math.max(260, Math.round(host.getBoundingClientRect().width || 400));
+    window.google.accounts.id.renderButton(host, {
+      theme: "outline", size: "large", shape: "rectangular", text: "continue_with",
+      logo_alignment: "center", width
+    });
+  }
+
+  async function googleCredential(response) {
+    try {
+      applyAuth(await request("/auth/google", {
+        method: "POST",
+        body: JSON.stringify({ idToken: response.credential })
+      }));
+      await loadOverview();
+    } catch (error) {
+      state.error = error.message;
+      render();
+    }
+  }
+
+  async function signInApple() {
+    if (!window.AppleID?.auth || !state.appleClientId) throw new Error("Apple sign-in is not configured");
+    window.AppleID.auth.init({
+      clientId: state.appleClientId, scope: "name email", redirectURI: location.origin, usePopup: true
+    });
+    const response = await window.AppleID.auth.signIn();
+    const authorization = response?.authorization || {};
+    const name = response?.user?.name || {};
+    applyAuth(await request("/auth/apple", {
+      method: "POST",
+      body: JSON.stringify({
+        identityToken: authorization.id_token || null,
+        authorizationCode: authorization.code || null,
+        fullName: { givenName: name.firstName || null, familyName: name.lastName || null }
+      })
+    }));
+    await loadOverview();
   }
 
   async function loadOverview() {
@@ -84,8 +147,13 @@
       <p class="eyebrow">Admin</p>
       <h1>Ritual Cue</h1>
       <p>${forbidden ? "This signed-in account is not allowed to view admin data." : "Sign in to an admin account before opening the dashboard."}</p>
+      <div class="auth-options">
+        ${state.googleClientId ? `<div class="google-provider" data-google-host></div>` : ""}
+        ${state.appleClientId ? `<button class="provider apple" data-action="apple">&nbsp; Continue with Apple</button>` : ""}
+      </div>
+      <div class="auth-note">${state.authLoaded && !state.googleClientId && !state.appleClientId ? "Web sign-in providers are not configured yet." : ""}</div>
       <div class="admin-actions">
-        <a class="primary admin-link" href="/app">Open app</a>
+        <a class="secondary admin-link" href="/app">Open app</a>
         <button class="secondary" data-action="refresh">Retry</button>
       </div>
     </section>`;
@@ -171,6 +239,7 @@
     }
     if (state.error) {
       app.innerHTML = renderAuthGate();
+      renderGoogleButton();
       return;
     }
     renderDashboard();
@@ -190,6 +259,12 @@
     const target = event.target.closest("[data-action]");
     if (!target) return;
     if (target.dataset.action === "refresh") void loadOverview();
+    if (target.dataset.action === "apple") {
+      void signInApple().catch((error) => {
+        state.error = error.message;
+        render();
+      });
+    }
     if (target.dataset.action === "disable") {
       void disableUser(target.dataset.id).catch((error) => {
         state.error = error.message;
@@ -204,5 +279,7 @@
     render();
   });
 
+  window.addEventListener("load", renderGoogleButton);
+  void loadAuthConfig();
   void loadOverview();
 })();
