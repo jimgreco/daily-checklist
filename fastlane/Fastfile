@@ -1,5 +1,7 @@
 ENV["FASTLANE_SKIP_UPDATE_CHECK"] = "1"
 
+require "base64"
+
 default_platform(:ios)
 opt_out_usage
 
@@ -90,10 +92,26 @@ platform :ios do
   end
 
   private_lane :app_store_api_key do
+    api_key_content = ENV.fetch("APP_STORE_CONNECT_API_KEY").to_s.strip
+    UI.user_error!("Missing required secret: APP_STORE_CONNECT_API_KEY") if api_key_content.empty?
+
+    if api_key_content.include?("\\n") && !api_key_content.include?("\n")
+      api_key_content = api_key_content.gsub("\\n", "\n")
+    end
+
+    unless api_key_content.include?("BEGIN PRIVATE KEY")
+      begin
+        decoded = Base64.decode64(api_key_content)
+        api_key_content = decoded if decoded.include?("BEGIN PRIVATE KEY")
+      rescue ArgumentError
+        # Keep the original value so fastlane can report the key parsing error.
+      end
+    end
+
     app_store_connect_api_key(
       key_id: ENV.fetch("APP_STORE_CONNECT_KEY_ID"),
       issuer_id: ENV.fetch("APP_STORE_CONNECT_ISSUER_ID"),
-      key_content: ENV.fetch("APP_STORE_CONNECT_API_KEY"),
+      key_content: api_key_content,
       is_key_content_base64: false,
       duration: 1200,
       in_house: false
