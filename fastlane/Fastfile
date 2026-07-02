@@ -1,9 +1,26 @@
 ENV["FASTLANE_SKIP_UPDATE_CHECK"] = "1"
 
 require "base64"
+require "deliver/upload_metadata"
 
 default_platform(:ios)
 opt_out_usage
+
+module Deliver
+  class UploadMetadata
+    unless method_defined?(:ritual_cue_review_attachment_file)
+      alias_method :ritual_cue_review_attachment_file, :review_attachment_file
+
+      def review_attachment_file(version)
+        ritual_cue_review_attachment_file(version)
+      rescue RuntimeError => error
+        raise unless error.message == "No data" && options[:app_review_attachment_file].nil?
+
+        UI.message("No App Store review detail exists yet; skipping review attachment cleanup")
+      end
+    end
+  end
+end
 
 APP_IDENTIFIER = "com.jimgreco.dailychecklist"
 APP_TARGET = "Daily"
