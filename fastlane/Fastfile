@@ -1,5 +1,7 @@
 ENV["FASTLANE_SKIP_UPDATE_CHECK"] = "1"
 ENV["FASTLANE_ENABLE_BETA_DELIVER_SYNC_SCREENSHOTS"] = "true"
+ENV["DELIVER_NUMBER_OF_THREADS"] ||= "1"
+ENV["FL_MAX_NUMBER_OF_THREADS"] ||= "1"
 
 require "base64"
 require "deliver/upload_metadata"
