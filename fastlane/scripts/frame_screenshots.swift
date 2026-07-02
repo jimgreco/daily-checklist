@@ -129,11 +129,13 @@ func frameScreenshot(at fileURL: URL, design: ScreenshotDesign) throws {
     drawPhone(sourceImage: sourceImage, canvasSize: canvasSize)
     NSGraphicsContext.restoreGraphicsState()
 
-    guard let png = outputBitmap.representation(using: .png, properties: [:]) else {
-        throw NSError(domain: "FrameScreenshots", code: 3, userInfo: [NSLocalizedDescriptionKey: "Framed PNG could not be encoded"])
+    guard let jpeg = outputBitmap.representation(using: .jpeg, properties: [.compressionFactor: 0.98]) else {
+        throw NSError(domain: "FrameScreenshots", code: 3, userInfo: [NSLocalizedDescriptionKey: "Framed JPEG could not be encoded"])
     }
 
-    try png.write(to: fileURL, options: .atomic)
+    let jpegURL = fileURL.deletingPathExtension().appendingPathExtension("jpg")
+    try jpeg.write(to: jpegURL, options: .atomic)
+    try fileManager.removeItem(at: fileURL)
 }
 
 func drawBackground(size: NSSize, design: ScreenshotDesign) {
