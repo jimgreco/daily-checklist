@@ -33,6 +33,8 @@
 	</array>
 	<key>GIDClientID</key>
 	<string>$(GOOGLE_CLIENT_ID)</string>
+	<key>GitCommitHash</key>
+	<string>$(GIT_COMMIT_HASH)</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>NSAppTransportSecurity</key>

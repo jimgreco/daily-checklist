@@ -43,6 +43,12 @@ struct AccountView: View {
                             .multilineTextAlignment(.center)
                             .padding(.horizontal)
                     }
+
+                    Text(BuildInformation.displayText)
+                        .font(.caption2.monospaced())
+                        .foregroundStyle(.tertiary)
+                        .multilineTextAlignment(.center)
+                        .padding(.top, 8)
                 }
                 .padding(20)
             }
@@ -307,6 +313,27 @@ struct AccountView: View {
         store.activateAuthenticatedAccount(userID)
         let didSync = await store.sync(using: authStore)
         if didSync { dismiss() }
+    }
+}
+
+private enum BuildInformation {
+    static var displayText: String {
+        let version = bundleString("CFBundleShortVersionString", fallback: "1.0")
+        let build = bundleString("CFBundleVersion", fallback: "0")
+        let hash = bundleString("GitCommitHash")
+        let versionAndBuild = "\(version) (\(build))"
+        return hash.isEmpty ? versionAndBuild : "\(versionAndBuild) \(hash)"
+    }
+
+    private static func bundleString(_ key: String, fallback: String = "") -> String {
+        guard let value = Bundle.main.object(forInfoDictionaryKey: key) as? String else {
+            return fallback
+        }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !trimmed.hasPrefix("$(") else {
+            return fallback
+        }
+        return trimmed
     }
 }
 

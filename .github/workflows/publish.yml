@@ -422,6 +422,7 @@ jobs:
         run: |
           set -euo pipefail
           BUILD_NUMBER="$(git rev-list HEAD --count)"
+          GIT_COMMIT_HASH="$(git rev-parse --short HEAD)"
           xcodebuild archive \
             -project Daily.xcodeproj \
             -scheme Daily \
@@ -431,6 +432,7 @@ jobs:
             DEVELOPMENT_TEAM="$APPLE_TEAM_ID" \
             IOS_PROFILE_NAME="$IOS_PROFILE_NAME" \
             CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
+            GIT_COMMIT_HASH="$GIT_COMMIT_HASH" \
             API_BASE_URL="$API_BASE_URL" \
             GOOGLE_CLIENT_ID="$GOOGLE_CLIENT_ID" \
             GOOGLE_REVERSED_CLIENT_ID="$GOOGLE_REVERSED_CLIENT_ID" \
