@@ -150,8 +150,8 @@ func drawBackground(size: NSSize, design: ScreenshotDesign) {
 
 func drawCopy(size: NSSize, design: ScreenshotDesign) {
     let textColor = NSColor(hex: "#141824")
-    let headlineFont = NSFont.systemFont(ofSize: min(94, size.width * 0.073), weight: .heavy)
-    let subcopyFont = NSFont.systemFont(ofSize: min(37, size.width * 0.029), weight: .medium)
+    let headlineFont = NSFont.systemFont(ofSize: min(106, size.width * 0.082), weight: .heavy)
+    let subcopyFont = NSFont.systemFont(ofSize: min(43, size.width * 0.033), weight: .medium)
     let paragraph = NSMutableParagraphStyle()
     paragraph.alignment = .center
     paragraph.lineBreakMode = .byWordWrapping
@@ -170,16 +170,16 @@ func drawCopy(size: NSSize, design: ScreenshotDesign) {
 
     let headlineRect = rectFromTop(
         x: size.width * 0.09,
-        y: size.height * 0.058,
+        y: size.height * 0.048,
         width: size.width * 0.82,
-        height: size.height * 0.145,
+        height: size.height * 0.165,
         canvasHeight: size.height
     )
     let subcopyRect = rectFromTop(
-        x: size.width * 0.15,
-        y: size.height * 0.218,
-        width: size.width * 0.70,
-        height: size.height * 0.070,
+        x: size.width * 0.13,
+        y: size.height * 0.225,
+        width: size.width * 0.74,
+        height: size.height * 0.064,
         canvasHeight: size.height
     )
 
@@ -196,7 +196,7 @@ func drawCopy(size: NSSize, design: ScreenshotDesign) {
 func drawPhone(sourceImage: NSImage, canvasSize: NSSize) {
     let aspect = sourceImage.size.height / sourceImage.size.width
     let frameInset = max(28, canvasSize.width * 0.026)
-    let phoneTop = canvasSize.height * 0.255
+    let phoneTop = canvasSize.height * 0.315
     let bottomMargin = canvasSize.height * 0.035
     let maxOuterWidth = canvasSize.width * 0.78
     let maxOuterHeight = canvasSize.height - phoneTop - bottomMargin
