@@ -37,7 +37,7 @@ struct ChecklistView: View {
     @State private var renameGroupName = ""
     @State private var deletingGroup: ChecklistGroup?
     @State private var permanentlyDeletingItem: ChecklistItem?
-    @State private var delayErrorMessage: String?
+    @State private var actionErrorMessage: String?
     @State private var isSearchPresented = false
     @State private var showingTutorial = false
     @AppStorage("hasSeenChecklistTutorial") private var hasSeenChecklistTutorial = false
@@ -226,13 +226,13 @@ struct ChecklistView: View {
             } message: {
                 Text("This removes the archived item from every synced device.")
             }
-            .alert("Delay unavailable", isPresented: Binding(
-                get: { delayErrorMessage != nil },
-                set: { if !$0 { delayErrorMessage = nil } }
+            .alert("Action unavailable", isPresented: Binding(
+                get: { actionErrorMessage != nil },
+                set: { if !$0 { actionErrorMessage = nil } }
             )) {
-                Button("OK", role: .cancel) { delayErrorMessage = nil }
+                Button("OK", role: .cancel) { actionErrorMessage = nil }
             } message: {
-                Text(delayErrorMessage ?? "")
+                Text(actionErrorMessage ?? "")
             }
         }
         .tint(accent)
@@ -847,6 +847,7 @@ struct ChecklistView: View {
                         onSkip: { store.setSkipped(item, skipped: true) },
                         onUnskip: { store.setSkipped(item, skipped: false) },
                         onDelay: { delay(item) },
+                        onBringForward: { bringForward(item) },
                         onHistory: { historyItem = item },
                         allowsPermanentDelete: allowsPermanentDelete,
                         onPermanentDelete: { permanentlyDeletingItem = item }
@@ -877,6 +878,7 @@ struct ChecklistView: View {
                         onSkip: { store.setSkipped(item, skipped: true) },
                         onUnskip: { store.setSkipped(item, skipped: false) },
                         onDelay: { delay(item) },
+                        onBringForward: { bringForward(item) },
                         onHistory: { historyItem = item },
                         allowsPermanentDelete: allowsPermanentDelete,
                         onPermanentDelete: { permanentlyDeletingItem = item }
@@ -890,7 +892,15 @@ struct ChecklistView: View {
         do {
             try store.delay(item)
         } catch {
-            delayErrorMessage = error.localizedDescription
+            actionErrorMessage = error.localizedDescription
+        }
+    }
+
+    private func bringForward(_ item: ChecklistItem) {
+        do {
+            try store.bringForward(item)
+        } catch {
+            actionErrorMessage = error.localizedDescription
         }
     }
 }
@@ -1059,6 +1069,7 @@ private struct ItemRow: View {
     let onSkip: () -> Void
     let onUnskip: () -> Void
     let onDelay: () -> Void
+    let onBringForward: () -> Void
     let onHistory: () -> Void
     let allowsPermanentDelete: Bool
     let onPermanentDelete: () -> Void
@@ -1068,6 +1079,9 @@ private struct ItemRow: View {
     private var missedDays: Int { item.consecutiveMissedDays(asOf: date) }
     private var completionStreak: Int { item.consecutiveCompletedDays(asOf: date) }
     private var delayedDays: Int { item.delayedDays(asOf: date) }
+    private var canBringForward: Bool {
+        Calendar.current.startOfDay(for: date) > Calendar.current.startOfDay(for: .now)
+    }
 
     var body: some View {
         HStack(spacing: 14) {
@@ -1173,6 +1187,11 @@ private struct ItemRow: View {
                     Label("Undo skip", systemImage: "arrow.uturn.backward")
                 }
             } else if !completed {
+                if canBringForward {
+                    Button(action: onBringForward) {
+                        Label("Bring to today", systemImage: "arrow.left.circle")
+                    }
+                }
                 Button(action: onDelay) {
                     Label("Delay to next day", systemImage: "arrow.right.circle")
                 }
@@ -1186,7 +1205,7 @@ private struct ItemRow: View {
                 }
             }
         }
-        .accessibilityHint("Long press for edit, history, delay, and skip actions")
+        .accessibilityHint("Long press for edit, history, bring forward, delay, and skip actions")
     }
 
     private func statusBadge(
@@ -1213,7 +1232,7 @@ private struct ItemRow: View {
 private struct ItemHistoryView: View {
     @EnvironmentObject private var store: ChecklistStore
     let item: ChecklistItem
-    @State private var delayErrorMessage: String?
+    @State private var actionErrorMessage: String?
 
     private var currentItem: ChecklistItem {
         store.items.first(where: { $0.id == item.id }) ?? item
@@ -1239,6 +1258,16 @@ private struct ItemHistoryView: View {
                         .buttonStyle(.borderless)
                         .accessibilityLabel("Delay to next day")
                     }
+                    if canBringForward(entry.date, state: entry.state) {
+                        Button {
+                            bringForward(entry.date)
+                        } label: {
+                            Label("Bring to today", systemImage: "arrow.left.circle")
+                                .labelStyle(.iconOnly)
+                        }
+                        .buttonStyle(.borderless)
+                        .accessibilityLabel("Bring to today")
+                    }
                     Menu {
                         ForEach(availableStates(for: entry.date)) { state in
                             Button {
@@ -1258,13 +1287,13 @@ private struct ItemHistoryView: View {
             }
             .navigationTitle(currentItem.title)
             .navigationBarTitleDisplayMode(.inline)
-            .alert("Delay unavailable", isPresented: Binding(
-                get: { delayErrorMessage != nil },
-                set: { if !$0 { delayErrorMessage = nil } }
+            .alert("Action unavailable", isPresented: Binding(
+                get: { actionErrorMessage != nil },
+                set: { if !$0 { actionErrorMessage = nil } }
             )) {
-                Button("OK", role: .cancel) { delayErrorMessage = nil }
+                Button("OK", role: .cancel) { actionErrorMessage = nil }
             } message: {
-                Text(delayErrorMessage ?? "")
+                Text(actionErrorMessage ?? "")
             }
         }
     }
@@ -1273,11 +1302,23 @@ private struct ItemHistoryView: View {
         state == .open || state == .missed
     }
 
+    private func canBringForward(_ date: Date, state: ChecklistHistoryState) -> Bool {
+        state == .open && Calendar.current.startOfDay(for: date) > Calendar.current.startOfDay(for: .now)
+    }
+
     private func delay(_ date: Date) {
         do {
             try store.delay(currentItem, from: date)
         } catch {
-            delayErrorMessage = error.localizedDescription
+            actionErrorMessage = error.localizedDescription
+        }
+    }
+
+    private func bringForward(_ date: Date) {
+        do {
+            try store.bringForward(currentItem, from: date)
+        } catch {
+            actionErrorMessage = error.localizedDescription
         }
     }
 

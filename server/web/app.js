@@ -30,6 +30,7 @@
   let refreshPromise = null;
   let toastTimer = null;
   const delayDailyMessage = "Daily items already appear tomorrow. Delay is only for items scheduled a few times a week.";
+  const bringForwardDailyMessage = "Daily items already appear today. Bring forward is only for items scheduled a few times a week.";
   const templates = [
     { id: "morning", title: "Morning", groupName: "Morning Routine", items: ["Medication", "Vitamins", "Review today"] },
     { id: "evening", title: "Evening", groupName: "Evening Routine", items: ["Tidy up", "Prepare tomorrow", "Skincare"] },
@@ -61,6 +62,7 @@
       pencil: '<path d="M4 20h4l10.5-10.5a2.1 2.1 0 0 0-3-3L5 17v3z"/><path d="m14 7 3 3"/>',
       repeat: '<path d="m17 2 4 4-4 4"/><path d="M3 11V9a3 3 0 0 1 3-3h15"/><path d="m7 22-4-4 4-4"/><path d="M21 13v2a3 3 0 0 1-3 3H3"/>',
       search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>',
+      startToday: '<path d="M17 17 7 7"/><path d="M15 7H7v8"/>',
       startTomorrow: '<path d="M7 17 17 7"/><path d="M9 7h8v8"/>',
       trash: '<path d="M4 7h16"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M6 7l1 14h10l1-14"/><path d="M9 7V4h6v3"/>',
       user: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>'
@@ -97,6 +99,10 @@
   }
 
   function sameDay(left, right) { return dateKey(left) === dateKey(right); }
+
+  function isFutureDate(date) {
+    return startOfDay(date) > startOfDay(new Date());
+  }
 
   function persistSession() {
     state.user ? localStorage.setItem(STORAGE.user, JSON.stringify(state.user)) : localStorage.removeItem(STORAGE.user);
@@ -303,6 +309,7 @@
       </div>
       <div class="task-actions">
         ${isSkipped ? `<button class="mini-button" data-action="unskip" data-id="${item.id}">Undo</button>` : !isComplete ? `<button class="mini-button accent" data-action="skip" data-id="${item.id}">Skip</button>` : ""}
+        ${!isComplete && !isSkipped && isFutureDate(state.selectedDate) ? `<button class="mini-button" data-action="bring-forward" data-id="${item.id}">${icon("startToday")} Today</button>` : ""}
         ${!isComplete && !isSkipped ? `<button class="mini-button" data-action="delay" data-id="${item.id}">Delay</button>` : ""}
         <button class="mini-button" data-action="history" data-id="${item.id}" aria-label="History for ${escapeHTML(item.title)}">History</button>
         ${state.mode === "archive" ? `<button class="mini-button danger" data-action="delete-item" data-id="${item.id}" aria-label="Delete ${escapeHTML(item.title)} permanently">Delete</button>` : ""}
@@ -476,6 +483,7 @@
             <span>${escapeHTML(entry.label)}</span>
             <div class="history-actions">
               ${canDelayHistoryState(entry.state) ? `<button class="history-delay" data-action="delay-history" data-id="${item.id}" data-date="${entry.key}" aria-label="Delay ${escapeHTML(entry.label)} to next day">${icon("startTomorrow")}</button>` : ""}
+              ${canBringForwardHistoryState(entry.key, entry.state) ? `<button class="history-bring-forward" data-action="bring-forward-history" data-id="${item.id}" data-date="${entry.key}" aria-label="Bring ${escapeHTML(entry.label)} to today">${icon("startToday")}</button>` : ""}
               <select class="history-state ${entry.state.toLowerCase()}" data-history-state data-id="${item.id}" data-date="${entry.key}" aria-label="Change state for ${escapeHTML(entry.label)}">
                 ${historyOptions(item, entry.key, entry.state)}
               </select>
@@ -692,41 +700,36 @@
     }));
   }
 
-  function delayItem(item, fromDate = state.selectedDate) {
-    if (!item) return;
-    if (item.schedule === "everyDay") {
-      showToast(delayDailyMessage);
-      return;
-    }
+  function moveOpenItemDate(item, sourceDate, targetDate, successMessage) {
     item.completedDates ||= [];
     item.skippedDates ||= [];
     item.openDates ||= [];
 
-    const sourceKey = dateKey(startOfDay(fromDate));
-    const nextKey = dateKey(addDays(fromDate, 1));
+    const sourceKey = dateKey(startOfDay(sourceDate));
+    const targetKey = dateKey(startOfDay(targetDate));
     const wasSourceCompleted = item.completedDates.includes(sourceKey);
     const wasSourceSkipped = item.skippedDates.includes(sourceKey);
     const wasSourceOpen = item.openDates.includes(sourceKey);
-    const wasNextCompleted = item.completedDates.includes(nextKey);
-    const wasNextSkipped = item.skippedDates.includes(nextKey);
-    const wasNextOpen = item.openDates.includes(nextKey);
+    const wasTargetCompleted = item.completedDates.includes(targetKey);
+    const wasTargetSkipped = item.skippedDates.includes(targetKey);
+    const wasTargetOpen = item.openDates.includes(targetKey);
 
-    item.completedDates = item.completedDates.filter((date) => date !== sourceKey && date !== nextKey);
+    item.completedDates = item.completedDates.filter((date) => date !== sourceKey && date !== targetKey);
     if (!item.skippedDates.includes(sourceKey)) item.skippedDates.push(sourceKey);
-    item.skippedDates = item.skippedDates.filter((date) => date !== nextKey);
+    item.skippedDates = item.skippedDates.filter((date) => date !== targetKey);
     item.openDates = item.openDates.filter((date) => date !== sourceKey);
-    if (!item.openDates.includes(nextKey)) item.openDates.push(nextKey);
+    if (!item.openDates.includes(targetKey)) item.openDates.push(targetKey);
 
     if (wasSourceCompleted || !wasSourceSkipped) {
       state.pending.push(mutation("completion", { itemID: item.id, completionDate: sourceKey, completed: false }));
     }
-    if (wasNextCompleted) {
-      state.pending.push(mutation("completion", { itemID: item.id, completionDate: nextKey, completed: false }));
+    if (wasTargetCompleted) {
+      state.pending.push(mutation("completion", { itemID: item.id, completionDate: targetKey, completed: false }));
     }
     const skippedChanged = wasSourceSkipped !== item.skippedDates.includes(sourceKey)
-      || wasNextSkipped !== item.skippedDates.includes(nextKey);
+      || wasTargetSkipped !== item.skippedDates.includes(targetKey);
     const openChanged = wasSourceOpen !== item.openDates.includes(sourceKey)
-      || wasNextOpen !== item.openDates.includes(nextKey);
+      || wasTargetOpen !== item.openDates.includes(targetKey);
     if (skippedChanged || openChanged) {
       state.pending.push(mutation("upsert", {
         itemID: item.id,
@@ -738,9 +741,31 @@
       }));
     }
     persistData();
-    showToast("Delayed to the next day.");
+    showToast(successMessage);
     render();
     void sync();
+  }
+
+  function delayItem(item, fromDate = state.selectedDate) {
+    if (!item) return;
+    if (item.schedule === "everyDay") {
+      showToast(delayDailyMessage);
+      return;
+    }
+    moveOpenItemDate(item, fromDate, addDays(fromDate, 1), "Delayed to the next day.");
+  }
+
+  function bringForwardItem(item, fromDate = state.selectedDate) {
+    if (!item) return;
+    if (item.schedule === "everyDay") {
+      showToast(bringForwardDailyMessage);
+      return;
+    }
+    if (!isFutureDate(fromDate)) {
+      showToast("Only future items can be brought forward to today.");
+      return;
+    }
+    moveOpenItemDate(item, fromDate, new Date(), "Brought forward to today.");
   }
 
   function historyFor(item) {
@@ -763,6 +788,10 @@
 
   function canDelayHistoryState(historyState) {
     return historyState === "Open" || historyState === "Missed";
+  }
+
+  function canBringForwardHistoryState(key, historyState) {
+    return historyState === "Open" && isFutureDate(dateFromInput(key));
   }
 
   function historyOptions(item, dateKeyValue, currentState) {
@@ -953,8 +982,12 @@
     if (action === "skip") setSkipped(state.items.find((item) => item.id === target.dataset.id), true);
     if (action === "unskip") setSkipped(state.items.find((item) => item.id === target.dataset.id), false);
     if (action === "delay") delayItem(state.items.find((item) => item.id === target.dataset.id));
+    if (action === "bring-forward") bringForwardItem(state.items.find((item) => item.id === target.dataset.id));
     if (action === "delay-history") {
       delayItem(state.items.find((item) => item.id === target.dataset.id), dateFromInput(target.dataset.date));
+    }
+    if (action === "bring-forward-history") {
+      bringForwardItem(state.items.find((item) => item.id === target.dataset.id), dateFromInput(target.dataset.date));
     }
     if (action === "history") {
       state.modal = { type: "history", item: state.items.find((item) => item.id === target.dataset.id) };

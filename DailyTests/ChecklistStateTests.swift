@@ -74,7 +74,7 @@ final class ChecklistStateTests: XCTestCase {
         let change = try item.delay(from: sourceDate, calendar: calendar)
 
         XCTAssertEqual(change.sourceKey, sourceKey)
-        XCTAssertEqual(change.nextKey, nextKey)
+        XCTAssertEqual(change.targetKey, nextKey)
         XCTAssertTrue(item.skippedDates.contains(sourceKey))
         XCTAssertFalse(item.completedDates.contains(sourceKey))
         XCTAssertTrue(item.openDates.contains(nextKey))
@@ -91,6 +91,42 @@ final class ChecklistStateTests: XCTestCase {
 
         XCTAssertThrowsError(try item.delay(from: Date(), calendar: calendar)) { error in
             XCTAssertEqual(error as? ChecklistDelayError, .dailyItem)
+        }
+    }
+
+    func testBringForwardSkipsFutureDateAndOpensToday() throws {
+        let today = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 6, day: 24)))
+        let futureDate = try XCTUnwrap(calendar.date(byAdding: .day, value: 3, to: today))
+        let todayKey = DateKey.string(from: today)
+        let futureKey = DateKey.string(from: futureDate)
+        var item = ChecklistItem(
+            title: "Water plants",
+            schedule: .custom,
+            customWeekdays: [calendar.component(.weekday, from: futureDate)],
+            completedDates: [todayKey],
+            createdAt: today
+        )
+
+        let change = try item.bringForward(from: futureDate, to: today, calendar: calendar)
+
+        XCTAssertEqual(change.sourceKey, futureKey)
+        XCTAssertEqual(change.targetKey, todayKey)
+        XCTAssertTrue(item.skippedDates.contains(futureKey))
+        XCTAssertFalse(item.completedDates.contains(futureKey))
+        XCTAssertTrue(item.openDates.contains(todayKey))
+        XCTAssertFalse(item.completedDates.contains(todayKey))
+        XCTAssertFalse(item.skippedDates.contains(todayKey))
+        XCTAssertEqual(item.historyState(on: futureDate, calendar: calendar), .skipped)
+        XCTAssertEqual(item.historyState(on: today, calendar: calendar), .open)
+    }
+
+    func testDailyItemsCannotBeBroughtForward() throws {
+        let today = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 6, day: 24)))
+        let futureDate = try XCTUnwrap(calendar.date(byAdding: .day, value: 1, to: today))
+        var item = ChecklistItem(title: "Take vitamins", schedule: .everyDay)
+
+        XCTAssertThrowsError(try item.bringForward(from: futureDate, to: today, calendar: calendar)) { error in
+            XCTAssertEqual(error as? ChecklistBringForwardError, .dailyItem)
         }
     }
 

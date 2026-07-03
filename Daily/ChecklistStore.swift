@@ -262,7 +262,18 @@ final class ChecklistStore: ObservableObject {
     func delay(_ item: ChecklistItem, from date: Date? = nil) throws {
         guard let index = items.firstIndex(where: { $0.id == item.id }) else { return }
         let change = try items[index].delay(from: date ?? selectedDate)
+        queueDateMoveMutation(for: index, change: change)
+        persistAndSchedule()
+    }
 
+    func bringForward(_ item: ChecklistItem, from date: Date? = nil) throws {
+        guard let index = items.firstIndex(where: { $0.id == item.id }) else { return }
+        let change = try items[index].bringForward(from: date ?? selectedDate)
+        queueDateMoveMutation(for: index, change: change)
+        persistAndSchedule()
+    }
+
+    private func queueDateMoveMutation(for index: Int, change: ChecklistDateMoveChange) {
         if change.wasSourceCompleted || !change.wasSourceSkipped {
             pendingMutations.append(.completion(itemID: items[index].id, date: change.sourceKey, completed: false))
         }
@@ -273,17 +284,15 @@ final class ChecklistStore: ObservableObject {
             key: change.sourceKey
         )
 
-        if change.wasNextCompleted {
-            pendingMutations.append(.completion(itemID: items[index].id, date: change.nextKey, completed: false))
+        if change.wasTargetCompleted {
+            pendingMutations.append(.completion(itemID: items[index].id, date: change.targetKey, completed: false))
         }
         queueDaySetMutationIfNeeded(
             for: items[index],
-            wasSkipped: change.wasNextSkipped,
-            wasOpen: change.wasNextOpen,
-            key: change.nextKey
+            wasSkipped: change.wasTargetSkipped,
+            wasOpen: change.wasTargetOpen,
+            key: change.targetKey
         )
-
-        persistAndSchedule()
     }
 
     func setHistoryState(_ state: ChecklistHistoryState, for itemID: UUID, on date: Date) {

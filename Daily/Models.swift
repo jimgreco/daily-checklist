@@ -261,31 +261,43 @@ struct ChecklistItem: Identifiable, Codable, Hashable {
             .joined(separator: " · ")
     }
 
-    mutating func delay(from date: Date, calendar: Calendar = .current) throws -> ChecklistDelayChange {
+    mutating func delay(from date: Date, calendar: Calendar = .current) throws -> ChecklistDateMoveChange {
         guard schedule != .everyDay else { throw ChecklistDelayError.dailyItem }
         let sourceDate = calendar.startOfDay(for: date)
         guard let nextDate = calendar.date(byAdding: .day, value: 1, to: sourceDate) else {
             throw ChecklistDelayError.nextDateUnavailable
         }
+        return moveOpenDate(from: sourceDate, to: calendar.startOfDay(for: nextDate))
+    }
+
+    mutating func bringForward(from date: Date, to targetDate: Date = .now, calendar: Calendar = .current) throws -> ChecklistDateMoveChange {
+        guard schedule != .everyDay else { throw ChecklistBringForwardError.dailyItem }
+        let sourceDate = calendar.startOfDay(for: date)
+        let targetDate = calendar.startOfDay(for: targetDate)
+        guard sourceDate > targetDate else { throw ChecklistBringForwardError.notInFuture }
+        return moveOpenDate(from: sourceDate, to: targetDate)
+    }
+
+    private mutating func moveOpenDate(from sourceDate: Date, to targetDate: Date) -> ChecklistDateMoveChange {
         let sourceKey = DateKey.string(from: sourceDate)
-        let nextKey = DateKey.string(from: calendar.startOfDay(for: nextDate))
-        let change = ChecklistDelayChange(
+        let targetKey = DateKey.string(from: targetDate)
+        let change = ChecklistDateMoveChange(
             sourceKey: sourceKey,
-            nextKey: nextKey,
+            targetKey: targetKey,
             wasSourceCompleted: completedDates.contains(sourceKey),
             wasSourceSkipped: skippedDates.contains(sourceKey),
             wasSourceOpen: openDates.contains(sourceKey),
-            wasNextCompleted: completedDates.contains(nextKey),
-            wasNextSkipped: skippedDates.contains(nextKey),
-            wasNextOpen: openDates.contains(nextKey)
+            wasTargetCompleted: completedDates.contains(targetKey),
+            wasTargetSkipped: skippedDates.contains(targetKey),
+            wasTargetOpen: openDates.contains(targetKey)
         )
 
         completedDates.remove(sourceKey)
         skippedDates.insert(sourceKey)
         openDates.remove(sourceKey)
-        completedDates.remove(nextKey)
-        skippedDates.remove(nextKey)
-        openDates.insert(nextKey)
+        completedDates.remove(targetKey)
+        skippedDates.remove(targetKey)
+        openDates.insert(targetKey)
         return change
     }
 }
@@ -304,15 +316,29 @@ enum ChecklistDelayError: LocalizedError, Equatable {
     }
 }
 
-struct ChecklistDelayChange {
+enum ChecklistBringForwardError: LocalizedError, Equatable {
+    case dailyItem
+    case notInFuture
+
+    var errorDescription: String? {
+        switch self {
+        case .dailyItem:
+            "Daily items already appear today. Bring forward is only for items scheduled a few times a week."
+        case .notInFuture:
+            "Only future items can be brought forward to today."
+        }
+    }
+}
+
+struct ChecklistDateMoveChange {
     var sourceKey: String
-    var nextKey: String
+    var targetKey: String
     var wasSourceCompleted: Bool
     var wasSourceSkipped: Bool
     var wasSourceOpen: Bool
-    var wasNextCompleted: Bool
-    var wasNextSkipped: Bool
-    var wasNextOpen: Bool
+    var wasTargetCompleted: Bool
+    var wasTargetSkipped: Bool
+    var wasTargetOpen: Bool
 }
 
 struct LocalEnvelope: Codable {
