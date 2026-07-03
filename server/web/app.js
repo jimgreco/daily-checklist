@@ -29,6 +29,7 @@
   };
   let refreshPromise = null;
   let toastTimer = null;
+  const delayDailyMessage = "Daily items already appear tomorrow. Delay is only for items scheduled a few times a week.";
   const templates = [
     { id: "morning", title: "Morning", groupName: "Morning Routine", items: ["Medication", "Vitamins", "Review today"] },
     { id: "evening", title: "Evening", groupName: "Evening Routine", items: ["Tidy up", "Prepare tomorrow", "Skincare"] },
@@ -281,6 +282,7 @@
       </div>
       <div class="task-actions">
         ${isSkipped ? `<button class="mini-button" data-action="unskip" data-id="${item.id}">Undo</button>` : !isComplete ? `<button class="mini-button accent" data-action="skip" data-id="${item.id}">Skip</button>` : ""}
+        ${!isComplete && !isSkipped ? `<button class="mini-button" data-action="delay" data-id="${item.id}">Delay</button>` : ""}
         <button class="mini-button" data-action="history" data-id="${item.id}" aria-label="History for ${escapeHTML(item.title)}">History</button>
         ${state.mode === "archive" ? `<button class="mini-button danger" data-action="delete-item" data-id="${item.id}" aria-label="Delete ${escapeHTML(item.title)} permanently">Delete</button>` : ""}
         <button class="edit-button" data-action="edit" data-id="${item.id}" aria-label="Edit ${escapeHTML(item.title)}">${icon("pencil")}</button>
@@ -451,9 +453,12 @@
         <div class="history-list">
           ${historyFor(item).map((entry) => `<div class="history-row">
             <span>${escapeHTML(entry.label)}</span>
-            <select class="history-state ${entry.state.toLowerCase()}" data-history-state data-id="${item.id}" data-date="${entry.key}" aria-label="Change state for ${escapeHTML(entry.label)}">
-              ${historyOptions(item, entry.key, entry.state)}
-            </select>
+            <div class="history-actions">
+              ${canDelayHistoryState(entry.state) ? `<button class="history-delay" data-action="delay-history" data-id="${item.id}" data-date="${entry.key}" aria-label="Delay ${escapeHTML(entry.label)} to next day">${icon("startTomorrow")}</button>` : ""}
+              <select class="history-state ${entry.state.toLowerCase()}" data-history-state data-id="${item.id}" data-date="${entry.key}" aria-label="Change state for ${escapeHTML(entry.label)}">
+                ${historyOptions(item, entry.key, entry.state)}
+              </select>
+            </div>
           </div>`).join("")}
         </div>
         <div class="modal-actions"><span></span><button class="secondary" data-action="close">Done</button></div>
@@ -666,6 +671,57 @@
     }));
   }
 
+  function delayItem(item, fromDate = state.selectedDate) {
+    if (!item) return;
+    if (item.schedule === "everyDay") {
+      showToast(delayDailyMessage);
+      return;
+    }
+    item.completedDates ||= [];
+    item.skippedDates ||= [];
+    item.openDates ||= [];
+
+    const sourceKey = dateKey(startOfDay(fromDate));
+    const nextKey = dateKey(addDays(fromDate, 1));
+    const wasSourceCompleted = item.completedDates.includes(sourceKey);
+    const wasSourceSkipped = item.skippedDates.includes(sourceKey);
+    const wasSourceOpen = item.openDates.includes(sourceKey);
+    const wasNextCompleted = item.completedDates.includes(nextKey);
+    const wasNextSkipped = item.skippedDates.includes(nextKey);
+    const wasNextOpen = item.openDates.includes(nextKey);
+
+    item.completedDates = item.completedDates.filter((date) => date !== sourceKey && date !== nextKey);
+    if (!item.skippedDates.includes(sourceKey)) item.skippedDates.push(sourceKey);
+    item.skippedDates = item.skippedDates.filter((date) => date !== nextKey);
+    item.openDates = item.openDates.filter((date) => date !== sourceKey);
+    if (!item.openDates.includes(nextKey)) item.openDates.push(nextKey);
+
+    if (wasSourceCompleted || !wasSourceSkipped) {
+      state.pending.push(mutation("completion", { itemID: item.id, completionDate: sourceKey, completed: false }));
+    }
+    if (wasNextCompleted) {
+      state.pending.push(mutation("completion", { itemID: item.id, completionDate: nextKey, completed: false }));
+    }
+    const skippedChanged = wasSourceSkipped !== item.skippedDates.includes(sourceKey)
+      || wasNextSkipped !== item.skippedDates.includes(nextKey);
+    const openChanged = wasSourceOpen !== item.openDates.includes(sourceKey)
+      || wasNextOpen !== item.openDates.includes(nextKey);
+    if (skippedChanged || openChanged) {
+      state.pending.push(mutation("upsert", {
+        itemID: item.id,
+        changedFields: [
+          ...(skippedChanged ? ["skippedDates"] : []),
+          ...(openChanged ? ["openDates"] : [])
+        ],
+        item: { skippedDates: item.skippedDates, openDates: item.openDates }
+      }));
+    }
+    persistData();
+    showToast("Delayed to the next day.");
+    render();
+    void sync();
+  }
+
   function historyFor(item) {
     const today = startOfDay(state.selectedDate);
     return Array.from({ length: 21 }, (_, offset) => {
@@ -682,6 +738,10 @@
         state: stateLabel
       };
     });
+  }
+
+  function canDelayHistoryState(historyState) {
+    return historyState === "Open" || historyState === "Missed";
   }
 
   function historyOptions(item, dateKeyValue, currentState) {
@@ -871,6 +931,10 @@
     if (action === "toggle") toggle(state.items.find((item) => item.id === target.dataset.id));
     if (action === "skip") setSkipped(state.items.find((item) => item.id === target.dataset.id), true);
     if (action === "unskip") setSkipped(state.items.find((item) => item.id === target.dataset.id), false);
+    if (action === "delay") delayItem(state.items.find((item) => item.id === target.dataset.id));
+    if (action === "delay-history") {
+      delayItem(state.items.find((item) => item.id === target.dataset.id), dateFromInput(target.dataset.date));
+    }
     if (action === "history") {
       state.modal = { type: "history", item: state.items.find((item) => item.id === target.dataset.id) };
       render();

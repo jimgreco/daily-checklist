@@ -245,6 +245,59 @@ struct ChecklistItem: Identifiable, Codable, Hashable {
             .map { WeekdayAbbreviation.twoLetter[$0 - 1] }
             .joined(separator: " · ")
     }
+
+    mutating func delay(from date: Date, calendar: Calendar = .current) throws -> ChecklistDelayChange {
+        guard schedule != .everyDay else { throw ChecklistDelayError.dailyItem }
+        let sourceDate = calendar.startOfDay(for: date)
+        guard let nextDate = calendar.date(byAdding: .day, value: 1, to: sourceDate) else {
+            throw ChecklistDelayError.nextDateUnavailable
+        }
+        let sourceKey = DateKey.string(from: sourceDate)
+        let nextKey = DateKey.string(from: calendar.startOfDay(for: nextDate))
+        let change = ChecklistDelayChange(
+            sourceKey: sourceKey,
+            nextKey: nextKey,
+            wasSourceCompleted: completedDates.contains(sourceKey),
+            wasSourceSkipped: skippedDates.contains(sourceKey),
+            wasSourceOpen: openDates.contains(sourceKey),
+            wasNextCompleted: completedDates.contains(nextKey),
+            wasNextSkipped: skippedDates.contains(nextKey),
+            wasNextOpen: openDates.contains(nextKey)
+        )
+
+        completedDates.remove(sourceKey)
+        skippedDates.insert(sourceKey)
+        openDates.remove(sourceKey)
+        completedDates.remove(nextKey)
+        skippedDates.remove(nextKey)
+        openDates.insert(nextKey)
+        return change
+    }
+}
+
+enum ChecklistDelayError: LocalizedError, Equatable {
+    case dailyItem
+    case nextDateUnavailable
+
+    var errorDescription: String? {
+        switch self {
+        case .dailyItem:
+            "Daily items already appear tomorrow. Delay is only for items scheduled a few times a week."
+        case .nextDateUnavailable:
+            "This item could not be delayed to the next day."
+        }
+    }
+}
+
+struct ChecklistDelayChange {
+    var sourceKey: String
+    var nextKey: String
+    var wasSourceCompleted: Bool
+    var wasSourceSkipped: Bool
+    var wasSourceOpen: Bool
+    var wasNextCompleted: Bool
+    var wasNextSkipped: Bool
+    var wasNextOpen: Bool
 }
 
 struct LocalEnvelope: Codable {

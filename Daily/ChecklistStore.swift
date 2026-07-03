@@ -259,6 +259,33 @@ final class ChecklistStore: ObservableObject {
         setSkipped(item, skipped: true, on: date)
     }
 
+    func delay(_ item: ChecklistItem, from date: Date? = nil) throws {
+        guard let index = items.firstIndex(where: { $0.id == item.id }) else { return }
+        let change = try items[index].delay(from: date ?? selectedDate)
+
+        if change.wasSourceCompleted || !change.wasSourceSkipped {
+            pendingMutations.append(.completion(itemID: items[index].id, date: change.sourceKey, completed: false))
+        }
+        queueDaySetMutationIfNeeded(
+            for: items[index],
+            wasSkipped: change.wasSourceSkipped,
+            wasOpen: change.wasSourceOpen,
+            key: change.sourceKey
+        )
+
+        if change.wasNextCompleted {
+            pendingMutations.append(.completion(itemID: items[index].id, date: change.nextKey, completed: false))
+        }
+        queueDaySetMutationIfNeeded(
+            for: items[index],
+            wasSkipped: change.wasNextSkipped,
+            wasOpen: change.wasNextOpen,
+            key: change.nextKey
+        )
+
+        persistAndSchedule()
+    }
+
     func setHistoryState(_ state: ChecklistHistoryState, for itemID: UUID, on date: Date) {
         guard let index = items.firstIndex(where: { $0.id == itemID }) else { return }
 
