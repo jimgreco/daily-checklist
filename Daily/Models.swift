@@ -238,6 +238,21 @@ struct ChecklistItem: Identifiable, Codable, Hashable {
         return completedDays
     }
 
+    func delayedDays(asOf date: Date, calendar: Calendar = .current) -> Int {
+        let day = calendar.startOfDay(for: date)
+        guard isExplicitlyOpen(on: day), !isComplete(on: day), !isSkipped(on: day) else { return 0 }
+
+        var cursor = day
+        var delayedDays = 0
+        while let previousDate = calendar.date(byAdding: .day, value: -1, to: cursor) {
+            let previousDay = calendar.startOfDay(for: previousDate)
+            guard isSkipped(on: previousDay) else { break }
+            delayedDays += 1
+            cursor = previousDay
+        }
+        return delayedDays
+    }
+
     var scheduleSummary: String {
         guard schedule == .custom else { return schedule.title }
         return (1...7)

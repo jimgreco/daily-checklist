@@ -82,6 +82,8 @@ final class ChecklistStateTests: XCTestCase {
         XCTAssertFalse(item.skippedDates.contains(nextKey))
         XCTAssertEqual(item.historyState(on: sourceDate, calendar: calendar), .skipped)
         XCTAssertEqual(item.historyState(on: nextDate, calendar: calendar), .open)
+        XCTAssertEqual(item.delayedDays(asOf: nextDate, calendar: calendar), 1)
+        XCTAssertEqual(item.delayedDays(asOf: sourceDate, calendar: calendar), 0)
     }
 
     func testDailyItemsCannotBeDelayed() {
@@ -90,5 +92,25 @@ final class ChecklistStateTests: XCTestCase {
         XCTAssertThrowsError(try item.delay(from: Date(), calendar: calendar)) { error in
             XCTAssertEqual(error as? ChecklistDelayError, .dailyItem)
         }
+    }
+
+    func testRepeatedDelayCountsConsecutiveSkippedDays() throws {
+        let sourceDate = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 6, day: 24)))
+        let secondDate = try XCTUnwrap(calendar.date(byAdding: .day, value: 1, to: sourceDate))
+        let thirdDate = try XCTUnwrap(calendar.date(byAdding: .day, value: 2, to: sourceDate))
+        var item = ChecklistItem(
+            title: "Water plants",
+            schedule: .custom,
+            customWeekdays: [calendar.component(.weekday, from: sourceDate)],
+            createdAt: sourceDate
+        )
+
+        _ = try item.delay(from: sourceDate, calendar: calendar)
+        _ = try item.delay(from: secondDate, calendar: calendar)
+
+        XCTAssertEqual(item.delayedDays(asOf: thirdDate, calendar: calendar), 2)
+        XCTAssertEqual(item.historyState(on: sourceDate, calendar: calendar), .skipped)
+        XCTAssertEqual(item.historyState(on: secondDate, calendar: calendar), .skipped)
+        XCTAssertEqual(item.historyState(on: thirdDate, calendar: calendar), .open)
     }
 }

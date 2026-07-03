@@ -20,6 +20,7 @@ let softSurface = adaptiveColor(light: (0.985, 0.982, 0.965), dark: (0.10, 0.11,
 let controlSurface = adaptiveColor(light: (1.00, 1.00, 1.00), dark: (0.18, 0.19, 0.22))
 let subtleFill = adaptiveColor(light: (0.91, 0.90, 0.87), dark: (0.19, 0.20, 0.23))
 let success = adaptiveColor(light: (0.12, 0.52, 0.29), dark: (0.34, 0.84, 0.50))
+let delayed = adaptiveColor(light: (0.72, 0.43, 0.05), dark: (1.00, 0.72, 0.28))
 
 struct ChecklistView: View {
     @EnvironmentObject private var store: ChecklistStore
@@ -1066,6 +1067,7 @@ private struct ItemRow: View {
     private var skipped: Bool { item.isSkipped(on: date) }
     private var missedDays: Int { item.consecutiveMissedDays(asOf: date) }
     private var completionStreak: Int { item.consecutiveCompletedDays(asOf: date) }
+    private var delayedDays: Int { item.delayedDays(asOf: date) }
 
     var body: some View {
         HStack(spacing: 14) {
@@ -1110,6 +1112,14 @@ private struct ItemRow: View {
                             systemImage: "calendar.badge.exclamationmark",
                             color: Color(red: 0.72, green: 0.22, blue: 0.20),
                             accessibilityLabel: "\(missedDays) consecutive missed \(missedDays == 1 ? "day" : "days")"
+                        )
+                    }
+                    if delayedDays > 0 {
+                        statusBadge(
+                            "\(delayedDays) \(delayedDays == 1 ? "day" : "days")",
+                            systemImage: "arrow.right.circle.fill",
+                            color: delayed,
+                            accessibilityLabel: "Delayed \(delayedDays) \(delayedDays == 1 ? "day" : "days")"
                         )
                     }
                 }

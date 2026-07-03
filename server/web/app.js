@@ -266,13 +266,34 @@
     return done === items.length ? String(items.length) : `${done}/${items.length}`;
   }
 
+  function delayedDaysOnDate(item, date) {
+    const key = dateKey(date);
+    if (!(item.openDates || []).includes(key)) return 0;
+    if ((item.completedDates || []).includes(key) || (item.skippedDates || []).includes(key)) return 0;
+
+    let cursor = startOfDay(date);
+    let days = 0;
+    while (true) {
+      const previous = addDays(cursor, -1);
+      if (!(item.skippedDates || []).includes(dateKey(previous))) break;
+      days += 1;
+      cursor = previous;
+    }
+    return days;
+  }
+
   function renderTask(item) {
     const isComplete = complete(item);
     const isSkipped = skipped(item) && !isComplete;
+    const delayedDays = delayedDaysOnDate(item, state.selectedDate);
+    const delayedText = `${delayedDays} ${delayedDays === 1 ? "day" : "days"}`;
     return `<article class="task ${isComplete ? "complete" : ""} ${isSkipped ? "skipped" : ""}">
       <button class="check" data-action="toggle" data-id="${item.id}" aria-label="${complete(item) ? "Mark incomplete" : "Mark complete"}">${complete(item) ? icon("check") : ""}</button>
       <div class="task-copy">
-        <div class="task-title">${escapeHTML(item.title)}</div>
+        <div class="task-title-line">
+          <div class="task-title">${escapeHTML(item.title)}</div>
+          ${delayedDays > 0 ? `<span class="status-badge delayed" aria-label="Delayed ${escapeHTML(delayedText)}">${icon("startTomorrow")} ${escapeHTML(delayedText)}</span>` : ""}
+        </div>
         <div class="task-meta">
           <span>${icon("repeat", "meta-icon")} ${escapeHTML(scheduleText(item))}</span>
           ${item.reminderMinutes == null ? "" : `<span>${icon("clock", "meta-icon")} ${escapeHTML(timeText(item.reminderMinutes))}</span>`}
