@@ -57,6 +57,7 @@ jobs:
             headers="$tmpdir/$(echo "$path" | tr '/.' '__').headers"
             url="${BASE_URL%/}${path}"
 
+            echo "Checking ${path}"
             curl -fsS -m 15 -D "$headers" -o "$body" "$url"
             grep -qi '^x-content-type-options: nosniff' "$headers"
             grep -qi '^content-security-policy:' "$headers"
@@ -64,6 +65,7 @@ jobs:
           }
 
           check_auth_config() {
+            echo "Checking /auth/config"
             body="$tmpdir/auth-config.body"
             headers="$tmpdir/auth-config.headers"
             curl -fsS -m 15 -D "$headers" -o "$body" "${BASE_URL%/}/auth/config"
@@ -85,6 +87,7 @@ jobs:
           }
 
           check_monitor_sync() {
+            echo "Checking /api/monitor/sync"
             if [ -z "${MONITOR_TOKEN:-}" ]; then
               echo "Skipping authenticated sync probe because DAILY_MONITOR_TOKEN is not configured."
               return

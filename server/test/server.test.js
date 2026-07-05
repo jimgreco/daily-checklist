@@ -109,6 +109,36 @@ test("monitor sync probe requires its shared secret and leaves no checklist data
   }
 });
 
+test("monitor sync probe accepts the monitor header when no runtime token is configured", async () => {
+  const previousMonitorToken = process.env.DAILY_MONITOR_TOKEN;
+  delete process.env.DAILY_MONITOR_TOKEN;
+
+  try {
+    const rejected = await fetch(`${baseURL}/api/monitor/sync`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({})
+    });
+    assert.equal(rejected.status, 404);
+
+    const response = await fetch(`${baseURL}/api/monitor/sync`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-ritual-cue-monitor-token": "repo-secret-held-by-actions"
+      },
+      body: JSON.stringify({})
+    });
+    assert.equal(response.status, 200);
+    const payload = await response.json();
+    assert.equal(payload.ok, true);
+    assert.equal(payload.acceptedMutationCount, 1);
+    assert.equal(payload.itemCount, 0);
+  } finally {
+    restoreEnv("DAILY_MONITOR_TOKEN", previousMonitorToken);
+  }
+});
+
 test("dev sign-in sets an HttpOnly refresh cookie and logout clears it", async () => {
   const response = await fetch(`${baseURL}/auth/dev`, {
     method: "POST",

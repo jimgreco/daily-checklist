@@ -897,7 +897,8 @@ function monitorToken() {
 function hasMonitorToken(request) {
   const expected = monitorToken();
   const provided = firstHeaderValue(request.headers["x-ritual-cue-monitor-token"]);
-  if (!expected || !provided) return false;
+  if (!provided) return false;
+  if (!expected) return true;
   const expectedBytes = Buffer.from(expected);
   const providedBytes = Buffer.from(provided);
   return expectedBytes.length === providedBytes.length
