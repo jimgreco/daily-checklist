@@ -190,6 +190,29 @@ final class ChecklistStateTests: XCTestCase {
     }
 
     @MainActor
+    func testGroupCollapsedStateTogglesInStore() throws {
+        let accountID = "group-collapse-test-\(UUID().uuidString)"
+        cleanCaches(for: [accountID])
+        defer {
+            cleanCaches(for: [accountID])
+            UserDefaults.standard.removeObject(forKey: "activeAccountID")
+        }
+
+        UserDefaults.standard.set(accountID, forKey: "activeAccountID")
+        let store = ChecklistStore()
+        let group = try XCTUnwrap(store.createGroup(named: "Home"))
+
+        XCTAssertEqual(store.groups.first?.id, group.id)
+        XCTAssertFalse(store.groups.first?.isCollapsed == true)
+
+        store.toggleGroupCollapsed(group.id)
+        XCTAssertTrue(store.groups.first?.isCollapsed == true)
+
+        store.toggleGroupCollapsed(group.id)
+        XCTAssertFalse(store.groups.first?.isCollapsed == true)
+    }
+
+    @MainActor
     func testReturningAuthenticatedAccountKeepsExistingLocalProgressCache() throws {
         let accountID = "test-user-\(UUID().uuidString)"
         let itemID = UUID()

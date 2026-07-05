@@ -58,6 +58,8 @@
       check: '<path d="M20 6 9 17l-5-5"/>',
       clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
       copy: '<rect x="8" y="8" width="12" height="12" rx="2"/><rect x="4" y="4" width="12" height="12" rx="2"/>',
+      folderClosed: '<path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H10l2 2h6.5A2.5 2.5 0 0 1 21 9.5v7A2.5 2.5 0 0 1 18.5 19h-13A2.5 2.5 0 0 1 3 16.5z"/>',
+      folderOpen: '<path d="M3 18.5V7.5A2.5 2.5 0 0 1 5.5 5H10l2 2h6.5A2.5 2.5 0 0 1 21 9.5v1"/><path d="M4.2 19h13.9a2 2 0 0 0 1.9-1.4l1.3-4.1A1.2 1.2 0 0 0 20.1 12H8.6a2 2 0 0 0-1.9 1.4z"/>',
       minus: '<path d="M5 12h14"/>',
       pencil: '<path d="M4 20h4l10.5-10.5a2.1 2.1 0 0 0-3-3L5 17v3z"/><path d="m14 7 3 3"/>',
       repeat: '<path d="m17 2 4 4-4 4"/><path d="M3 11V9a3 3 0 0 1 3-3h15"/><path d="m7 22-4-4 4-4"/><path d="M21 13v2a3 3 0 0 1-3 3H3"/>',
@@ -359,19 +361,23 @@
     </article>`;
   }
 
-  function renderGroup(name, items, groupID, realGroup, { allowsBulkActions = false } = {}) {
+  function renderGroup(name, items, groupID, realGroup, { allowsBulkActions = false, isCollapsed = false } = {}) {
     if (!items.length) return "";
     const todo = items.filter((item) => !complete(item));
     const done = items.filter(complete);
     const ordered = realGroup && todo.length ? [...todo, ...done] : items;
     return `<section class="group">
       <div class="group-head">
-        <div class="group-title">${escapeHTML(name)}<span>${groupProgress(items)}</span></div>
+        <div class="group-title">
+          ${realGroup ? `<button class="folder-toggle" data-action="toggle-group" data-group="${groupID}" aria-label="${isCollapsed ? `Open ${escapeHTML(name)}` : `Close ${escapeHTML(name)}`}">${icon(isCollapsed ? "folderClosed" : "folderOpen")}</button>` : ""}
+          <span class="group-name">${escapeHTML(name)}</span>
+          <span>${groupProgress(items)}</span>
+        </div>
         <div class="group-actions">
           ${allowsBulkActions && todo.length ? `<button class="complete-all" data-action="complete-group" data-group="${groupID || ""}">${icon("check")} All</button>` : ""}
         </div>
       </div>
-      <div class="task-list">${ordered.length ? ordered.map(renderTask).join("") : `<div class="empty-group">No tasks</div>`}</div>
+      ${isCollapsed ? "" : `<div class="task-list">${ordered.length ? ordered.map(renderTask).join("") : `<div class="empty-group">No tasks</div>`}</div>`}
     </section>`;
   }
 
@@ -397,21 +403,21 @@
     const todoBody = [
       renderGroup("Ungrouped", ungroupedTodo, "", false, { allowsBulkActions: true }),
       ...grouped.filter((entry) => entry.items.some((item) => !complete(item) && (!separatesSkipped || !skipped(item))))
-        .map((entry) => renderGroup(entry.group.name, entry.items.filter((item) => !complete(item) && (!separatesSkipped || !skipped(item))), entry.group.id, true, { allowsBulkActions: true }))
+        .map((entry) => renderGroup(entry.group.name, entry.items.filter((item) => !complete(item) && (!separatesSkipped || !skipped(item))), entry.group.id, true, { allowsBulkActions: true, isCollapsed: entry.group.isCollapsed === true }))
     ].join("");
     const skippedBody = [
       renderGroup("Ungrouped", ungroupedSkipped, "", false),
       ...grouped.filter((entry) => separatesSkipped && entry.items.some((item) => skipped(item) && !complete(item)))
-        .map((entry) => renderGroup(entry.group.name, entry.items.filter((item) => skipped(item) && !complete(item)), entry.group.id, true))
+        .map((entry) => renderGroup(entry.group.name, entry.items.filter((item) => skipped(item) && !complete(item)), entry.group.id, true, { isCollapsed: entry.group.isCollapsed === true }))
     ].join("");
     const completedBody = [
       renderGroup("Ungrouped", ungroupedDone, "", false),
       ...grouped.filter((entry) => entry.items.some(complete))
-        .map((entry) => renderGroup(entry.group.name, entry.items.filter(complete), entry.group.id, true))
+        .map((entry) => renderGroup(entry.group.name, entry.items.filter(complete), entry.group.id, true, { isCollapsed: entry.group.isCollapsed === true }))
     ].join("");
     const archiveBody = state.mode === "archive" ? [
       renderGroup("Ungrouped", ungrouped, "", false),
-      ...grouped.map((entry) => renderGroup(entry.group.name, entry.items, entry.group.id, true))
+      ...grouped.map((entry) => renderGroup(entry.group.name, entry.items, entry.group.id, true, { isCollapsed: entry.group.isCollapsed === true }))
     ].join("") : "";
 
     app.innerHTML = `<div class="shell">
@@ -917,17 +923,28 @@
     void sync();
   }
 
+  function toggleGroupCollapsed(groupID) {
+    const group = state.groups.find((candidate) => candidate.id === groupID);
+    if (!group) return;
+    group.isCollapsed = group.isCollapsed !== true;
+    queue(mutation("groupUpsert", {
+      groupID: group.id,
+      changedFields: ["isCollapsed"],
+      group: { isCollapsed: group.isCollapsed }
+    }));
+  }
+
   function applyTemplate(templateID) {
     const template = templates.find((candidate) => candidate.id === templateID);
     if (!template) return;
     let group = state.groups.find((candidate) => candidate.name.toLowerCase() === template.groupName.toLowerCase());
     if (!group) {
-      group = { id: crypto.randomUUID(), name: template.groupName, sortOrder: state.groups.length };
+      group = { id: crypto.randomUUID(), name: template.groupName, sortOrder: state.groups.length, isCollapsed: false };
       state.groups.push(group);
       state.pending.push(mutation("groupUpsert", {
         groupID: group.id,
-        changedFields: ["name", "sortOrder"],
-        group: { name: group.name, sortOrder: group.sortOrder }
+        changedFields: ["name", "sortOrder", "isCollapsed"],
+        group: { name: group.name, sortOrder: group.sortOrder, isCollapsed: group.isCollapsed }
       }));
     }
     const firstOrder = state.items.filter((item) => item.groupID === group.id).length;
@@ -978,11 +995,11 @@
     if (groupID === "__new") {
       const name = prompt("Name this group");
       if (!name?.trim()) return;
-      const group = { id: crypto.randomUUID(), name: name.trim(), sortOrder: state.groups.length };
+      const group = { id: crypto.randomUUID(), name: name.trim(), sortOrder: state.groups.length, isCollapsed: false };
       state.groups.push(group);
       state.pending.push(mutation("groupUpsert", {
-        groupID: group.id, changedFields: ["name", "sortOrder"],
-        group: { name: group.name, sortOrder: group.sortOrder }
+        groupID: group.id, changedFields: ["name", "sortOrder", "isCollapsed"],
+        group: { name: group.name, sortOrder: group.sortOrder, isCollapsed: group.isCollapsed }
       }));
       groupID = group.id;
     }
@@ -1067,6 +1084,7 @@
       const id = target.dataset.group || null;
       completeItems(visibleItems().filter((item) => (item.groupID || null) === id));
     }
+    if (action === "toggle-group") toggleGroupCollapsed(target.dataset.group);
     if (action === "account") { state.modal = { type: "account" }; render(); }
     if (action === "sign-out") await signOut();
     if (action === "export-data") {

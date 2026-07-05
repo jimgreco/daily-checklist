@@ -57,6 +57,9 @@ h1 { margin: 0; font-size: clamp(48px, 14vw, 68px); line-height: .96; letter-spa
 .group-head { min-height: 38px; justify-content: space-between; gap: 12px; padding: 0 6px; }
 .group-title { display: flex; min-width: 0; align-items: center; gap: 7px; font-size: 16px; font-weight: 800; }
 .group-title span { color: var(--muted); font-size: 13px; font-weight: 650; }
+.group-title .group-name { min-width: 0; color: var(--ink); font-size: 16px; font-weight: 800; overflow-wrap: anywhere; }
+.folder-toggle { display: inline-grid; flex: 0 0 auto; width: 28px; height: 28px; place-items: center; border-radius: 999px; background: transparent; color: var(--accent); font-size: 16px; }
+.folder-toggle:focus-visible { outline: 3px solid var(--accent-soft); outline-offset: 2px; }
 .group-actions { display: flex; align-items: center; gap: 7px; }
 .empty-group { padding: 13px 14px; border-radius: 16px; background: var(--soft); color: var(--muted); font-size: 13px; font-weight: 650; text-align: center; }
 .task-list { display: grid; gap: 12px; }

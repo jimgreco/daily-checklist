@@ -673,6 +673,31 @@ test("groups and item membership are synced and ordered", () => {
   assert.equal(materialized.items[0].groupID, "group-morning");
 });
 
+test("group collapsed state syncs independently", () => {
+  const state = account();
+  applyMutation(state, {
+    id: "group-home",
+    groupID: "group-home",
+    kind: "groupUpsert",
+    stamp: "2026-06-25T10:00:00.000Z",
+    changedFields: ["name", "sortOrder"],
+    group: { name: "Home", sortOrder: 0 }
+  }, "device-a");
+  applyMutation(state, {
+    id: "collapse-home",
+    groupID: "group-home",
+    kind: "groupUpsert",
+    stamp: "2026-06-25T10:05:00.000Z",
+    changedFields: ["isCollapsed"],
+    group: { isCollapsed: true }
+  }, "device-b");
+
+  const group = materializeAccount(state).groups[0];
+  assert.equal(group.name, "Home");
+  assert.equal(group.sortOrder, 0);
+  assert.equal(group.isCollapsed, true);
+});
+
 test("group deletions tombstone empty groups", () => {
   const state = account();
   applyMutation(state, {

@@ -628,6 +628,7 @@ struct ChecklistView: View {
                             groupID: group.id,
                             items: groupItems,
                             isRealGroup: true,
+                            isCollapsed: group.isCollapsed,
                             canDeleteGroup: store.canDeleteGroup(group.id),
                             allowsGroupActions: allowsGroupActions,
                             allowsPermanentDelete: allowsPermanentDelete,
@@ -645,6 +646,7 @@ struct ChecklistView: View {
         groupID: UUID?,
         items: [ChecklistItem],
         isRealGroup: Bool,
+        isCollapsed: Bool = false,
         canDeleteGroup: Bool = false,
         allowsGroupActions: Bool = false,
         allowsPermanentDelete: Bool = false,
@@ -657,9 +659,16 @@ struct ChecklistView: View {
                 completedCount: items.filter { $0.isComplete(on: store.selectedDate) }.count,
                 totalCount: items.count,
                 isRealGroup: isRealGroup,
+                isCollapsed: isCollapsed,
                 canDeleteGroup: canDeleteGroup,
                 showsCompleteAll: showsCompleteAll,
                 allowsGroupActions: allowsGroupActions,
+                toggleCollapsed: {
+                    guard let groupID else { return }
+                    withAnimation(.snappy) {
+                        store.toggleGroupCollapsed(groupID)
+                    }
+                },
                 rename: {
                     guard let groupID else { return }
                     renameGroupName = title
@@ -699,7 +708,9 @@ struct ChecklistView: View {
                     }
                 }
             )
-            if items.isEmpty {
+            if isCollapsed {
+                EmptyView()
+            } else if items.isEmpty {
                 if isEditingChecklist && store.sortMode == .manual {
                     Text("Drop tasks here")
                         .font(.system(size: 12, weight: .medium))
@@ -728,9 +739,11 @@ struct ChecklistView: View {
         completedCount: Int,
         totalCount: Int,
         isRealGroup: Bool,
+        isCollapsed: Bool,
         canDeleteGroup: Bool,
         showsCompleteAll: Bool,
         allowsGroupActions: Bool,
+        toggleCollapsed: @escaping () -> Void,
         rename: @escaping () -> Void,
         delete: @escaping () -> Void,
         completeAll: @escaping () -> Void,
@@ -740,9 +753,20 @@ struct ChecklistView: View {
         endAll: @escaping () -> Void
     ) -> some View {
         let header = HStack(spacing: 8) {
-            Image(systemName: isRealGroup ? "folder.fill" : "tray.fill")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(accent.opacity(0.75))
+            if isRealGroup {
+                Button(action: toggleCollapsed) {
+                    Image(systemName: isCollapsed ? "folder.fill" : "folder")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(accent.opacity(0.78))
+                        .frame(width: 24, height: 24)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(isCollapsed ? "Open \(title)" : "Close \(title)")
+            } else {
+                Image(systemName: "tray.fill")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(accent.opacity(0.75))
+            }
             Text(title)
                 .font(.system(size: 13, weight: .bold))
                 .foregroundStyle(ink.opacity(0.78))

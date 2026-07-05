@@ -467,6 +467,18 @@ final class ChecklistStore: ObservableObject {
         return true
     }
 
+    func toggleGroupCollapsed(_ groupID: UUID) {
+        guard let index = groups.firstIndex(where: { $0.id == groupID }) else { return }
+        groups[index].isCollapsed.toggle()
+        pendingMutations.removeAll {
+            $0.kind == .groupUpsert
+                && $0.changedFields == ["isCollapsed"]
+                && $0.groupID == groupID
+        }
+        pendingMutations.append(.upsert(group: groups[index], changedFields: ["isCollapsed"]))
+        persistAndSchedule()
+    }
+
     @discardableResult
     func deleteGroup(_ groupID: UUID) -> Bool {
         guard canDeleteGroup(groupID),
@@ -745,7 +757,7 @@ final class ChecklistStore: ObservableObject {
     static let allFields: Set<String> = [
         "title", "notes", "schedule", "customWeekdays", "reminderMinutes", "quantity", "skippedDates", "openDates", "createdAt", "startDate", "endedAt", "groupID", "sortOrder"
     ]
-    static let allGroupFields: Set<String> = ["name", "sortOrder"]
+    static let allGroupFields: Set<String> = ["name", "sortOrder", "isCollapsed"]
 
     private static func changedFields(from old: ChecklistItem, to new: ChecklistItem) -> Set<String> {
         var changed: Set<String> = []

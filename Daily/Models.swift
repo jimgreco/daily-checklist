@@ -23,14 +23,31 @@ enum ScheduleKind: String, Codable, CaseIterable, Identifiable {
 }
 
 struct ChecklistGroup: Identifiable, Codable, Hashable {
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case name
+        case sortOrder
+        case isCollapsed
+    }
+
     var id: UUID
     var name: String
     var sortOrder: Double
+    var isCollapsed: Bool
 
-    init(id: UUID = UUID(), name: String, sortOrder: Double = 0) {
+    init(id: UUID = UUID(), name: String, sortOrder: Double = 0, isCollapsed: Bool = false) {
         self.id = id
         self.name = name
         self.sortOrder = sortOrder
+        self.isCollapsed = isCollapsed
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        name = try container.decode(String.self, forKey: .name)
+        sortOrder = try container.decodeIfPresent(Double.self, forKey: .sortOrder) ?? 0
+        isCollapsed = try container.decodeIfPresent(Bool.self, forKey: .isCollapsed) ?? false
     }
 }
 
@@ -482,8 +499,28 @@ struct ItemPayload: Codable {
 }
 
 struct GroupPayload: Codable {
+    private enum CodingKeys: String, CodingKey {
+        case name
+        case sortOrder
+        case isCollapsed
+    }
+
     var name: String
     var sortOrder: Double
+    var isCollapsed: Bool
+
+    init(name: String, sortOrder: Double, isCollapsed: Bool) {
+        self.name = name
+        self.sortOrder = sortOrder
+        self.isCollapsed = isCollapsed
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        name = try container.decodeIfPresent(String.self, forKey: .name) ?? ""
+        sortOrder = try container.decodeIfPresent(Double.self, forKey: .sortOrder) ?? 0
+        isCollapsed = try container.decodeIfPresent(Bool.self, forKey: .isCollapsed) ?? false
+    }
 }
 
 struct SyncMutation: Identifiable, Codable {
@@ -541,7 +578,7 @@ struct SyncMutation: Identifiable, Codable {
             kind: .groupUpsert,
             stamp: SyncStamp.now,
             changedFields: changedFields,
-            group: GroupPayload(name: group.name, sortOrder: group.sortOrder)
+            group: GroupPayload(name: group.name, sortOrder: group.sortOrder, isCollapsed: group.isCollapsed)
         )
     }
 

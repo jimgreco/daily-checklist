@@ -566,7 +566,7 @@ function stampWins(incoming, current) {
 }
 
 const itemFields = ["title", "notes", "schedule", "customWeekdays", "reminderMinutes", "quantity", "skippedDates", "openDates", "createdAt", "startDate", "endedAt", "groupID", "sortOrder"];
-const groupFields = ["name", "sortOrder"];
+const groupFields = ["name", "sortOrder", "isCollapsed"];
 
 function validID(value) {
   return typeof value === "string" && /^[a-z0-9._:-]{1,120}$/i.test(value);
@@ -629,7 +629,8 @@ function validItemPayload(item = {}) {
 function validGroupPayload(group = {}) {
   return group && typeof group === "object"
     && (group.name == null || (typeof group.name === "string" && group.name.length <= 120))
-    && validFiniteNumber(group.sortOrder);
+    && validFiniteNumber(group.sortOrder)
+    && (group.isCollapsed == null || typeof group.isCollapsed === "boolean");
 }
 
 function validMutation(mutation) {
@@ -792,7 +793,8 @@ function materializeAccount(account) {
     .map((record) => ({
       id: record.id,
       name: record.fields.name?.value || "Untitled group",
-      sortOrder: record.fields.sortOrder?.value ?? 0
+      sortOrder: record.fields.sortOrder?.value ?? 0,
+      isCollapsed: record.fields.isCollapsed?.value === true
     }))
     .sort((left, right) => left.sortOrder - right.sortOrder || left.name.localeCompare(right.name));
   return {
