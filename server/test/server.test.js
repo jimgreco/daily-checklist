@@ -3,9 +3,13 @@ const assert = require("node:assert/strict");
 const crypto = require("node:crypto");
 const {
   applyMutation,
+  clientIP,
   appleWebAuthConfigured,
+  rateLimit,
   materializeAccount,
   refreshCookieMaxAgeSeconds,
+  resetRateLimits,
+  trustedProxyHops,
   upsertUser,
   validSyncRequest,
   stampWins
@@ -55,7 +59,7 @@ test("serves the public landing page, web app, and auth configuration", async ()
   const adminHTML = await admin.text();
   assert.match(adminHTML, /Ritual Cue Admin/);
   assert.match(adminHTML, /https:\/\/accounts\.google\.com\/gsi\/client/);
-  assert.match(adminHTML, /admin\.js\?v=20260702-admin-auth/);
+  assert.match(adminHTML, /admin\.js\?v=20260705-admin-user-detail/);
 
   const config = await fetch(`${baseURL}/auth/config`);
   assert.equal(config.status, 200);
@@ -136,6 +140,53 @@ test("monitor sync probe accepts the monitor header when no runtime token is con
     assert.equal(payload.itemCount, 0);
   } finally {
     restoreEnv("DAILY_MONITOR_TOKEN", previousMonitorToken);
+  }
+});
+
+test("rate limits use direct addresses unless trusted proxy hops are explicit", () => {
+  const previousTrustProxy = process.env.TRUST_PROXY;
+  const previousTrustProxyHops = process.env.TRUST_PROXY_HOPS;
+  const socketAddress = "198.51.100.10";
+
+  try {
+    delete process.env.TRUST_PROXY;
+    delete process.env.TRUST_PROXY_HOPS;
+    const directRequest = {
+      headers: { "x-forwarded-for": "203.0.113.5" },
+      socket: { remoteAddress: socketAddress }
+    };
+    assert.equal(trustedProxyHops(), 0);
+    assert.equal(clientIP(directRequest), socketAddress);
+
+    const directKey = `direct-${crypto.randomUUID()}`;
+    assert.equal(rateLimit(directRequest, directKey, { limit: 1, windowMs: 60_000 }), null);
+    assert.ok(rateLimit({
+      headers: { "x-forwarded-for": "203.0.113.99" },
+      socket: { remoteAddress: socketAddress }
+    }, directKey, { limit: 1, windowMs: 60_000 }) > 0);
+
+    process.env.TRUST_PROXY_HOPS = "1";
+    const forwardedRequest = {
+      headers: { "x-forwarded-for": "203.0.113.5, 198.51.100.20" },
+      socket: { remoteAddress: "10.0.0.5" }
+    };
+    assert.equal(trustedProxyHops(), 1);
+    assert.equal(clientIP(forwardedRequest), "198.51.100.20");
+
+    const forwardedKey = `forwarded-${crypto.randomUUID()}`;
+    assert.equal(rateLimit(forwardedRequest, forwardedKey, { limit: 1, windowMs: 60_000 }), null);
+    assert.ok(rateLimit({
+      headers: { "x-forwarded-for": "203.0.113.200, 198.51.100.20" },
+      socket: { remoteAddress: "10.0.0.5" }
+    }, forwardedKey, { limit: 1, windowMs: 60_000 }) > 0);
+
+    delete process.env.TRUST_PROXY_HOPS;
+    process.env.TRUST_PROXY = "true";
+    assert.equal(trustedProxyHops(), 1);
+    assert.equal(clientIP(forwardedRequest), "198.51.100.20");
+  } finally {
+    restoreEnv("TRUST_PROXY", previousTrustProxy);
+    restoreEnv("TRUST_PROXY_HOPS", previousTrustProxyHops);
   }
 });
 
@@ -308,93 +359,153 @@ test("admin users can view stats and disable viewer accounts", async () => {
   const suffix = crypto.randomUUID();
   const adminEmail = `admin-${suffix}@ritualcue.local`;
   const viewerEmail = `viewer-${suffix}@ritualcue.local`;
+  const previousAdminEmails = process.env.ADMIN_EMAILS;
   process.env.ADMIN_EMAILS = adminEmail;
 
-  const adminLogin = await fetch(`${baseURL}/auth/dev`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ email: adminEmail, name: "Admin User" })
-  });
-  assert.equal(adminLogin.status, 200);
-  const adminAuth = await adminLogin.json();
+  try {
+    const adminLogin = await fetch(`${baseURL}/auth/dev`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email: adminEmail, name: "Admin User" })
+    });
+    assert.equal(adminLogin.status, 200);
+    const adminAuth = await adminLogin.json();
 
-  const viewerLogin = await fetch(`${baseURL}/auth/dev`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ email: viewerEmail, name: "Viewer User" })
-  });
-  assert.equal(viewerLogin.status, 200);
-  const viewerCookie = viewerLogin.headers.get("set-cookie");
-  const viewerAuth = await viewerLogin.json();
+    const viewerLogin = await fetch(`${baseURL}/auth/dev`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email: viewerEmail, name: "Viewer User" })
+    });
+    assert.equal(viewerLogin.status, 200);
+    const viewerCookie = viewerLogin.headers.get("set-cookie");
+    const viewerAuth = await viewerLogin.json();
 
-  const forbidden = await fetch(`${baseURL}/api/admin/overview`, {
-    headers: { authorization: `Bearer ${viewerAuth.token}` }
-  });
-  assert.equal(forbidden.status, 403);
+    const forbidden = await fetch(`${baseURL}/api/admin/overview`, {
+      headers: { authorization: `Bearer ${viewerAuth.token}` }
+    });
+    assert.equal(forbidden.status, 403);
 
-  const sync = await fetch(`${baseURL}/api/sync`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      authorization: `Bearer ${viewerAuth.token}`
-    },
-    body: JSON.stringify({
-      deviceID: "viewer-device",
-      mutations: [{
-        id: `viewer-create-${suffix}`,
-        itemID: `viewer-item-${suffix}`,
-        kind: "upsert",
-        stamp: "2026-07-02T12:00:00.000Z",
-        changedFields: ["title", "createdAt"],
-        item: { title: "Viewer item", createdAt: "2026-07-02T12:00:00.000Z" }
-      }]
-    })
-  });
-  assert.equal(sync.status, 200);
+    const forbiddenDetail = await fetch(`${baseURL}/api/admin/users/${viewerAuth.user.id}`, {
+      headers: { authorization: `Bearer ${viewerAuth.token}` }
+    });
+    assert.equal(forbiddenDetail.status, 403);
 
-  const overview = await fetch(`${baseURL}/api/admin/overview`, {
-    headers: { authorization: `Bearer ${adminAuth.token}` }
-  });
-  assert.equal(overview.status, 200);
-  const payload = await overview.json();
-  const viewer = payload.users.find((user) => user.email === viewerEmail);
-  assert.ok(viewer);
-  assert.equal(viewer.activeItems, 1);
-  assert.equal(viewer.sessionCount, 1);
-  assert.ok(payload.totals.totalUsers >= 2);
+    const forbiddenReenable = await fetch(`${baseURL}/api/admin/users/${viewerAuth.user.id}/reenable`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${viewerAuth.token}` }
+    });
+    assert.equal(forbiddenReenable.status, 403);
 
-  const disabled = await fetch(`${baseURL}/api/admin/users/${viewer.id}/disable`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      authorization: `Bearer ${adminAuth.token}`
-    },
-    body: JSON.stringify({ reason: "test disable" })
-  });
-  assert.equal(disabled.status, 200);
-  assert.equal((await disabled.json()).user.disabledReason, "test disable");
+    const sync = await fetch(`${baseURL}/api/sync`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${viewerAuth.token}`
+      },
+      body: JSON.stringify({
+        deviceID: "viewer-device",
+        mutations: [{
+          id: `viewer-create-${suffix}`,
+          itemID: `viewer-item-${suffix}`,
+          kind: "upsert",
+          stamp: "2026-07-02T12:00:00.000Z",
+          changedFields: ["title", "createdAt"],
+          item: { title: "Viewer item", createdAt: "2026-07-02T12:00:00.000Z" }
+        }]
+      })
+    });
+    assert.equal(sync.status, 200);
 
-  const afterDisable = await fetch(`${baseURL}/auth/me`, {
-    headers: { authorization: `Bearer ${viewerAuth.token}` }
-  });
-  assert.equal(afterDisable.status, 403);
+    const overview = await fetch(`${baseURL}/api/admin/overview`, {
+      headers: { authorization: `Bearer ${adminAuth.token}` }
+    });
+    assert.equal(overview.status, 200);
+    const payload = await overview.json();
+    const viewer = payload.users.find((user) => user.email === viewerEmail);
+    assert.ok(viewer);
+    assert.equal(viewer.activeItems, 1);
+    assert.equal(viewer.sessionCount, 1);
+    assert.ok(payload.totals.totalUsers >= 2);
 
-  const refresh = await fetch(`${baseURL}/auth/refresh`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      cookie: viewerCookie
-    },
-    body: JSON.stringify({})
-  });
-  assert.equal(refresh.status, 401);
+    const detail = await fetch(`${baseURL}/api/admin/users/${viewer.id}`, {
+      headers: { authorization: `Bearer ${adminAuth.token}` }
+    });
+    assert.equal(detail.status, 200);
+    const detailPayload = await detail.json();
+    assert.equal(detailPayload.email, viewerEmail);
+    assert.equal(detailPayload.activeItems, 1);
+    assert.equal(detailPayload.sessionCount, 1);
+    assert.equal(detailPayload.activeSessionCount, 1);
+    assert.equal(detailPayload.providers.includes("dev"), true);
+    assert.equal(detailPayload.recentSessions.length, 1);
+    assert.equal(Object.hasOwn(detailPayload.recentSessions[0], "id"), false);
+    assert.equal(Object.hasOwn(detailPayload.recentSessions[0], "tokenHash"), false);
+    assert.deepEqual(detailPayload.auditEvents, []);
 
-  const repeatLogin = await fetch(`${baseURL}/auth/dev`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ email: viewerEmail, name: "Viewer User" })
-  });
-  assert.equal(repeatLogin.status, 403);
+    const disabled = await fetch(`${baseURL}/api/admin/users/${viewer.id}/disable`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${adminAuth.token}`
+      },
+      body: JSON.stringify({ reason: "test disable" })
+    });
+    assert.equal(disabled.status, 200);
+    const disabledPayload = await disabled.json();
+    assert.equal(disabledPayload.user.disabledReason, "test disable");
+    assert.equal(disabledPayload.user.sessionCount, 0);
+    assert.equal(disabledPayload.user.auditEvents[0].type, "disabled");
+
+    const afterDisable = await fetch(`${baseURL}/auth/me`, {
+      headers: { authorization: `Bearer ${viewerAuth.token}` }
+    });
+    assert.equal(afterDisable.status, 403);
+
+    const refresh = await fetch(`${baseURL}/auth/refresh`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        cookie: viewerCookie
+      },
+      body: JSON.stringify({})
+    });
+    assert.equal(refresh.status, 401);
+
+    const repeatLogin = await fetch(`${baseURL}/auth/dev`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email: viewerEmail, name: "Viewer User" })
+    });
+    assert.equal(repeatLogin.status, 403);
+
+    const reenabled = await fetch(`${baseURL}/api/admin/users/${viewer.id}/reenable`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${adminAuth.token}` }
+    });
+    assert.equal(reenabled.status, 200);
+    const reenabledPayload = await reenabled.json();
+    assert.equal(reenabledPayload.user.disabledAt, null);
+    assert.equal(reenabledPayload.user.disabledReason, null);
+    assert.equal(reenabledPayload.user.reenabledBy, adminEmail);
+    assert.ok(reenabledPayload.user.reenabledAt);
+    assert.equal(reenabledPayload.user.auditEvents[0].type, "reenabled");
+    assert.equal(reenabledPayload.user.auditEvents[1].type, "disabled");
+
+    const afterReenableLogin = await fetch(`${baseURL}/auth/dev`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email: viewerEmail, name: "Viewer User" })
+    });
+    assert.equal(afterReenableLogin.status, 200);
+    const afterReenableAuth = await afterReenableLogin.json();
+    const afterReenableMe = await fetch(`${baseURL}/auth/me`, {
+      headers: { authorization: `Bearer ${afterReenableAuth.token}` }
+    });
+    assert.equal(afterReenableMe.status, 200);
+  } finally {
+    restoreEnv("ADMIN_EMAILS", previousAdminEmails);
+    resetRateLimits();
+  }
 });
 
 test("authenticated users can export and delete account data", async () => {
@@ -403,6 +514,7 @@ test("authenticated users can export and delete account data", async () => {
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ email: "privacy-test@ritualcue.local", name: "Privacy Test" })
   });
+  assert.equal(login.status, 200);
   const auth = await login.json();
   const sync = await fetch(`${baseURL}/api/sync`, {
     method: "POST",

@@ -108,21 +108,38 @@ function parseCookies(request) {
 }
 
 function firstHeaderValue(value) {
-  if (Array.isArray(value)) return String(value[0] || "").split(",")[0].trim();
-  return String(value || "").split(",")[0].trim();
+  return headerValues(value)[0] || "";
+}
+
+function headerValues(value) {
+  const values = Array.isArray(value) ? value : [value];
+  return values.flatMap((entry) => String(entry || "").split(",").map((part) => part.trim()).filter(Boolean));
+}
+
+function trustedProxyHops() {
+  const explicit = envValue("TRUST_PROXY_HOPS");
+  if (explicit) {
+    const hops = Number.parseInt(explicit, 10);
+    return Number.isSafeInteger(hops) && hops > 0 ? Math.min(hops, 10) : 0;
+  }
+  return process.env.TRUST_PROXY === "true" ? 1 : 0;
+}
+
+function trustedForwardedValue(value) {
+  const hops = trustedProxyHops();
+  if (!hops) return "";
+  const values = headerValues(value);
+  if (!values.length) return "";
+  return values[Math.max(0, values.length - hops)] || "";
 }
 
 function trustedRequestHost(request) {
-  const trustedProxy = process.env.TRUST_PROXY === "true";
-  const forwardedHost = trustedProxy ? firstHeaderValue(request.headers["x-forwarded-host"]) : "";
+  const forwardedHost = trustedForwardedValue(request.headers["x-forwarded-host"]);
   return forwardedHost || firstHeaderValue(request.headers.host) || null;
 }
 
 function trustedRequestProtocol(request) {
-  const trustedProxy = process.env.TRUST_PROXY === "true";
-  const forwardedProtocol = trustedProxy
-    ? firstHeaderValue(request.headers["x-forwarded-proto"]).toLowerCase()
-    : "";
+  const forwardedProtocol = trustedForwardedValue(request.headers["x-forwarded-proto"]).toLowerCase();
   return forwardedProtocol === "https" || forwardedProtocol === "http"
     ? forwardedProtocol
     : "http";
@@ -198,11 +215,13 @@ function clearRefreshCookie() {
 
 const rateBuckets = new Map();
 
+function resetRateLimits() {
+  rateBuckets.clear();
+}
+
 function clientIP(request) {
-  if (process.env.TRUST_PROXY === "true") {
-    const forwarded = String(request.headers["x-forwarded-for"] || "").split(",")[0].trim();
-    if (forwarded) return forwarded;
-  }
+  const forwarded = trustedForwardedValue(request.headers["x-forwarded-for"]);
+  if (forwarded) return forwarded;
   return request.socket.remoteAddress || "unknown";
 }
 
@@ -487,41 +506,104 @@ function accountSummary(account = {}) {
   };
 }
 
+function sessionIndex(database) {
+  const now = new Date().toISOString();
+  const counts = {};
+  const activeCounts = {};
+  const lastSessionExpiresAt = {};
+  const byUser = {};
+  let activeSessions = 0;
+  for (const session of Object.values(database.sessions || {})) {
+    if (!session?.userId) continue;
+    const active = !session.expiresAt || session.expiresAt >= now;
+    counts[session.userId] = (counts[session.userId] || 0) + 1;
+    if (active) {
+      activeCounts[session.userId] = (activeCounts[session.userId] || 0) + 1;
+      activeSessions += 1;
+    }
+    lastSessionExpiresAt[session.userId] = maxISO(lastSessionExpiresAt[session.userId], session.expiresAt);
+    byUser[session.userId] ||= [];
+    byUser[session.userId].push({
+      expiresAt: session.expiresAt || null,
+      active
+    });
+  }
+  for (const sessions of Object.values(byUser)) {
+    sessions.sort((left, right) => {
+      const leftExpiry = left.expiresAt || "9999-12-31T23:59:59.999Z";
+      const rightExpiry = right.expiresAt || "9999-12-31T23:59:59.999Z";
+      return rightExpiry.localeCompare(leftExpiry);
+    });
+  }
+  return { counts, activeCounts, lastSessionExpiresAt, activeSessions, byUser };
+}
+
+function adminUserSummary(database, user, sessions = sessionIndex(database)) {
+  const account = accountSummary(database.accounts?.[user.id]);
+  return {
+    id: user.id,
+    email: user.email,
+    name: user.name,
+    profileImageURL: user.profileImageURL || null,
+    createdAt: user.createdAt || null,
+    disabledAt: user.disabledAt || null,
+    disabledBy: user.disabledBy || null,
+    disabledReason: user.disabledReason || null,
+    lastDisabledAt: user.lastDisabledAt || null,
+    lastDisabledBy: user.lastDisabledBy || null,
+    lastDisabledReason: user.lastDisabledReason || null,
+    reenabledAt: user.reenabledAt || null,
+    reenabledBy: user.reenabledBy || null,
+    isAdmin: isAdminUser(user),
+    providers: identityProviders(database, user.id),
+    sessionCount: sessions.counts[user.id] || 0,
+    activeSessionCount: sessions.activeCounts[user.id] || 0,
+    lastSessionExpiresAt: sessions.lastSessionExpiresAt[user.id] || null,
+    ...account
+  };
+}
+
+function userAuditEvents(user) {
+  const events = [];
+  const disabledAt = user.disabledAt || user.lastDisabledAt;
+  if (disabledAt) {
+    events.push({
+      type: "disabled",
+      at: disabledAt,
+      actor: user.disabledBy || user.lastDisabledBy || null,
+      reason: user.disabledReason || user.lastDisabledReason || null
+    });
+  }
+  if (user.reenabledAt) {
+    events.push({
+      type: "reenabled",
+      at: user.reenabledAt,
+      actor: user.reenabledBy || null,
+      reason: null
+    });
+  }
+  return events.sort((left, right) => String(right.at || "").localeCompare(String(left.at || "")));
+}
+
+function adminUserDetail(database, userID) {
+  const user = database.users?.[userID];
+  if (!user) return null;
+  const sessions = sessionIndex(database);
+  return {
+    ...adminUserSummary(database, user, sessions),
+    recentSessions: (sessions.byUser[user.id] || []).slice(0, 20),
+    auditEvents: userAuditEvents(user)
+  };
+}
+
 function adminOverview(database) {
   const users = Object.values(database.users || {}).sort((left, right) => {
     const leftCreated = left.createdAt || "";
     const rightCreated = right.createdAt || "";
     return rightCreated.localeCompare(leftCreated) || left.email.localeCompare(right.email);
   });
-  const now = new Date().toISOString();
-  const sessionCounts = {};
-  const lastSessionExpiresAt = {};
-  let activeSessions = 0;
-  for (const session of Object.values(database.sessions || {})) {
-    if (!session?.userId) continue;
-    sessionCounts[session.userId] = (sessionCounts[session.userId] || 0) + 1;
-    lastSessionExpiresAt[session.userId] = maxISO(lastSessionExpiresAt[session.userId], session.expiresAt);
-    if (!session.expiresAt || session.expiresAt >= now) activeSessions += 1;
-  }
-
-  const userRows = users.map((user) => {
-    const account = accountSummary(database.accounts?.[user.id]);
-    return {
-      id: user.id,
-      email: user.email,
-      name: user.name,
-      profileImageURL: user.profileImageURL || null,
-      createdAt: user.createdAt || null,
-      disabledAt: user.disabledAt || null,
-      disabledBy: user.disabledBy || null,
-      disabledReason: user.disabledReason || null,
-      isAdmin: isAdminUser(user),
-      providers: identityProviders(database, user.id),
-      sessionCount: sessionCounts[user.id] || 0,
-      lastSessionExpiresAt: lastSessionExpiresAt[user.id] || null,
-      ...account
-    };
-  });
+  const sessions = sessionIndex(database);
+  const userRows = users.map((user) => adminUserSummary(database, user, sessions));
 
   const totals = userRows.reduce((memo, user) => {
     memo.totalItems += user.totalItems;
@@ -538,7 +620,7 @@ function adminOverview(database) {
     totalUsers: userRows.length,
     activeUsers: userRows.filter((user) => !user.disabledAt).length,
     disabledUsers: userRows.filter((user) => user.disabledAt).length,
-    activeSessions,
+    activeSessions: sessions.activeSessions,
     identityCount: Object.keys(database.identities || {}).length,
     totalItems: 0,
     activeItems: 0,
@@ -1072,6 +1154,13 @@ const server = http.createServer(async (request, response) => {
       if (!admin) return;
       return send(response, 200, adminOverview(admin.database));
     }
+    const adminUserMatch = pathname.match(/^\/api\/admin\/users\/([^/]+)$/);
+    if (request.method === "GET" && adminUserMatch) {
+      const admin = await requireAdmin(request, response);
+      if (!admin) return;
+      const detail = adminUserDetail(admin.database, decodeURIComponent(adminUserMatch[1]));
+      return detail ? send(response, 200, detail) : send(response, 404, { error: "User not found" });
+    }
     if (request.method === "POST" && pathname === "/api/monitor/sync") {
       if (enforceRateLimit(request, response, "api-monitor-sync", { limit: 30, windowMs: 15 * 60_000 })) return;
       if (!hasMonitorToken(request)) return send(response, 404, { error: "Not found" });
@@ -1093,10 +1182,35 @@ const server = http.createServer(async (request, response) => {
         user.disabledAt ||= new Date().toISOString();
         user.disabledBy ||= admin.user.email;
         user.disabledReason = String(body.reason || "").trim().slice(0, 240) || null;
+        delete user.reenabledAt;
+        delete user.reenabledBy;
         for (const [tokenHash, session] of Object.entries(database.sessions || {})) {
           if (session.userId === userID) delete database.sessions[tokenHash];
         }
-        return user;
+        return adminUserDetail(database, userID);
+      });
+      return result ? send(response, 200, { user: result }) : send(response, 404, { error: "User not found" });
+    }
+    const reenableMatch = pathname.match(/^\/api\/admin\/users\/([^/]+)\/reenable$/);
+    if (request.method === "POST" && reenableMatch) {
+      if (enforceRateLimit(request, response, "api-admin-reenable", { limit: 20, windowMs: 15 * 60_000 })) return;
+      const admin = await requireAdmin(request, response);
+      if (!admin) return;
+      const userID = decodeURIComponent(reenableMatch[1]);
+      const result = await store.update((database) => {
+        const user = database.users[userID];
+        if (!user) return null;
+        if (user.disabledAt) {
+          user.lastDisabledAt = user.disabledAt;
+          user.lastDisabledBy = user.disabledBy || null;
+          user.lastDisabledReason = user.disabledReason || null;
+        }
+        delete user.disabledAt;
+        delete user.disabledBy;
+        delete user.disabledReason;
+        user.reenabledAt = new Date().toISOString();
+        user.reenabledBy = admin.user.email;
+        return adminUserDetail(database, userID);
       });
       return result ? send(response, 200, { user: result }) : send(response, 404, { error: "User not found" });
     }
@@ -1183,5 +1297,10 @@ module.exports = {
   refreshCookieMaxAgeSeconds,
   appleWebAuthConfigured,
   upsertUser,
-  adminOverview
+  adminOverview,
+  adminUserDetail,
+  clientIP,
+  rateLimit,
+  resetRateLimits,
+  trustedProxyHops
 };

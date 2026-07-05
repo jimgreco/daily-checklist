@@ -26,6 +26,18 @@ Local development can run without Postgres and will use `server/data/database.js
 DATABASE_URL=postgresql://postgres:postgres@localhost:5432/daily_checklist npm start
 ```
 
+## Proxy and rate-limit IPs
+
+Local development defaults to `TRUST_PROXY_HOPS=0`, so forwarded headers are ignored and rate limits key off the direct socket address.
+
+Production should set `TRUST_PROXY_HOPS` to the exact number of trusted reverse-proxy hops in front of the Node server. The production proxy must overwrite or append `X-Forwarded-For`, `X-Forwarded-Host`, and `X-Forwarded-Proto`, and the Node port should not be directly reachable from the public internet. Behind one trusted TLS/reverse-proxy hop, use:
+
+```sh
+TRUST_PROXY_HOPS=1
+```
+
+`TRUST_PROXY=true` is still accepted as a one-hop compatibility setting, but `TRUST_PROXY_HOPS` is preferred because it documents the expected topology.
+
 ## Authentication setup
 
 The authentication contract mirrors CubbyLog:

@@ -6,6 +6,9 @@
     token: "",
     user: null,
     overview: null,
+    selectedUserID: "",
+    userDetail: null,
+    detailLoading: false,
     search: "",
     loading: true,
     error: "",
@@ -129,6 +132,15 @@
     try {
       if (!state.token) await restoreSession();
       state.overview = await request("/api/admin/overview");
+      if (state.selectedUserID) {
+        try {
+          state.userDetail = await request(`/api/admin/users/${encodeURIComponent(state.selectedUserID)}`);
+        } catch (error) {
+          if (error.message !== "User not found") throw error;
+          state.selectedUserID = "";
+          state.userDetail = null;
+        }
+      }
     } catch (error) {
       state.error = error.message;
     } finally {
@@ -139,6 +151,83 @@
 
   function renderStat(label, value) {
     return `<div class="admin-stat"><span>${escapeHTML(label)}</span><strong>${formatNumber(value)}</strong></div>`;
+  }
+
+  function renderActionButtons(user, { includeDetails = true } = {}) {
+    if (!user) return "";
+    const id = escapeHTML(user.id);
+    const disableButton = `<button class="mini-button danger" data-action="disable" data-id="${id}" ${user.disabledAt || user.isAdmin ? "disabled" : ""}>Disable</button>`;
+    const reenableButton = `<button class="mini-button accent" data-action="reenable" data-id="${id}" ${user.disabledAt ? "" : "disabled"}>Re-enable</button>`;
+    return `${includeDetails ? `<button class="mini-button" data-action="view" data-id="${id}">Details</button>` : ""}
+      ${user.disabledAt ? reenableButton : disableButton}`;
+  }
+
+  function renderDetailMetric(label, value) {
+    return `<div class="admin-detail-metric"><span>${escapeHTML(label)}</span><strong>${escapeHTML(value)}</strong></div>`;
+  }
+
+  function renderAuditEvents(events = []) {
+    if (!events.length) return `<li class="admin-muted">No audit events</li>`;
+    return events.map((event) => {
+      const label = event.type === "reenabled" ? "Re-enabled" : "Disabled";
+      const actor = event.actor ? ` by ${escapeHTML(event.actor)}` : "";
+      const reason = event.reason ? `<small>${escapeHTML(event.reason)}</small>` : "";
+      return `<li><strong>${label}</strong><span>${formatDate(event.at)}${actor}</span>${reason}</li>`;
+    }).join("");
+  }
+
+  function renderSessions(sessions = []) {
+    if (!sessions.length) return `<li class="admin-muted">No sessions</li>`;
+    return sessions.map((session) => {
+      const status = session.active ? "Active" : "Expired";
+      return `<li><strong>${status}</strong><span>${formatDate(session.expiresAt)}</span></li>`;
+    }).join("");
+  }
+
+  function renderUserDetail() {
+    if (!state.selectedUserID) return "";
+    if (state.detailLoading) {
+      return `<section class="admin-detail"><div class="admin-detail-loading"><strong>Loading user</strong></div></section>`;
+    }
+    const user = state.userDetail;
+    if (!user) return "";
+    const status = user.disabledAt ? "Disabled" : "Active";
+    const lastActivity = user.lastActivityAt || user.createdAt;
+    const providerList = (user.providers || []).join(", ") || "No provider";
+    return `<section class="admin-detail" aria-label="User detail">
+      <div class="admin-detail-head">
+        <div class="admin-user">
+          <strong>${escapeHTML(user.name || user.email || "Unknown")}</strong>
+          <span>${escapeHTML(user.email || "")}</span>
+          <small>${escapeHTML(user.id)}</small>
+        </div>
+        <div class="admin-row-actions">
+          ${renderActionButtons(user, { includeDetails: false })}
+          <button class="mini-button" data-action="close-detail">Close</button>
+        </div>
+      </div>
+      <section class="admin-detail-grid">
+        ${renderDetailMetric("Status", status)}
+        ${renderDetailMetric("Providers", providerList)}
+        ${renderDetailMetric("Signed up", formatDate(user.createdAt))}
+        ${renderDetailMetric("Activity", formatDate(lastActivity))}
+        ${renderDetailMetric("Items", `${formatNumber(user.activeItems)} active / ${formatNumber(user.totalItems)} total`)}
+        ${renderDetailMetric("Groups", `${formatNumber(user.activeGroups)} active / ${formatNumber(user.totalGroups)} total`)}
+        ${renderDetailMetric("Completions", formatNumber(user.completedRecords))}
+        ${renderDetailMetric("Sessions", `${formatNumber(user.activeSessionCount)} active / ${formatNumber(user.sessionCount)} total`)}
+      </section>
+      ${user.disabledAt ? `<p class="admin-detail-note">Disabled ${formatDate(user.disabledAt)}${user.disabledBy ? ` by ${escapeHTML(user.disabledBy)}` : ""}${user.disabledReason ? `: ${escapeHTML(user.disabledReason)}` : ""}</p>` : ""}
+      <div class="admin-detail-lists">
+        <section>
+          <h2>Audit</h2>
+          <ul>${renderAuditEvents(user.auditEvents)}</ul>
+        </section>
+        <section>
+          <h2>Recent sessions</h2>
+          <ul>${renderSessions(user.recentSessions)}</ul>
+        </section>
+      </div>
+    </section>`;
   }
 
   function renderAuthGate() {
@@ -177,7 +266,7 @@
       <td>${formatNumber(user.completedRecords)}</td>
       <td>${formatNumber(user.sessionCount)}</td>
       <td>
-        <button class="mini-button danger" data-action="disable" data-id="${escapeHTML(user.id)}" ${user.disabledAt || user.isAdmin ? "disabled" : ""}>Disable</button>
+        <div class="admin-row-actions">${renderActionButtons(user)}</div>
       </td>
     </tr>`;
   }
@@ -229,6 +318,7 @@
           <tbody>${users.map(renderUser).join("") || `<tr><td colspan="8" class="admin-empty">No users match this search.</td></tr>`}</tbody>
         </table>
       </section>
+      ${renderUserDetail()}
     </section>`;
   }
 
@@ -255,10 +345,39 @@
     await loadOverview();
   }
 
+  async function reenableUser(id) {
+    if (!confirm("Re-enable this account?")) return;
+    await request(`/api/admin/users/${encodeURIComponent(id)}/reenable`, { method: "POST" });
+    await loadOverview();
+  }
+
+  async function viewUser(id) {
+    state.selectedUserID = id;
+    state.userDetail = null;
+    state.detailLoading = true;
+    render();
+    try {
+      state.userDetail = await request(`/api/admin/users/${encodeURIComponent(id)}`);
+    } catch (error) {
+      state.error = error.message;
+    } finally {
+      state.detailLoading = false;
+      render();
+    }
+  }
+
   app.addEventListener("click", (event) => {
     const target = event.target.closest("[data-action]");
     if (!target) return;
     if (target.dataset.action === "refresh") void loadOverview();
+    if (target.dataset.action === "close-detail") {
+      state.selectedUserID = "";
+      state.userDetail = null;
+      render();
+    }
+    if (target.dataset.action === "view") {
+      void viewUser(target.dataset.id);
+    }
     if (target.dataset.action === "apple") {
       void signInApple().catch((error) => {
         state.error = error.message;
@@ -267,6 +386,12 @@
     }
     if (target.dataset.action === "disable") {
       void disableUser(target.dataset.id).catch((error) => {
+        state.error = error.message;
+        render();
+      });
+    }
+    if (target.dataset.action === "reenable") {
+      void reenableUser(target.dataset.id).catch((error) => {
         state.error = error.message;
         render();
       });
