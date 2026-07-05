@@ -755,10 +755,16 @@ struct ChecklistView: View {
         let header = HStack(spacing: 8) {
             if isRealGroup {
                 Button(action: toggleCollapsed) {
-                    Image(systemName: isCollapsed ? "folder.fill" : "folder")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(accent.opacity(0.78))
-                        .frame(width: 24, height: 24)
+                    HStack(spacing: 8) {
+                        Image(systemName: isCollapsed ? "folder.fill" : "folder")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(accent.opacity(0.78))
+                            .frame(width: 24, height: 24)
+                        Text(title)
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundStyle(ink.opacity(0.78))
+                    }
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(isCollapsed ? "Open \(title)" : "Close \(title)")
@@ -766,10 +772,10 @@ struct ChecklistView: View {
                 Image(systemName: "tray.fill")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(accent.opacity(0.75))
+                Text(title)
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(ink.opacity(0.78))
             }
-            Text(title)
-                .font(.system(size: 13, weight: .bold))
-                .foregroundStyle(ink.opacity(0.78))
             Text(completedCount == totalCount ? "\(totalCount)" : "\(completedCount)/\(totalCount)")
                 .font(.system(size: 11, weight: .bold, design: .rounded))
                 .foregroundStyle(.secondary)
