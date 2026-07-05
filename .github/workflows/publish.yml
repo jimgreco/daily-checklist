@@ -128,13 +128,14 @@ jobs:
           APPLE_WEB_KEY_ID: ${{ secrets.APPLE_WEB_KEY_ID }}
           APPLE_WEB_PRIVATE_KEY_BASE64: ${{ secrets.APPLE_WEB_PRIVATE_KEY_BASE64 }}
           APPLE_WEB_REDIRECT_URI: ${{ secrets.APPLE_WEB_REDIRECT_URI || 'https://ritualcue.com' }}
+          DAILY_MONITOR_TOKEN: ${{ secrets.DAILY_MONITOR_TOKEN }}
         run: |
           set -euo pipefail
           ssh -i "$HOME/.ssh/daily" \
             -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
             -o StrictHostKeyChecking=yes \
             "$EC2_USER@$EC2_HOST" \
-            "DAILY_SESSION_SECRET='$DAILY_SESSION_SECRET' ADMIN_EMAILS='$ADMIN_EMAILS' DAILY_ADMIN_EMAILS='$DAILY_ADMIN_EMAILS' DAILY_GOOGLE_CLIENT_ID='$GOOGLE_IOS_CLIENT_ID' DAILY_GOOGLE_WEB_CLIENT_ID='$GOOGLE_WEB_CLIENT_ID' DAILY_DATABASE_URL='$DAILY_DATABASE_URL' DAILY_APPLE_TEAM_ID='$APPLE_TEAM_ID' DAILY_APPLE_WEB_CLIENT_ID='$APPLE_WEB_CLIENT_ID' DAILY_APPLE_WEB_KEY_ID='$APPLE_WEB_KEY_ID' DAILY_APPLE_WEB_PRIVATE_KEY_BASE64='$APPLE_WEB_PRIVATE_KEY_BASE64' DAILY_APPLE_WEB_REDIRECT_URI='$APPLE_WEB_REDIRECT_URI' bash -se" <<'REMOTE'
+            "DAILY_SESSION_SECRET='$DAILY_SESSION_SECRET' ADMIN_EMAILS='$ADMIN_EMAILS' DAILY_ADMIN_EMAILS='$DAILY_ADMIN_EMAILS' DAILY_GOOGLE_CLIENT_ID='$GOOGLE_IOS_CLIENT_ID' DAILY_GOOGLE_WEB_CLIENT_ID='$GOOGLE_WEB_CLIENT_ID' DAILY_DATABASE_URL='$DAILY_DATABASE_URL' DAILY_APPLE_TEAM_ID='$APPLE_TEAM_ID' DAILY_APPLE_WEB_CLIENT_ID='$APPLE_WEB_CLIENT_ID' DAILY_APPLE_WEB_KEY_ID='$APPLE_WEB_KEY_ID' DAILY_APPLE_WEB_PRIVATE_KEY_BASE64='$APPLE_WEB_PRIVATE_KEY_BASE64' DAILY_APPLE_WEB_REDIRECT_URI='$APPLE_WEB_REDIRECT_URI' DAILY_MONITOR_TOKEN='$DAILY_MONITOR_TOKEN' bash -se" <<'REMOTE'
           set -euo pipefail
           cd "$HOME/deploy"
 
@@ -171,6 +172,7 @@ jobs:
           update_env DAILY_APPLE_WEB_KEY_ID "$DAILY_APPLE_WEB_KEY_ID"
           update_env DAILY_APPLE_WEB_PRIVATE_KEY_BASE64 "$DAILY_APPLE_WEB_PRIVATE_KEY_BASE64"
           update_env DAILY_APPLE_WEB_REDIRECT_URI "$DAILY_APPLE_WEB_REDIRECT_URI"
+          update_env DAILY_MONITOR_TOKEN "$DAILY_MONITOR_TOKEN"
 
           docker-compose up -d db
           for attempt in $(seq 1 60); do
@@ -331,7 +333,7 @@ jobs:
           [[ "$GOOGLE_CLIENT_ID" != *YOUR_* ]] || exit 1
           [[ "$GOOGLE_REVERSED_CLIENT_ID" == com.googleusercontent.apps.* ]] || exit 1
 
-      - name: Build simulator app
+      - name: Run iOS unit tests
         env:
           API_BASE_URL: ${{ secrets.IOS_API_BASE_URL }}
           GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_IOS_CLIENT_ID }}
@@ -343,12 +345,12 @@ jobs:
             -scheme Daily \
             -configuration Debug \
             -sdk iphonesimulator \
-            -destination 'generic/platform=iOS Simulator' \
+            -destination 'platform=iOS Simulator,name=iPhone 17 Pro Max,OS=latest' \
             CODE_SIGNING_ALLOWED=NO \
             API_BASE_URL="$API_BASE_URL" \
             GOOGLE_CLIENT_ID="$GOOGLE_CLIENT_ID" \
             GOOGLE_REVERSED_CLIENT_ID="$GOOGLE_REVERSED_CLIENT_ID" \
-            build
+            test
 
       - name: Configure App Store Connect API key
         env:

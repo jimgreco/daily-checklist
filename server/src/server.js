@@ -107,6 +107,69 @@ function parseCookies(request) {
   }).filter(([name]) => name));
 }
 
+function firstHeaderValue(value) {
+  if (Array.isArray(value)) return String(value[0] || "").split(",")[0].trim();
+  return String(value || "").split(",")[0].trim();
+}
+
+function trustedRequestHost(request) {
+  const trustedProxy = process.env.TRUST_PROXY === "true";
+  const forwardedHost = trustedProxy ? firstHeaderValue(request.headers["x-forwarded-host"]) : "";
+  return forwardedHost || firstHeaderValue(request.headers.host) || null;
+}
+
+function trustedRequestProtocol(request) {
+  const trustedProxy = process.env.TRUST_PROXY === "true";
+  const forwardedProtocol = trustedProxy
+    ? firstHeaderValue(request.headers["x-forwarded-proto"]).toLowerCase()
+    : "";
+  return forwardedProtocol === "https" || forwardedProtocol === "http"
+    ? forwardedProtocol
+    : "http";
+}
+
+function trustedRequestOrigin(request) {
+  const host = trustedRequestHost(request);
+  if (!host) return null;
+  const protocol = trustedRequestProtocol(request);
+  return `${protocol}://${host}`;
+}
+
+function urlFromHeader(value) {
+  const header = firstHeaderValue(value);
+  if (!header) return null;
+  try {
+    return new URL(header);
+  } catch {
+    return null;
+  }
+}
+
+function matchesTrustedOrigin(request, value) {
+  const url = urlFromHeader(value);
+  if (!url) return false;
+  const expectedOrigin = trustedRequestOrigin(request);
+  if (expectedOrigin && url.origin === expectedOrigin) return true;
+  const expectedHost = trustedRequestHost(request);
+  return Boolean(expectedHost && url.protocol === "https:" && url.host === expectedHost);
+}
+
+function isSameOriginWebRequest(request) {
+  if (request.headers.origin) return matchesTrustedOrigin(request, request.headers.origin);
+  if (request.headers.referer) return matchesTrustedOrigin(request, request.headers.referer);
+  return firstHeaderValue(request.headers["sec-fetch-site"]).toLowerCase() !== "cross-site";
+}
+
+function refreshTokenFromBody(body) {
+  return typeof body?.refreshToken === "string" ? body.refreshToken : "";
+}
+
+function rejectCrossOriginCookieAuth(request, response, body, cookieToken) {
+  if (refreshTokenFromBody(body) || !cookieToken || isSameOriginWebRequest(request)) return false;
+  send(response, 403, { error: "Forbidden" });
+  return true;
+}
+
 function serializeCookie(name, value, options = {}) {
   const parts = [`${name}=${encodeURIComponent(value)}`];
   if (options.maxAge != null) parts.push(`Max-Age=${options.maxAge}`);
@@ -804,6 +867,79 @@ function materializeAccount(account) {
   };
 }
 
+function emptyAccount() {
+  return {
+    items: {},
+    groups: {},
+    appliedMutations: {},
+    eveningReminder: null
+  };
+}
+
+function accountForUser(database, userID) {
+  database.accounts[userID] ||= emptyAccount();
+  return database.accounts[userID];
+}
+
+function syncAccount(database, userID, body) {
+  const account = accountForUser(database, userID);
+  const acceptedMutationIDs = [];
+  for (const mutation of body.mutations) {
+    if (applyMutation(account, mutation, body.deviceID)) acceptedMutationIDs.push(mutation.id);
+  }
+  return { ...materializeAccount(account), acceptedMutationIDs };
+}
+
+function monitorToken() {
+  return envValue("MONITOR_TOKEN") || envValue("DAILY_MONITOR_TOKEN");
+}
+
+function hasMonitorToken(request) {
+  const expected = monitorToken();
+  const provided = firstHeaderValue(request.headers["x-ritual-cue-monitor-token"]);
+  if (!expected || !provided) return false;
+  const expectedBytes = Buffer.from(expected);
+  const providedBytes = Buffer.from(provided);
+  return expectedBytes.length === providedBytes.length
+    && crypto.timingSafeEqual(expectedBytes, providedBytes);
+}
+
+function runMonitorSyncProbe(database) {
+  const now = new Date().toISOString();
+  const user = upsertUser(database, "monitor", "production-sync", {
+    email: "monitor@ritualcue.local",
+    name: "Production Monitor"
+  });
+  const account = accountForUser(database, user.id);
+  const mutation = {
+    id: `monitor-${crypto.randomUUID()}`,
+    itemID: "monitor-probe",
+    kind: "upsert",
+    stamp: now,
+    changedFields: ["title", "createdAt", "endedAt"],
+    item: {
+      title: "Production monitor probe",
+      createdAt: now,
+      endedAt: now
+    }
+  };
+  const syncBody = {
+    deviceID: "production-monitor",
+    mutations: [mutation]
+  };
+  if (!validSyncRequest(syncBody)) throw Object.assign(new Error("Invalid monitor sync probe"), { status: 500 });
+  const result = syncAccount(database, user.id, syncBody);
+  delete account.items[mutation.itemID];
+  delete account.appliedMutations[mutation.id];
+  const materialized = materializeAccount(account);
+  return {
+    ok: true,
+    acceptedMutationCount: result.acceptedMutationIDs.length,
+    itemCount: materialized.items.length,
+    groupCount: materialized.groups.length
+  };
+}
+
 function validSyncRequest(body) {
   return body
     && typeof body.deviceID === "string"
@@ -883,7 +1019,8 @@ async function handleAuth(request, response, pathname) {
   if (pathname === "/auth/refresh" && request.method === "POST") {
     if (enforceRateLimit(request, response, "auth-refresh", { limit: 60, windowMs: 15 * 60_000 })) return true;
     const cookieToken = parseCookies(request)[refreshCookieName];
-    const refreshToken = body.refreshToken || cookieToken || "";
+    if (rejectCrossOriginCookieAuth(request, response, body, cookieToken)) return true;
+    const refreshToken = refreshTokenFromBody(body) || cookieToken || "";
     const tokenHash = hash(refreshToken);
     const auth = await store.update((database) => {
       const session = database.sessions[tokenHash];
@@ -899,7 +1036,8 @@ async function handleAuth(request, response, pathname) {
 
   if (pathname === "/auth/logout" && request.method === "POST") {
     const cookieToken = parseCookies(request)[refreshCookieName];
-    const refreshToken = body.refreshToken || cookieToken || "";
+    if (rejectCrossOriginCookieAuth(request, response, body, cookieToken)) return true;
+    const refreshToken = refreshTokenFromBody(body) || cookieToken || "";
     if (refreshToken) {
       await store.update((database) => {
         delete database.sessions[hash(refreshToken)];
@@ -933,6 +1071,13 @@ const server = http.createServer(async (request, response) => {
       if (!admin) return;
       return send(response, 200, adminOverview(admin.database));
     }
+    if (request.method === "POST" && pathname === "/api/monitor/sync") {
+      if (enforceRateLimit(request, response, "api-monitor-sync", { limit: 30, windowMs: 15 * 60_000 })) return;
+      if (!hasMonitorToken(request)) return send(response, 404, { error: "Not found" });
+      await readJSON(request);
+      const result = await store.update((database) => runMonitorSyncProbe(database));
+      return send(response, 200, result);
+    }
     const disableMatch = pathname.match(/^\/api\/admin\/users\/([^/]+)\/disable$/);
     if (request.method === "POST" && disableMatch) {
       if (enforceRateLimit(request, response, "api-admin-disable", { limit: 20, windowMs: 15 * 60_000 })) return;
@@ -964,17 +1109,7 @@ const server = http.createServer(async (request, response) => {
       const result = await store.update((database) => {
         const auth = requireActiveUser(database, request);
         if (auth.error) throw Object.assign(new Error(auth.error.message), { status: auth.error.status, quiet: true });
-        const account = database.accounts[auth.claims.userId] ||= {
-          items: {},
-          groups: {},
-          appliedMutations: {},
-          eveningReminder: null
-        };
-        const acceptedMutationIDs = [];
-        for (const mutation of body.mutations) {
-          if (applyMutation(account, mutation, body.deviceID)) acceptedMutationIDs.push(mutation.id);
-        }
-        return { ...materializeAccount(account), acceptedMutationIDs };
+        return syncAccount(database, auth.claims.userId, body);
       });
       return send(response, 200, result);
     }

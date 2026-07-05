@@ -77,6 +77,38 @@ test("serves public privacy and support pages", async () => {
   assert.match(await support.text(), /Privacy Requests/);
 });
 
+test("monitor sync probe requires its shared secret and leaves no checklist data behind", async () => {
+  const previousMonitorToken = process.env.DAILY_MONITOR_TOKEN;
+  process.env.DAILY_MONITOR_TOKEN = "test-monitor-secret";
+
+  try {
+    const rejected = await fetch(`${baseURL}/api/monitor/sync`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({})
+    });
+    assert.equal(rejected.status, 404);
+
+    const response = await fetch(`${baseURL}/api/monitor/sync`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-ritual-cue-monitor-token": "test-monitor-secret"
+      },
+      body: JSON.stringify({})
+    });
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), {
+      ok: true,
+      acceptedMutationCount: 1,
+      itemCount: 0,
+      groupCount: 0
+    });
+  } finally {
+    restoreEnv("DAILY_MONITOR_TOKEN", previousMonitorToken);
+  }
+});
+
 test("dev sign-in sets an HttpOnly refresh cookie and logout clears it", async () => {
   const response = await fetch(`${baseURL}/auth/dev`, {
     method: "POST",
@@ -100,6 +132,94 @@ test("dev sign-in sets an HttpOnly refresh cookie and logout clears it", async (
   });
   assert.equal(logout.status, 204);
   assert.match(logout.headers.get("set-cookie"), /Max-Age=0/);
+});
+
+test("cookie-backed refresh and logout reject cross-origin browser requests", async () => {
+  const tlsTerminatedOrigin = `https://${new URL(baseURL).host}`;
+  const refreshLogin = await fetch(`${baseURL}/auth/dev`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ email: `refresh-${crypto.randomUUID()}@ritualcue.local`, name: "Refresh Guard" })
+  });
+  assert.equal(refreshLogin.status, 200);
+  const refreshCookie = refreshLogin.headers.get("set-cookie");
+
+  const rejectedRefresh = await fetch(`${baseURL}/auth/refresh`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      cookie: refreshCookie,
+      origin: "https://evil.example"
+    },
+    body: JSON.stringify({})
+  });
+  assert.equal(rejectedRefresh.status, 403);
+  assert.deepEqual(await rejectedRefresh.json(), { error: "Forbidden" });
+
+  const sameOriginRefresh = await fetch(`${baseURL}/auth/refresh`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      cookie: refreshCookie,
+      origin: tlsTerminatedOrigin
+    },
+    body: JSON.stringify({})
+  });
+  assert.equal(sameOriginRefresh.status, 200);
+  assert.match(sameOriginRefresh.headers.get("set-cookie"), /daily_refresh=/);
+
+  const logoutLogin = await fetch(`${baseURL}/auth/dev`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ email: `logout-${crypto.randomUUID()}@ritualcue.local`, name: "Logout Guard" })
+  });
+  assert.equal(logoutLogin.status, 200);
+  const logoutCookie = logoutLogin.headers.get("set-cookie");
+
+  const rejectedLogout = await fetch(`${baseURL}/auth/logout`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      cookie: logoutCookie,
+      origin: "https://evil.example"
+    },
+    body: JSON.stringify({})
+  });
+  assert.equal(rejectedLogout.status, 403);
+  assert.deepEqual(await rejectedLogout.json(), { error: "Forbidden" });
+
+  const sameOriginLogout = await fetch(`${baseURL}/auth/logout`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      cookie: logoutCookie,
+      origin: baseURL
+    },
+    body: JSON.stringify({})
+  });
+  assert.equal(sameOriginLogout.status, 204);
+  assert.match(sameOriginLogout.headers.get("set-cookie"), /Max-Age=0/);
+});
+
+test("JSON refresh tokens keep working for native clients without cookie-backed CSRF state", async () => {
+  const login = await fetch(`${baseURL}/auth/dev`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ email: `native-${crypto.randomUUID()}@ritualcue.local`, name: "Native Guard" })
+  });
+  assert.equal(login.status, 200);
+  const auth = await login.json();
+
+  const refresh = await fetch(`${baseURL}/auth/refresh`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      origin: "https://evil.example"
+    },
+    body: JSON.stringify({ refreshToken: auth.refreshToken })
+  });
+  assert.equal(refresh.status, 200);
+  assert.ok((await refresh.json()).token);
 });
 
 test("daily admin emails are additive with generic admin emails", async () => {

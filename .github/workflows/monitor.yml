@@ -19,8 +19,10 @@ jobs:
     env:
       BASE_URL: ${{ vars.DAILY_PRODUCTION_BASE_URL || 'https://ritualcue.com' }}
       ALERT_WEBHOOK_URL: ${{ secrets.DAILY_MONITOR_WEBHOOK_URL }}
+      MONITOR_TOKEN: ${{ secrets.DAILY_MONITOR_TOKEN }}
+      REQUIRE_AUTH_CONFIG: ${{ vars.DAILY_MONITOR_REQUIRE_AUTH_CONFIG || 'true' }}
     steps:
-      - name: Check production health and public privacy pages
+      - name: Check production app, auth, sync, and public pages
         shell: bash
         run: |
           set -euo pipefail
@@ -61,6 +63,53 @@ jobs:
             grep -q "$expected" "$body"
           }
 
+          check_auth_config() {
+            body="$tmpdir/auth-config.body"
+            headers="$tmpdir/auth-config.headers"
+            curl -fsS -m 15 -D "$headers" -o "$body" "${BASE_URL%/}/auth/config"
+            grep -qi '^cache-control: no-store' "$headers"
+            grep -qi '^x-content-type-options: nosniff' "$headers"
+            grep -qi '^content-security-policy:' "$headers"
+            node -e '
+              const fs = require("node:fs");
+              const payload = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+              for (const key of ["google_client_id", "apple_client_id"]) {
+                if (!Object.prototype.hasOwnProperty.call(payload, key)) throw new Error(`Missing ${key}`);
+                if (process.env.REQUIRE_AUTH_CONFIG !== "false") {
+                  if (typeof payload[key] !== "string" || !payload[key].trim()) {
+                    throw new Error(`${key} is not configured`);
+                  }
+                }
+              }
+            ' "$body"
+          }
+
+          check_monitor_sync() {
+            if [ -z "${MONITOR_TOKEN:-}" ]; then
+              echo "Skipping authenticated sync probe because DAILY_MONITOR_TOKEN is not configured."
+              return
+            fi
+
+            body="$tmpdir/monitor-sync.body"
+            headers="$tmpdir/monitor-sync.headers"
+            curl -fsS -m 15 -D "$headers" -o "$body" \
+              -H "content-type: application/json" \
+              -H "x-ritual-cue-monitor-token: $MONITOR_TOKEN" \
+              --data '{}' \
+              "${BASE_URL%/}/api/monitor/sync"
+            grep -qi '^cache-control: no-store' "$headers"
+            grep -qi '^x-content-type-options: nosniff' "$headers"
+            grep -qi '^content-security-policy:' "$headers"
+            node -e '
+              const fs = require("node:fs");
+              const payload = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+              if (payload.ok !== true) throw new Error("Monitor sync did not report ok");
+              if (payload.acceptedMutationCount !== 1) throw new Error("Monitor sync did not accept its probe mutation");
+              if (payload.itemCount !== 0) throw new Error("Monitor sync left checklist items behind");
+              if (typeof payload.groupCount !== "number") throw new Error("Monitor sync returned an invalid group count");
+            ' "$body"
+          }
+
           health_body="$tmpdir/health.body"
           health_headers="$tmpdir/health.headers"
           curl -fsS -m 15 -D "$health_headers" -o "$health_body" "${BASE_URL%/}/health"
@@ -71,5 +120,9 @@ jobs:
             if (payload.ok !== true) process.exit(1);
           ' "$health_body"
 
+          check_get "/app" "Ritual Cue"
+          check_get "/admin" "Ritual Cue Admin"
+          check_auth_config
+          check_monitor_sync
           check_get "/privacy.html" "Data Ritual Cue Stores"
           check_get "/support.html" "Account Requests"
