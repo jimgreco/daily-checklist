@@ -14,6 +14,7 @@ const webRoot = path.join(__dirname, "..", "web");
 const store = createStore();
 const isProduction = process.env.NODE_ENV === "production";
 const refreshCookieName = "daily_refresh";
+const refreshCookieMaxAgeSeconds = 10 * 365 * 86400;
 const defaultAdminEmails = ["jgreco@gmail.com"];
 
 function securityHeaders() {
@@ -118,7 +119,7 @@ function serializeCookie(name, value, options = {}) {
 
 function refreshCookie(refreshToken) {
   return serializeCookie(refreshCookieName, refreshToken, {
-    maxAge: 90 * 86400,
+    maxAge: refreshCookieMaxAgeSeconds,
     httpOnly: true,
     sameSite: "Lax"
   });
@@ -184,7 +185,7 @@ function createSession(database, user) {
   database.sessions[hash(refreshToken)] = {
     id: sessionID,
     userId: user.id,
-    expiresAt: new Date(Date.now() + 90 * 86400_000).toISOString()
+    expiresAt: null
   };
   return { token: issueAccessToken(user, sessionID), refreshToken, user };
 }
@@ -869,7 +870,7 @@ async function handleAuth(request, response, pathname) {
     const tokenHash = hash(refreshToken);
     const auth = await store.update((database) => {
       const session = database.sessions[tokenHash];
-      if (!session || session.expiresAt < new Date().toISOString()) return null;
+      if (!session) return null;
       delete database.sessions[tokenHash];
       const user = database.users[session.userId];
       return user && !user.disabledAt ? createSession(database, user) : null;
@@ -1026,6 +1027,7 @@ module.exports = {
   materializeAccount,
   validSyncRequest,
   stampWins,
+  refreshCookieMaxAgeSeconds,
   appleWebAuthConfigured,
   upsertUser,
   adminOverview

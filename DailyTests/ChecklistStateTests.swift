@@ -6,6 +6,11 @@ final class ChecklistStateTests: XCTestCase {
         Calendar.current
     }
 
+    override func tearDown() {
+        UserDefaults.standard.removeObject(forKey: "activeAccountID")
+        super.tearDown()
+    }
+
     func testExplicitOpenMakesOffDateTracked() {
         let today = calendar.startOfDay(for: Date())
         let key = DateKey.string(from: today)
@@ -148,5 +153,41 @@ final class ChecklistStateTests: XCTestCase {
         XCTAssertEqual(item.historyState(on: sourceDate, calendar: calendar), .skipped)
         XCTAssertEqual(item.historyState(on: secondDate, calendar: calendar), .skipped)
         XCTAssertEqual(item.historyState(on: thirdDate, calendar: calendar), .open)
+    }
+
+    @MainActor
+    func testReturningAuthenticatedAccountKeepsExistingLocalProgressCache() throws {
+        let accountID = "test-user-\(UUID().uuidString)"
+        let itemID = UUID()
+        let today = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 7, day: 5)))
+        let todayKey = DateKey.string(from: today)
+        cleanCaches(for: [accountID, "anonymous"])
+        defer {
+            cleanCaches(for: [accountID, "anonymous"])
+            UserDefaults.standard.removeObject(forKey: "activeAccountID")
+        }
+
+        UserDefaults.standard.set(accountID, forKey: "activeAccountID")
+        let store = ChecklistStore()
+        store.selectedDate = today
+        let item = ChecklistItem(id: itemID, title: "Morning progress", createdAt: today)
+        store.save(item)
+        store.toggle(item)
+
+        store.activateAnonymousAccount()
+        XCTAssertTrue(store.items.isEmpty)
+
+        store.activateAuthenticatedAccount(accountID)
+
+        XCTAssertEqual(store.items.count, 1)
+        XCTAssertEqual(store.items.first?.id, itemID)
+        XCTAssertTrue(store.items.first?.completedDates.contains(todayKey) == true)
+    }
+
+    private func cleanCaches(for accountIDs: [String]) {
+        for accountID in accountIDs {
+            let url = URL.documentsDirectory.appending(path: "daily-checklist-\(accountID).json")
+            try? FileManager.default.removeItem(at: url)
+        }
     }
 }

@@ -5,6 +5,7 @@ const {
   applyMutation,
   appleWebAuthConfigured,
   materializeAccount,
+  refreshCookieMaxAgeSeconds,
   upsertUser,
   validSyncRequest,
   stampWins
@@ -87,6 +88,7 @@ test("dev sign-in sets an HttpOnly refresh cookie and logout clears it", async (
   assert.match(cookie, /daily_refresh=/);
   assert.match(cookie, /HttpOnly/);
   assert.match(cookie, /SameSite=Lax/);
+  assert.match(cookie, new RegExp(`Max-Age=${refreshCookieMaxAgeSeconds}`));
 
   const logout = await fetch(`${baseURL}/auth/logout`, {
     method: "POST",

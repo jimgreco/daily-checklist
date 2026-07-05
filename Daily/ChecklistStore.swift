@@ -112,7 +112,11 @@ final class ChecklistStore: ObservableObject {
     }
 
     private var cacheURL: URL {
-        URL.documentsDirectory.appending(path: "daily-checklist-\(activeAccountID).json")
+        cacheURL(for: activeAccountID)
+    }
+
+    private func cacheURL(for accountID: String) -> URL {
+        URL.documentsDirectory.appending(path: "daily-checklist-\(accountID).json")
     }
 
     var visibleItems: [ChecklistItem] {
@@ -181,6 +185,10 @@ final class ChecklistStore: ObservableObject {
     func activateAuthenticatedAccount(_ userID: String) {
         guard activeAccountID != userID else { return }
         if activeAccountID == "anonymous" {
+            if FileManager.default.fileExists(atPath: cacheURL(for: userID).path) {
+                switchLocalAccount(to: userID)
+                return
+            }
             activeAccountID = userID
             UserDefaults.standard.set(userID, forKey: "activeAccountID")
             persistAndSchedule()
