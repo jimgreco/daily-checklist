@@ -207,20 +207,22 @@ final class ChecklistStore: ObservableObject {
         let key = DateKey.string(from: selectedDate)
         let wasSkipped = items[index].skippedDates.contains(key)
         let wasOpen = items[index].openDates.contains(key)
-        if items[index].completedDates.contains(key) {
-            items[index].completedDates.remove(key)
+        let currentCount = items[index].completionCount(on: selectedDate)
+        if items[index].isComplete(on: selectedDate) {
+            items[index].setCompletionCount(0, forKey: key)
             if !items[index].occurs(on: selectedDate) {
                 items[index].openDates.insert(key)
             }
         } else {
-            items[index].completedDates.insert(key)
+            items[index].setCompletionCount(currentCount + 1, forKey: key)
             items[index].skippedDates.remove(key)
             items[index].openDates.remove(key)
         }
         pendingMutations.append(.completion(
             itemID: item.id,
             date: key,
-            completed: items[index].completedDates.contains(key)
+            completed: items[index].isComplete(on: selectedDate),
+            count: items[index].completionCount(on: selectedDate)
         ))
         queueDaySetMutationIfNeeded(for: items[index], wasSkipped: wasSkipped, wasOpen: wasOpen, key: key)
         persistAndSchedule()
@@ -232,9 +234,10 @@ final class ChecklistStore: ObservableObject {
         let key = DateKey.string(from: targetDate)
         let wasSkipped = items[index].skippedDates.contains(key)
         let wasOpen = items[index].openDates.contains(key)
+        let wasCompletionCount = items[index].completionCount(on: targetDate)
         if skipped {
             items[index].skippedDates.insert(key)
-            items[index].completedDates.remove(key)
+            items[index].setCompletionCount(0, forKey: key)
             items[index].openDates.remove(key)
         } else {
             items[index].skippedDates.remove(key)
@@ -243,8 +246,8 @@ final class ChecklistStore: ObservableObject {
             }
         }
         queueDaySetMutationIfNeeded(for: items[index], wasSkipped: wasSkipped, wasOpen: wasOpen, key: key)
-        if skipped {
-            pendingMutations.append(.completion(itemID: items[index].id, date: key, completed: false))
+        if skipped && wasCompletionCount > 0 {
+            pendingMutations.append(.completion(itemID: items[index].id, date: key, completed: false, count: 0))
         }
         persistAndSchedule()
     }
@@ -254,10 +257,10 @@ final class ChecklistStore: ObservableObject {
         let key = DateKey.string(from: date)
         let wasSkipped = items[index].skippedDates.contains(key)
         let wasOpen = items[index].openDates.contains(key)
-        items[index].completedDates.insert(key)
+        items[index].setCompletionCount(items[index].quantity, forKey: key)
         items[index].skippedDates.remove(key)
         items[index].openDates.remove(key)
-        pendingMutations.append(.completion(itemID: itemID, date: key, completed: true))
+        pendingMutations.append(.completion(itemID: itemID, date: key, completed: true, count: items[index].quantity))
         queueDaySetMutationIfNeeded(for: items[index], wasSkipped: wasSkipped, wasOpen: wasOpen, key: key)
         persistAndSchedule()
     }
@@ -282,8 +285,8 @@ final class ChecklistStore: ObservableObject {
     }
 
     private func queueDateMoveMutation(for index: Int, change: ChecklistDateMoveChange) {
-        if change.wasSourceCompleted || !change.wasSourceSkipped {
-            pendingMutations.append(.completion(itemID: items[index].id, date: change.sourceKey, completed: false))
+        if change.wasSourceCompletionCount > 0 || !change.wasSourceSkipped {
+            pendingMutations.append(.completion(itemID: items[index].id, date: change.sourceKey, completed: false, count: 0))
         }
         queueDaySetMutationIfNeeded(
             for: items[index],
@@ -292,8 +295,8 @@ final class ChecklistStore: ObservableObject {
             key: change.sourceKey
         )
 
-        if change.wasTargetCompleted {
-            pendingMutations.append(.completion(itemID: items[index].id, date: change.targetKey, completed: false))
+        if change.wasTargetCompletionCount > 0 {
+            pendingMutations.append(.completion(itemID: items[index].id, date: change.targetKey, completed: false, count: 0))
         }
         queueDaySetMutationIfNeeded(
             for: items[index],
@@ -308,35 +311,37 @@ final class ChecklistStore: ObservableObject {
 
         let key = DateKey.string(from: date)
         let wasCompleted = items[index].completedDates.contains(key)
+        let wasCompletionCount = items[index].completionCount(on: date)
         let wasSkipped = items[index].skippedDates.contains(key)
         let wasOpen = items[index].openDates.contains(key)
 
         switch state {
         case .done:
-            items[index].completedDates.insert(key)
+            items[index].setCompletionCount(items[index].quantity, forKey: key)
             items[index].skippedDates.remove(key)
             items[index].openDates.remove(key)
         case .skipped:
-            items[index].completedDates.remove(key)
+            items[index].setCompletionCount(0, forKey: key)
             items[index].skippedDates.insert(key)
             items[index].openDates.remove(key)
         case .open:
-            items[index].completedDates.remove(key)
+            items[index].setCompletionCount(0, forKey: key)
             items[index].skippedDates.remove(key)
             items[index].openDates.insert(key)
         case .missed, .off:
-            items[index].completedDates.remove(key)
+            items[index].setCompletionCount(0, forKey: key)
             items[index].skippedDates.remove(key)
             items[index].openDates.remove(key)
         }
 
         let isCompleted = items[index].completedDates.contains(key)
+        let completionCount = items[index].completionCount(on: date)
         let isSkipped = items[index].skippedDates.contains(key)
         let isOpen = items[index].openDates.contains(key)
-        guard wasCompleted != isCompleted || wasSkipped != isSkipped || wasOpen != isOpen else { return }
+        guard wasCompleted != isCompleted || wasCompletionCount != completionCount || wasSkipped != isSkipped || wasOpen != isOpen else { return }
 
-        if wasCompleted != isCompleted || (!isCompleted && (isSkipped || wasSkipped)) {
-            pendingMutations.append(.completion(itemID: itemID, date: key, completed: isCompleted))
+        if wasCompleted != isCompleted || wasCompletionCount != completionCount || (!isCompleted && (isSkipped || wasSkipped)) {
+            pendingMutations.append(.completion(itemID: itemID, date: key, completed: isCompleted, count: completionCount))
         }
         queueDaySetMutationIfNeeded(for: items[index], wasSkipped: wasSkipped, wasOpen: wasOpen, key: key)
 
@@ -359,15 +364,16 @@ final class ChecklistStore: ObservableObject {
         for index in items.indices {
             guard itemIDs.contains(items[index].id),
                   !items[index].completedDates.contains(key) else { continue }
-            items[index].completedDates.insert(key)
+            items[index].setCompletionCount(items[index].quantity, forKey: key)
             items[index].skippedDates.remove(key)
             items[index].openDates.remove(key)
             completedItemIDs.append(items[index].id)
         }
 
         guard !completedItemIDs.isEmpty else { return }
-        pendingMutations.append(contentsOf: completedItemIDs.map {
-            .completion(itemID: $0, date: key, completed: true)
+        pendingMutations.append(contentsOf: completedItemIDs.compactMap { itemID in
+            guard let item = items.first(where: { $0.id == itemID }) else { return nil }
+            return .completion(itemID: itemID, date: key, completed: true, count: item.quantity)
         })
         pendingMutations.append(contentsOf: items.filter { completedItemIDs.contains($0.id) }.map {
             .upsert(item: $0, changedFields: ["skippedDates", "openDates"])
@@ -603,6 +609,7 @@ final class ChecklistStore: ObservableObject {
                 schedule: item.schedule,
                 customWeekdays: item.customWeekdays,
                 reminderMinutes: item.reminderMinutes,
+                quantity: item.quantity,
                 createdAt: .now,
                 startDate: item.startDate,
                 groupID: group.id,
@@ -736,7 +743,7 @@ final class ChecklistStore: ObservableObject {
     }
 
     static let allFields: Set<String> = [
-        "title", "notes", "schedule", "customWeekdays", "reminderMinutes", "skippedDates", "openDates", "createdAt", "startDate", "endedAt", "groupID", "sortOrder"
+        "title", "notes", "schedule", "customWeekdays", "reminderMinutes", "quantity", "skippedDates", "openDates", "createdAt", "startDate", "endedAt", "groupID", "sortOrder"
     ]
     static let allGroupFields: Set<String> = ["name", "sortOrder"]
 
@@ -747,6 +754,7 @@ final class ChecklistStore: ObservableObject {
         if old.schedule != new.schedule { changed.insert("schedule") }
         if old.customWeekdays != new.customWeekdays { changed.insert("customWeekdays") }
         if old.reminderMinutes != new.reminderMinutes { changed.insert("reminderMinutes") }
+        if old.quantity != new.quantity { changed.insert("quantity") }
         if old.skippedDates != new.skippedDates { changed.insert("skippedDates") }
         if old.openDates != new.openDates { changed.insert("openDates") }
         if old.startDate != new.startDate { changed.insert("startDate") }

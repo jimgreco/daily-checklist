@@ -156,6 +156,40 @@ final class ChecklistStateTests: XCTestCase {
     }
 
     @MainActor
+    func testQuantityRequiresMultipleCheckoffs() throws {
+        let accountID = "quantity-test-\(UUID().uuidString)"
+        let today = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 7, day: 5)))
+        let todayKey = DateKey.string(from: today)
+        cleanCaches(for: [accountID])
+        defer {
+            cleanCaches(for: [accountID])
+            UserDefaults.standard.removeObject(forKey: "activeAccountID")
+        }
+
+        UserDefaults.standard.set(accountID, forKey: "activeAccountID")
+        let store = ChecklistStore()
+        store.selectedDate = today
+        let item = ChecklistItem(title: "Vitamins", quantity: 3, createdAt: today)
+        store.save(item)
+
+        store.toggle(item)
+        XCTAssertEqual(store.items.first?.completionCount(on: today), 1)
+        XCTAssertFalse(store.items.first?.completedDates.contains(todayKey) == true)
+
+        store.toggle(item)
+        XCTAssertEqual(store.items.first?.completionCount(on: today), 2)
+        XCTAssertFalse(store.items.first?.completedDates.contains(todayKey) == true)
+
+        store.toggle(item)
+        XCTAssertEqual(store.items.first?.completionCount(on: today), 3)
+        XCTAssertTrue(store.items.first?.completedDates.contains(todayKey) == true)
+
+        store.toggle(item)
+        XCTAssertEqual(store.items.first?.completionCount(on: today), 0)
+        XCTAssertFalse(store.items.first?.completedDates.contains(todayKey) == true)
+    }
+
+    @MainActor
     func testReturningAuthenticatedAccountKeepsExistingLocalProgressCache() throws {
         let accountID = "test-user-\(UUID().uuidString)"
         let itemID = UUID()

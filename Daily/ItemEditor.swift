@@ -52,6 +52,9 @@ struct ItemEditor: View {
                         .font(.headline)
                     TextField("Notes (optional)", text: $item.notes, axis: .vertical)
                         .lineLimit(2...5)
+                    Stepper(value: $item.quantity, in: 1...99) {
+                        LabeledContent("Quantity", value: "\(item.quantity)")
+                    }
                     Menu {
                         Button {
                             item.groupID = nil

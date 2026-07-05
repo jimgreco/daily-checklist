@@ -229,12 +229,50 @@
   function hasRecordedStateOnDate(item, date) {
     const key = dateKey(date);
     return (item.completedDates || []).includes(key)
+      || (item.completionCounts?.[key] || 0) > 0
       || (item.skippedDates || []).includes(key)
       || (item.openDates || []).includes(key);
   }
 
   function complete(item) { return (item.completedDates || []).includes(dateKey(state.selectedDate)); }
   function skipped(item) { return (item.skippedDates || []).includes(dateKey(state.selectedDate)); }
+
+  function quantity(item) {
+    return Number.isInteger(item.quantity) && item.quantity > 0 ? Math.min(item.quantity, 99) : 1;
+  }
+
+  function completionCount(item, date = state.selectedDate) {
+    const key = dateKey(date);
+    const target = quantity(item);
+    const count = item.completionCounts?.[key];
+    if (Number.isInteger(count)) return Math.min(Math.max(0, count), target);
+    return (item.completedDates || []).includes(key) ? target : 0;
+  }
+
+  function setCompletionCount(item, key, count) {
+    const target = quantity(item);
+    const next = Math.min(Math.max(0, count), target);
+    item.completionCounts ||= {};
+    item.completedDates ||= [];
+    if (next > 0) item.completionCounts[key] = next;
+    else delete item.completionCounts[key];
+    if (next >= target) {
+      if (!item.completedDates.includes(key)) item.completedDates.push(key);
+    } else {
+      item.completedDates = item.completedDates.filter((date) => date !== key);
+    }
+    return next;
+  }
+
+  function queueCompletion(item, key) {
+    const count = completionCount(item, dateFromInput(key));
+    state.pending.push(mutation("completion", {
+      itemID: item.id,
+      completionDate: key,
+      completed: count >= quantity(item),
+      completionCount: count
+    }));
+  }
 
   function visibleItems() {
     const query = state.search.trim().toLowerCase();
@@ -291,6 +329,8 @@
   function renderTask(item) {
     const isComplete = complete(item);
     const isSkipped = skipped(item) && !isComplete;
+    const count = completionCount(item);
+    const target = quantity(item);
     const delayedDays = delayedDaysOnDate(item, state.selectedDate);
     const delayedText = `${delayedDays} ${delayedDays === 1 ? "day" : "days"}`;
     return `<article class="task ${isComplete ? "complete" : ""} ${isSkipped ? "skipped" : ""}">
@@ -298,6 +338,7 @@
       <div class="task-copy">
         <div class="task-title-line">
           <div class="task-title">${escapeHTML(item.title)}</div>
+          ${target > 1 ? `<span class="quantity-chip">${count}/${target}</span>` : ""}
           ${delayedDays > 0 ? `<span class="status-badge delayed" aria-label="Delayed ${escapeHTML(delayedText)}">${icon("startTomorrow")} ${escapeHTML(delayedText)}</span>` : ""}
         </div>
         <div class="task-meta">
@@ -444,7 +485,7 @@
     const end = source.endedAt ? dateKey(addDays(new Date(source.endedAt), -1)) : "";
     const time = source.reminderMinutes == null ? "" :
       `${String(Math.floor(source.reminderMinutes / 60)).padStart(2, "0")}:${String(source.reminderMinutes % 60).padStart(2, "0")}`;
-    return { ...source, start, end, time };
+    return { ...source, quantity: quantity(source), start, end, time };
   }
 
   function renderModal() {
@@ -500,6 +541,7 @@
       <h2>${state.modal.item ? "Edit item" : "New item"}</h2>
       <label class="field">Title<input name="title" required maxlength="120" value="${escapeHTML(item.title || "")}" autofocus></label>
       <label class="field">Notes<textarea name="notes" maxlength="2000">${escapeHTML(item.notes || "")}</textarea></label>
+      <label class="field">Quantity<input name="quantity" type="number" min="1" max="99" step="1" inputmode="numeric" value="${item.quantity}"></label>
       <div class="field-row">
         <label class="field">Schedule<select name="schedule">
           ${[["everyDay","Every day"],["weekdays","Weekdays"],["weekends","Weekends"],["custom","Custom"]].map(([value,label]) => `<option value="${value}" ${schedule === value ? "selected" : ""}>${label}</option>`).join("")}
@@ -638,24 +680,30 @@
   function toggle(item) {
     const key = dateKey(state.selectedDate);
     item.completedDates ||= [];
+    item.completionCounts ||= {};
     item.skippedDates ||= [];
     item.openDates ||= [];
-    const completed = !item.completedDates.includes(key);
-    item.completedDates = completed ? [...item.completedDates, key] : item.completedDates.filter((date) => date !== key);
-    if (completed) {
+    const wasSkipped = item.skippedDates.includes(key);
+    const wasOpen = item.openDates.includes(key);
+    if (complete(item)) {
+      setCompletionCount(item, key, 0);
+      if (!occursOnDate(item, state.selectedDate) && !item.openDates.includes(key)) item.openDates.push(key);
+    } else {
+      setCompletionCount(item, key, completionCount(item) + 1);
       item.skippedDates = item.skippedDates.filter((date) => date !== key);
       item.openDates = item.openDates.filter((date) => date !== key);
-    } else if (!occursOnDate(item, state.selectedDate) && !item.openDates.includes(key)) {
-      item.openDates.push(key);
     }
-    if (completed || item.openDates.includes(key)) {
+    if (wasSkipped !== item.skippedDates.includes(key) || wasOpen !== item.openDates.includes(key)) {
       state.pending.push(mutation("upsert", {
         itemID: item.id,
         changedFields: ["skippedDates", "openDates"],
         item: { skippedDates: item.skippedDates, openDates: item.openDates }
       }));
     }
-    queue(mutation("completion", { itemID: item.id, completionDate: key, completed }));
+    queueCompletion(item, key);
+    persistData();
+    render();
+    void sync();
   }
 
   function completeItems(items) {
@@ -663,10 +711,11 @@
     const changed = items.filter((item) => !complete(item));
     changed.forEach((item) => {
       item.completedDates ||= [];
+      item.completionCounts ||= {};
       item.skippedDates = (item.skippedDates || []).filter((date) => date !== key);
       item.openDates = (item.openDates || []).filter((date) => date !== key);
-      item.completedDates.push(key);
-      state.pending.push(mutation("completion", { itemID: item.id, completionDate: key, completed: true }));
+      setCompletionCount(item, key, quantity(item));
+      queueCompletion(item, key);
       state.pending.push(mutation("upsert", {
         itemID: item.id,
         changedFields: ["skippedDates", "openDates"],
@@ -684,11 +733,13 @@
     item.skippedDates ||= [];
     item.openDates ||= [];
     item.completedDates ||= [];
+    item.completionCounts ||= {};
+    const wasCompletionCount = completionCount(item);
     if (shouldSkip) {
       if (!item.skippedDates.includes(key)) item.skippedDates.push(key);
-      item.completedDates = item.completedDates.filter((date) => date !== key);
+      setCompletionCount(item, key, 0);
       item.openDates = item.openDates.filter((date) => date !== key);
-      state.pending.push(mutation("completion", { itemID: item.id, completionDate: key, completed: false }));
+      if (wasCompletionCount > 0) queueCompletion(item, key);
     } else {
       item.skippedDates = item.skippedDates.filter((date) => date !== key);
       if (!occursOnDate(item, state.selectedDate) && !item.openDates.includes(key)) item.openDates.push(key);
@@ -702,29 +753,33 @@
 
   function moveOpenItemDate(item, sourceDate, targetDate, successMessage) {
     item.completedDates ||= [];
+    item.completionCounts ||= {};
     item.skippedDates ||= [];
     item.openDates ||= [];
 
     const sourceKey = dateKey(startOfDay(sourceDate));
     const targetKey = dateKey(startOfDay(targetDate));
     const wasSourceCompleted = item.completedDates.includes(sourceKey);
+    const wasSourceCompletionCount = completionCount(item, sourceDate);
     const wasSourceSkipped = item.skippedDates.includes(sourceKey);
     const wasSourceOpen = item.openDates.includes(sourceKey);
     const wasTargetCompleted = item.completedDates.includes(targetKey);
+    const wasTargetCompletionCount = completionCount(item, targetDate);
     const wasTargetSkipped = item.skippedDates.includes(targetKey);
     const wasTargetOpen = item.openDates.includes(targetKey);
 
-    item.completedDates = item.completedDates.filter((date) => date !== sourceKey && date !== targetKey);
+    setCompletionCount(item, sourceKey, 0);
+    setCompletionCount(item, targetKey, 0);
     if (!item.skippedDates.includes(sourceKey)) item.skippedDates.push(sourceKey);
     item.skippedDates = item.skippedDates.filter((date) => date !== targetKey);
     item.openDates = item.openDates.filter((date) => date !== sourceKey);
     if (!item.openDates.includes(targetKey)) item.openDates.push(targetKey);
 
-    if (wasSourceCompleted || !wasSourceSkipped) {
-      state.pending.push(mutation("completion", { itemID: item.id, completionDate: sourceKey, completed: false }));
+    if (wasSourceCompletionCount > 0 || wasSourceCompleted || !wasSourceSkipped) {
+      state.pending.push(mutation("completion", { itemID: item.id, completionDate: sourceKey, completed: false, completionCount: 0 }));
     }
-    if (wasTargetCompleted) {
-      state.pending.push(mutation("completion", { itemID: item.id, completionDate: targetKey, completed: false }));
+    if (wasTargetCompletionCount > 0 || wasTargetCompleted) {
+      state.pending.push(mutation("completion", { itemID: item.id, completionDate: targetKey, completed: false, completionCount: 0 }));
     }
     const skippedChanged = wasSourceSkipped !== item.skippedDates.includes(sourceKey)
       || wasTargetSkipped !== item.skippedDates.includes(targetKey);
@@ -809,37 +864,45 @@
     const item = state.items.find((candidate) => candidate.id === itemID);
     if (!item) return;
     item.completedDates ||= [];
+    item.completionCounts ||= {};
     item.skippedDates ||= [];
     item.openDates ||= [];
     const wasCompleted = item.completedDates.includes(key);
+    const wasCompletionCount = completionCount(item, dateFromInput(key));
     const wasSkipped = item.skippedDates.includes(key);
     const wasOpen = item.openDates.includes(key);
 
     if (nextState === "done") {
-      if (!item.completedDates.includes(key)) item.completedDates.push(key);
+      setCompletionCount(item, key, quantity(item));
       item.skippedDates = item.skippedDates.filter((date) => date !== key);
       item.openDates = item.openDates.filter((date) => date !== key);
     } else if (nextState === "skipped") {
-      item.completedDates = item.completedDates.filter((date) => date !== key);
+      setCompletionCount(item, key, 0);
       if (!item.skippedDates.includes(key)) item.skippedDates.push(key);
       item.openDates = item.openDates.filter((date) => date !== key);
     } else if (nextState === "open") {
-      item.completedDates = item.completedDates.filter((date) => date !== key);
+      setCompletionCount(item, key, 0);
       item.skippedDates = item.skippedDates.filter((date) => date !== key);
       if (!item.openDates.includes(key)) item.openDates.push(key);
     } else {
-      item.completedDates = item.completedDates.filter((date) => date !== key);
+      setCompletionCount(item, key, 0);
       item.skippedDates = item.skippedDates.filter((date) => date !== key);
       item.openDates = item.openDates.filter((date) => date !== key);
     }
 
     const isCompleted = item.completedDates.includes(key);
+    const nextCompletionCount = completionCount(item, dateFromInput(key));
     const isSkipped = item.skippedDates.includes(key);
     const isOpen = item.openDates.includes(key);
-    if (wasCompleted === isCompleted && wasSkipped === isSkipped && wasOpen === isOpen) return;
+    if (wasCompleted === isCompleted && wasCompletionCount === nextCompletionCount && wasSkipped === isSkipped && wasOpen === isOpen) return;
 
-    if (wasCompleted !== isCompleted || (!isCompleted && (isSkipped || wasSkipped))) {
-      state.pending.push(mutation("completion", { itemID: item.id, completionDate: key, completed: isCompleted }));
+    if (wasCompleted !== isCompleted || wasCompletionCount !== nextCompletionCount || (!isCompleted && (isSkipped || wasSkipped))) {
+      state.pending.push(mutation("completion", {
+        itemID: item.id,
+        completionDate: key,
+        completed: isCompleted,
+        completionCount: nextCompletionCount
+      }));
     }
     if (wasSkipped !== isSkipped || wasOpen !== isOpen) {
       state.pending.push(mutation("upsert", {
@@ -876,7 +939,9 @@
         schedule: "everyDay",
         customWeekdays: [],
         reminderMinutes: null,
+        quantity: 1,
         completedDates: [],
+        completionCounts: {},
         skippedDates: [],
         openDates: [],
         createdAt: new Date().toISOString(),
@@ -888,7 +953,7 @@
       state.items.push(item);
       state.pending.push(mutation("upsert", {
         itemID: item.id,
-        changedFields: ["title","notes","schedule","customWeekdays","reminderMinutes","skippedDates","openDates","createdAt","startDate","endedAt","groupID","sortOrder"],
+        changedFields: ["title","notes","schedule","customWeekdays","reminderMinutes","quantity","skippedDates","openDates","createdAt","startDate","endedAt","groupID","sortOrder"],
         item
       }));
     }
@@ -927,14 +992,17 @@
     const startDate = localISO(data.get("startDate"));
     const lastDay = dateFromInput(data.get("endDate"));
     const endedAt = lastDay ? addDays(lastDay, 1).toISOString() : null;
-      const item = {
+    const parsedQuantity = Number(data.get("quantity"));
+    const item = {
       id: existing?.id || crypto.randomUUID(),
       title: String(data.get("title")).trim(),
       notes: String(data.get("notes") || "").trim(),
       schedule: data.get("schedule"),
       customWeekdays,
       reminderMinutes: reminder ? hours * 60 + minutes : null,
+      quantity: Number.isInteger(parsedQuantity) ? Math.min(Math.max(1, parsedQuantity), 99) : 1,
       completedDates: existing?.completedDates || [],
+      completionCounts: existing?.completionCounts || {},
       skippedDates: existing?.skippedDates || [],
       openDates: existing?.openDates || [],
       createdAt: existing?.createdAt || new Date().toISOString(),
@@ -949,10 +1017,10 @@
     state.modal = null;
     queue(mutation("upsert", {
       itemID: item.id,
-      changedFields: ["title","notes","schedule","customWeekdays","reminderMinutes","skippedDates","openDates","createdAt","startDate","endedAt","groupID","sortOrder"],
+      changedFields: ["title","notes","schedule","customWeekdays","reminderMinutes","quantity","skippedDates","openDates","createdAt","startDate","endedAt","groupID","sortOrder"],
       item: {
         title: item.title, notes: item.notes, schedule: item.schedule,
-        customWeekdays: item.customWeekdays, reminderMinutes: item.reminderMinutes,
+        customWeekdays: item.customWeekdays, reminderMinutes: item.reminderMinutes, quantity: item.quantity,
         skippedDates: item.skippedDates, openDates: item.openDates,
         createdAt: item.createdAt, startDate: item.startDate, endedAt: item.endedAt,
         groupID: item.groupID, sortOrder: item.sortOrder

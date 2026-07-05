@@ -565,7 +565,7 @@ function stampWins(incoming, current) {
   return incoming.deviceID > current.deviceID;
 }
 
-const itemFields = ["title", "notes", "schedule", "customWeekdays", "reminderMinutes", "skippedDates", "openDates", "createdAt", "startDate", "endedAt", "groupID", "sortOrder"];
+const itemFields = ["title", "notes", "schedule", "customWeekdays", "reminderMinutes", "quantity", "skippedDates", "openDates", "createdAt", "startDate", "endedAt", "groupID", "sortOrder"];
 const groupFields = ["name", "sortOrder"];
 
 function validID(value) {
@@ -608,6 +608,7 @@ function validItemPayload(item = {}) {
     && (item.schedule == null || ["everyDay", "weekdays", "weekends", "custom"].includes(item.schedule))
     && (item.customWeekdays == null || validWeekdays(item.customWeekdays))
     && validFiniteNumber(item.reminderMinutes, { nullable: true, min: 0, max: 1439 })
+    && (item.quantity == null || (Number.isInteger(item.quantity) && item.quantity >= 1 && item.quantity <= 99))
     && (item.skippedDates == null || (
       Array.isArray(item.skippedDates)
       && item.skippedDates.length <= 5000
@@ -649,7 +650,12 @@ function validMutation(mutation) {
   if (!validID(mutation.itemID)) return false;
   if (mutation.kind === "delete") return true;
   if (mutation.kind === "completion") {
-    return validDateKey(mutation.completionDate) && typeof mutation.completed === "boolean";
+    return validDateKey(mutation.completionDate)
+      && typeof mutation.completed === "boolean"
+      && (mutation.completionCount == null
+        || (Number.isInteger(mutation.completionCount)
+          && mutation.completionCount >= 0
+          && mutation.completionCount <= 99));
   }
   if (mutation.kind === "upsert") {
     return validChangedFields(mutation.changedFields, itemFields) && validItemPayload(mutation.item);
@@ -714,6 +720,7 @@ function applyMutation(account, mutation, deviceID) {
   if (mutation.kind === "completion" && mutation.completionDate) {
     const incoming = {
       value: Boolean(mutation.completed),
+      count: Number.isInteger(mutation.completionCount) ? mutation.completionCount : null,
       stamp: mutation.stamp,
       deviceID
     };
@@ -745,6 +752,12 @@ function materializeAccount(account) {
     .map((record) => {
       const value = {};
       for (const field of itemFields) value[field] = record.fields[field]?.value ?? null;
+      const quantity = Number.isInteger(value.quantity) && value.quantity > 0 ? Math.min(value.quantity, 99) : 1;
+      const completionCounts = Object.fromEntries(
+        Object.entries(record.completions || {})
+          .map(([date, state]) => [date, Math.min(Math.max(0, state.count ?? (state.value ? quantity : 0)), quantity)])
+          .filter(([, count]) => count > 0)
+      );
       return {
         id: record.id,
         title: value.title || "Untitled",
@@ -752,6 +765,7 @@ function materializeAccount(account) {
         schedule: value.schedule || "everyDay",
         customWeekdays: value.customWeekdays || [],
         reminderMinutes: value.reminderMinutes,
+        quantity,
         skippedDates: value.skippedDates || [],
         openDates: value.openDates || [],
         startDate: value.startDate,
@@ -761,6 +775,7 @@ function materializeAccount(account) {
         completedDates: Object.entries(record.completions || {})
           .filter(([, state]) => state.value)
           .map(([date]) => date),
+        completionCounts,
         createdAt: value.createdAt || new Date().toISOString()
       };
     })

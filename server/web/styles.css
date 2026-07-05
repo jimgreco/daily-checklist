@@ -68,6 +68,8 @@ h1 { margin: 0; font-size: clamp(48px, 14vw, 68px); line-height: .96; letter-spa
 .task-title-line { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: 7px; }
 .task-title { min-width: 0; font-size: 20px; font-weight: 760; line-height: 1.18; }
 .task.complete .task-title { color: var(--muted); text-decoration: line-through; }
+.quantity-chip { display: inline-flex; flex: 0 0 auto; min-height: 22px; align-items: center; padding: 3px 8px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-size: 12px; font-weight: 850; line-height: 1; }
+.task.complete .quantity-chip { color: #237a57; background: #e8f5ef; }
 .status-badge { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 4px; min-height: 22px; padding: 3px 7px; border-radius: 999px; font-size: 12px; font-weight: 800; line-height: 1; }
 .status-badge.delayed { color: var(--delayed); background: var(--delayed-soft); }
 .task-meta { display: flex; flex-wrap: wrap; gap: 5px 12px; margin-top: 7px; color: var(--muted); font-size: 14px; font-weight: 550; }

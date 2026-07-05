@@ -1076,6 +1076,7 @@ private struct ItemRow: View {
 
     private var completed: Bool { item.isComplete(on: date) }
     private var skipped: Bool { item.isSkipped(on: date) }
+    private var completionCount: Int { item.completionCount(on: date) }
     private var missedDays: Int { item.consecutiveMissedDays(asOf: date) }
     private var completionStreak: Int { item.consecutiveCompletedDays(asOf: date) }
     private var delayedDays: Int { item.delayedDays(asOf: date) }
@@ -1102,7 +1103,8 @@ private struct ItemRow: View {
                     }
                 }
             }
-            .accessibilityLabel(completed ? "Mark incomplete" : "Mark complete")
+            .accessibilityLabel(completed ? "Mark incomplete" : "Check off")
+            .accessibilityValue(item.quantity > 1 ? "\(completionCount) of \(item.quantity)" : "")
 
             VStack(alignment: .leading, spacing: 5) {
                 HStack(spacing: 8) {
@@ -1112,6 +1114,9 @@ private struct ItemRow: View {
                         .strikethrough(completed, color: .secondary)
                         .lineLimit(1)
                         .layoutPriority(1)
+                    if item.quantity > 1 {
+                        quantityChip
+                    }
                     if completionStreak > 0 {
                         statusBadge(
                             "\(completionStreak) \(completionStreak == 1 ? "day" : "days")",
@@ -1226,6 +1231,17 @@ private struct ItemRow: View {
         .background(color.opacity(0.12), in: Capsule())
         .fixedSize()
         .accessibilityLabel(accessibilityLabel)
+    }
+
+    private var quantityChip: some View {
+        Text("\(completionCount)/\(item.quantity)")
+            .font(.system(size: 11, weight: .bold))
+            .foregroundStyle(completed ? success : accent)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background((completed ? success : accent).opacity(0.12), in: Capsule())
+            .fixedSize()
+            .accessibilityLabel("Quantity progress \(completionCount) of \(item.quantity)")
     }
 }
 

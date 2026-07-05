@@ -463,6 +463,32 @@ test("completion conflicts resolve per date", () => {
   assert.deepEqual(materializeAccount(state).items[0].completedDates, ["2026-06-24"]);
 });
 
+test("completion counts materialize partial quantity progress", () => {
+  const state = account();
+  applyMutation(state, {
+    id: "create",
+    itemID: "item-1",
+    kind: "upsert",
+    stamp: "2026-06-24T10:00:00.000Z",
+    changedFields: ["title", "quantity"],
+    item: { title: "Vitamins", quantity: 3 }
+  }, "device-a");
+  applyMutation(state, {
+    id: "partial",
+    itemID: "item-1",
+    kind: "completion",
+    stamp: "2026-06-24T12:00:00.000Z",
+    completionDate: "2026-06-24",
+    completed: false,
+    completionCount: 2
+  }, "device-a");
+
+  const item = materializeAccount(state).items[0];
+  assert.equal(item.quantity, 3);
+  assert.deepEqual(item.completedDates, []);
+  assert.deepEqual(item.completionCounts, { "2026-06-24": 2 });
+});
+
 test("skipped dates sync independently from completion history", () => {
   const state = account();
   applyMutation(state, {
