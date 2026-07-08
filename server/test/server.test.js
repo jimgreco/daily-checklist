@@ -47,6 +47,7 @@ test("serves the public landing page, web app, and auth configuration", async ()
   const landingHTML = await landing.text();
   assert.match(landingHTML, /Keep recurring routines from slipping/);
   assert.match(landingHTML, /href="\/app"/);
+  assert.match(landingHTML, /https:\/\/apps\.apple\.com\/us\/app\/ritual-cue\/id6784239049/);
 
   const app = await fetch(`${baseURL}/app`);
   assert.equal(app.status, 200);
