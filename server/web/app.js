@@ -61,7 +61,9 @@
       folderClosed: '<path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H10l2 2h6.5A2.5 2.5 0 0 1 21 9.5v7A2.5 2.5 0 0 1 18.5 19h-13A2.5 2.5 0 0 1 3 16.5z"/>',
       folderOpen: '<path d="M3 18.5V7.5A2.5 2.5 0 0 1 5.5 5H10l2 2h6.5A2.5 2.5 0 0 1 21 9.5v1"/><path d="M4.2 19h13.9a2 2 0 0 0 1.9-1.4l1.3-4.1A1.2 1.2 0 0 0 20.1 12H8.6a2 2 0 0 0-1.9 1.4z"/>',
       minus: '<path d="M5 12h14"/>',
+      pause: '<circle cx="12" cy="12" r="9"/><path d="M10 8v8"/><path d="M14 8v8"/>',
       pencil: '<path d="M4 20h4l10.5-10.5a2.1 2.1 0 0 0-3-3L5 17v3z"/><path d="m14 7 3 3"/>',
+      play: '<circle cx="12" cy="12" r="9"/><path d="m10 8 6 4-6 4z"/>',
       repeat: '<path d="m17 2 4 4-4 4"/><path d="M3 11V9a3 3 0 0 1 3-3h15"/><path d="m7 22-4-4 4-4"/><path d="M21 13v2a3 3 0 0 1-3 3H3"/>',
       search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>',
       startToday: '<path d="M17 17 7 7"/><path d="M15 7H7v8"/>',
@@ -104,6 +106,68 @@
 
   function isFutureDate(date) {
     return startOfDay(date) > startOfDay(new Date());
+  }
+
+  function groupByID(groupID) {
+    return state.groups.find((group) => group.id === groupID) || null;
+  }
+
+  function normalizePauseWindows(windows = []) {
+    const normalized = (Array.isArray(windows) ? windows : [])
+      .filter((window) => /^\d{4}-\d{2}-\d{2}$/.test(window?.startDate || "")
+        && (window.endDate == null || /^\d{4}-\d{2}-\d{2}$/.test(window.endDate))
+        && (window.endDate == null || window.startDate <= window.endDate))
+      .map((window) => ({ startDate: window.startDate, endDate: window.endDate ?? null }))
+      .sort((left, right) => left.startDate.localeCompare(right.startDate));
+    const merged = [];
+    for (const window of normalized) {
+      const last = merged[merged.length - 1];
+      if (!last || (last.endDate != null && window.startDate > last.endDate)) {
+        merged.push(window);
+      } else if (last.endDate != null) {
+        last.endDate = window.endDate == null ? null : (last.endDate > window.endDate ? last.endDate : window.endDate);
+      }
+    }
+    return merged;
+  }
+
+  function pauseWindowsContain(windows, date) {
+    const key = dateKey(startOfDay(date));
+    return normalizePauseWindows(windows).some((window) => key >= window.startDate && (window.endDate == null || key <= window.endDate));
+  }
+
+  function pauseWindowsWithRange(windows, startDate, endDate) {
+    return normalizePauseWindows([
+      ...(windows || []),
+      { startDate: dateKey(startOfDay(startDate)), endDate: dateKey(startOfDay(endDate)) }
+    ]);
+  }
+
+  function pauseWindowsResumed(windows, date) {
+    const key = dateKey(startOfDay(date));
+    const previousKey = dateKey(addDays(startOfDay(date), -1));
+    return normalizePauseWindows((windows || []).flatMap((window) => {
+      if (!pauseWindowsContain([window], date)) return [window];
+      if (window.startDate >= key) return [];
+      return [{ ...window, endDate: previousKey }];
+    }));
+  }
+
+  function pauseWindowsClearedOn(windows, key) {
+    const previousKey = dateKey(addDays(dateFromInput(key), -1));
+    const nextKey = dateKey(addDays(dateFromInput(key), 1));
+    return normalizePauseWindows((windows || []).flatMap((window) => {
+      if (!(key >= window.startDate && (window.endDate == null || key <= window.endDate))) return [window];
+      const result = [];
+      if (window.startDate < key) result.push({ startDate: window.startDate, endDate: previousKey });
+      if (window.endDate == null) result.push({ startDate: nextKey, endDate: null });
+      else if (key < window.endDate) result.push({ startDate: nextKey, endDate: window.endDate });
+      return result;
+    }));
+  }
+
+  function pauseWindowsForOneDay(windows, key) {
+    return normalizePauseWindows([...(windows || []), { startDate: key, endDate: key }]);
   }
 
   function persistSession() {
@@ -206,8 +270,9 @@
 
   function occurs(item, date) {
     if (state.mode === "archive") return Boolean(item.endedAt);
-    if (state.mode === "all") return isActiveOnDate(item, date) || hasRecordedStateOnDate(item, date);
-    return occursOnDate(item, date) || hasRecordedStateOnDate(item, date);
+    if (state.mode === "all") return isActiveOnDate(item, date) || hasRecordedStateOnDate(item, date) || isPaused(item, date);
+    const paused = isPaused(item, date);
+    return (occursOnDate(item, date) || hasRecordedStateOnDate(item, date)) && (!paused || hasRecordedStateOnDate(item, date));
   }
 
   function isActiveOnDate(item, date) {
@@ -218,7 +283,7 @@
     return true;
   }
 
-  function occursOnDate(item, date) {
+  function isScheduledOnDate(item, date) {
     if (!isActiveOnDate(item, date)) return false;
     const day = startOfDay(date);
     const weekday = day.getDay() + 1;
@@ -226,6 +291,19 @@
     if (item.schedule === "weekends") return weekday === 1 || weekday === 7;
     if (item.schedule === "custom") return (item.customWeekdays || []).includes(weekday);
     return true;
+  }
+
+  function occursOnDate(item, date) {
+    return isScheduledOnDate(item, date) && !isPaused(item, date);
+  }
+
+  function isGroupPaused(groupID, date) {
+    const group = groupByID(groupID);
+    return Boolean(group && pauseWindowsContain(group.pauseWindows, date));
+  }
+
+  function isPaused(item, date) {
+    return pauseWindowsContain(item.pauseWindows, date) || (item.groupID && isGroupPaused(item.groupID, date));
   }
 
   function hasRecordedStateOnDate(item, date) {
@@ -331,17 +409,19 @@
   function renderTask(item) {
     const isComplete = complete(item);
     const isSkipped = skipped(item) && !isComplete;
+    const isPausedForDate = isPaused(item, state.selectedDate);
     const count = completionCount(item);
     const target = quantity(item);
-    const delayedDays = delayedDaysOnDate(item, state.selectedDate);
+    const delayedDays = isPausedForDate ? 0 : delayedDaysOnDate(item, state.selectedDate);
     const delayedText = `${delayedDays} ${delayedDays === 1 ? "day" : "days"}`;
-    return `<article class="task ${isComplete ? "complete" : ""} ${isSkipped ? "skipped" : ""}">
+    return `<article class="task ${isComplete ? "complete" : ""} ${isSkipped ? "skipped" : ""} ${isPausedForDate ? "paused" : ""}">
       <button class="check" data-action="toggle" data-id="${item.id}" aria-label="${complete(item) ? "Mark incomplete" : "Mark complete"}">${complete(item) ? icon("check") : ""}</button>
       <div class="task-copy">
         <div class="task-title-line">
           <div class="task-title">${escapeHTML(item.title)}</div>
           ${target > 1 ? `<span class="quantity-chip">${count}/${target}</span>` : ""}
           ${delayedDays > 0 ? `<span class="status-badge delayed" aria-label="Delayed ${escapeHTML(delayedText)}">${icon("startTomorrow")} ${escapeHTML(delayedText)}</span>` : ""}
+          ${isPausedForDate ? `<span class="status-badge paused" aria-label="Paused">${icon("pause")} Paused</span>` : ""}
         </div>
         <div class="task-meta">
           <span>${icon("repeat", "meta-icon")} ${escapeHTML(scheduleText(item))}</span>
@@ -351,9 +431,10 @@
         ${item.notes ? `<p class="notes">${escapeHTML(item.notes)}</p>` : ""}
       </div>
       <div class="task-actions">
-        ${isSkipped ? `<button class="mini-button" data-action="unskip" data-id="${item.id}">Undo</button>` : !isComplete ? `<button class="mini-button accent" data-action="skip" data-id="${item.id}">Skip</button>` : ""}
-        ${!isComplete && !isSkipped && isFutureDate(state.selectedDate) ? `<button class="mini-button" data-action="bring-forward" data-id="${item.id}">${icon("startToday")} Today</button>` : ""}
-        ${!isComplete && !isSkipped ? `<button class="mini-button" data-action="delay" data-id="${item.id}">Delay</button>` : ""}
+        ${isSkipped ? `<button class="mini-button" data-action="unskip" data-id="${item.id}">Undo</button>` : isPausedForDate ? `<button class="mini-button accent" data-action="resume" data-id="${item.id}">${icon("play")} Resume</button>` : !isComplete ? `<button class="mini-button accent" data-action="skip" data-id="${item.id}">Skip</button>` : ""}
+        ${!isComplete && !isSkipped && !isPausedForDate ? `<button class="mini-button" data-action="pause" data-id="${item.id}">${icon("pause")} Pause</button>` : ""}
+        ${!isComplete && !isSkipped && !isPausedForDate && isFutureDate(state.selectedDate) ? `<button class="mini-button" data-action="bring-forward" data-id="${item.id}">${icon("startToday")} Today</button>` : ""}
+        ${!isComplete && !isSkipped && !isPausedForDate ? `<button class="mini-button" data-action="delay" data-id="${item.id}">Delay</button>` : ""}
         <button class="mini-button" data-action="history" data-id="${item.id}" aria-label="History for ${escapeHTML(item.title)}">History</button>
         ${state.mode === "archive" ? `<button class="mini-button danger" data-action="delete-item" data-id="${item.id}" aria-label="Delete ${escapeHTML(item.title)} permanently">Delete</button>` : ""}
         <button class="edit-button" data-action="edit" data-id="${item.id}" aria-label="Edit ${escapeHTML(item.title)}">${icon("pencil")}</button>
@@ -363,7 +444,8 @@
 
   function renderGroup(name, items, groupID, realGroup, { allowsBulkActions = false, isCollapsed = false } = {}) {
     if (!items.length) return "";
-    const todo = items.filter((item) => !complete(item));
+    const groupPaused = realGroup && groupID ? isGroupPaused(groupID, state.selectedDate) : false;
+    const todo = items.filter((item) => !complete(item) && !isPaused(item, state.selectedDate));
     const done = items.filter(complete);
     const ordered = realGroup && todo.length ? [...todo, ...done] : items;
     return `<section class="group">
@@ -372,9 +454,13 @@
           ${realGroup ? `<button class="folder-toggle" data-action="toggle-group" data-group="${groupID}" aria-label="${isCollapsed ? `Open ${escapeHTML(name)}` : `Close ${escapeHTML(name)}`}">${icon(isCollapsed ? "folderClosed" : "folderOpen")}</button>` : ""}
           <span class="group-name">${escapeHTML(name)}</span>
           <span>${groupProgress(items)}</span>
+          ${groupPaused ? `<span class="status-badge paused">${icon("pause")} Paused</span>` : ""}
         </div>
         <div class="group-actions">
           ${allowsBulkActions && todo.length ? `<button class="complete-all" data-action="complete-group" data-group="${groupID || ""}">${icon("check")} All</button>` : ""}
+          ${allowsBulkActions && realGroup ? (groupPaused
+            ? `<button class="mini-button" data-action="resume-group" data-group="${groupID}">${icon("play")} Resume</button>`
+            : `<button class="mini-button" data-action="pause-group" data-group="${groupID}">${icon("pause")} Pause</button>`) : ""}
         </div>
       </div>
       ${isCollapsed ? "" : `<div class="task-list">${ordered.length ? ordered.map(renderTask).join("") : `<div class="empty-group">No tasks</div>`}</div>`}
@@ -386,14 +472,18 @@
     const groups = [...state.groups].sort((a, b) => a.sortOrder - b.sortOrder);
     const known = new Set(groups.map((group) => group.id));
     const ungrouped = items.filter((item) => !item.groupID || !known.has(item.groupID));
-    const remaining = items.filter((item) => !complete(item) && !skipped(item)).length;
+    const remaining = items.filter((item) => !complete(item) && !skipped(item) && !isPaused(item, state.selectedDate)).length;
     const dateLabel = state.selectedDate.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" });
     const title = sameDay(state.selectedDate, new Date()) ? "Ritual Cue" : state.selectedDate.toLocaleDateString([], { month: "short", day: "numeric" });
+    const hidesPausedExpected = state.mode === "today";
     const subtitle = state.mode === "archive"
       ? `${items.length} ${items.length === 1 ? "archived item" : "archived items"}.`
       : `${remaining} ${remaining === 1 ? "thing" : "things"} left today.`;
     const separatesSkipped = state.mode === "today";
-    const ungroupedTodo = ungrouped.filter((item) => !complete(item) && (!separatesSkipped || !skipped(item)));
+    const isTodoItem = (item) => !complete(item)
+      && (!hidesPausedExpected || !isPaused(item, state.selectedDate))
+      && (!separatesSkipped || !skipped(item));
+    const ungroupedTodo = ungrouped.filter(isTodoItem);
     const ungroupedSkipped = separatesSkipped ? ungrouped.filter((item) => skipped(item) && !complete(item)) : [];
     const ungroupedDone = ungrouped.filter(complete);
     const grouped = groups.map((group) => ({
@@ -402,8 +492,8 @@
     })).filter((entry) => entry.items.length);
     const todoBody = [
       renderGroup("Ungrouped", ungroupedTodo, "", false, { allowsBulkActions: true }),
-      ...grouped.filter((entry) => entry.items.some((item) => !complete(item) && (!separatesSkipped || !skipped(item))))
-        .map((entry) => renderGroup(entry.group.name, entry.items.filter((item) => !complete(item) && (!separatesSkipped || !skipped(item))), entry.group.id, true, { allowsBulkActions: true, isCollapsed: entry.group.isCollapsed === true }))
+      ...grouped.filter((entry) => entry.items.some(isTodoItem))
+        .map((entry) => renderGroup(entry.group.name, entry.items.filter(isTodoItem), entry.group.id, true, { allowsBulkActions: true, isCollapsed: entry.group.isCollapsed === true }))
     ].join("");
     const skippedBody = [
       renderGroup("Ungrouped", ungroupedSkipped, "", false),
@@ -757,6 +847,56 @@
     }));
   }
 
+  function pauseItem(item, days = 7) {
+    if (!item) return;
+    const start = startOfDay(state.selectedDate);
+    const end = addDays(start, Math.max(1, days) - 1);
+    item.pauseWindows = pauseWindowsWithRange(item.pauseWindows, start, end);
+    queue(mutation("upsert", {
+      itemID: item.id,
+      changedFields: ["pauseWindows"],
+      item: { pauseWindows: item.pauseWindows }
+    }));
+  }
+
+  function resumeItem(item) {
+    if (!item) return;
+    const next = pauseWindowsResumed(item.pauseWindows, state.selectedDate);
+    if (JSON.stringify(normalizePauseWindows(item.pauseWindows)) === JSON.stringify(next)) return;
+    item.pauseWindows = next;
+    queue(mutation("upsert", {
+      itemID: item.id,
+      changedFields: ["pauseWindows"],
+      item: { pauseWindows: item.pauseWindows }
+    }));
+  }
+
+  function pauseGroup(groupID, days = 7) {
+    const group = groupByID(groupID);
+    if (!group) return;
+    const start = startOfDay(state.selectedDate);
+    const end = addDays(start, Math.max(1, days) - 1);
+    group.pauseWindows = pauseWindowsWithRange(group.pauseWindows, start, end);
+    queue(mutation("groupUpsert", {
+      groupID: group.id,
+      changedFields: ["pauseWindows"],
+      group: { pauseWindows: group.pauseWindows }
+    }));
+  }
+
+  function resumeGroup(groupID) {
+    const group = groupByID(groupID);
+    if (!group) return;
+    const next = pauseWindowsResumed(group.pauseWindows, state.selectedDate);
+    if (JSON.stringify(normalizePauseWindows(group.pauseWindows)) === JSON.stringify(next)) return;
+    group.pauseWindows = next;
+    queue(mutation("groupUpsert", {
+      groupID: group.id,
+      changedFields: ["pauseWindows"],
+      group: { pauseWindows: group.pauseWindows }
+    }));
+  }
+
   function moveOpenItemDate(item, sourceDate, targetDate, successMessage) {
     item.completedDates ||= [];
     item.completionCounts ||= {};
@@ -837,8 +977,9 @@
       if ((item.completedDates || []).includes(dateKey(date))) stateLabel = "Done";
       else if ((item.skippedDates || []).includes(dateKey(date))) stateLabel = "Skipped";
       else if ((item.openDates || []).includes(dateKey(date))) stateLabel = "Open";
-      else if (occursOnDate(item, date) && date < startOfDay(new Date())) stateLabel = "Missed";
-      else if (occursOnDate(item, date)) stateLabel = "Open";
+      else if (isPaused(item, date)) stateLabel = "Paused";
+      else if (isScheduledOnDate(item, date) && date < startOfDay(new Date())) stateLabel = "Missed";
+      else if (isScheduledOnDate(item, date)) stateLabel = "Open";
       return {
         label: date.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" }),
         key: dateKey(date),
@@ -858,8 +999,9 @@
   function historyOptions(item, dateKeyValue, currentState) {
     const date = dateFromInput(dateKeyValue);
     const options = ["Done", "Open"];
-    if (occursOnDate(item, date) && date < startOfDay(new Date())) options.push("Missed");
-    else if (!occursOnDate(item, date)) options.push("Off");
+    if (isScheduledOnDate(item, date) && date < startOfDay(new Date())) options.push("Missed");
+    else if (!isScheduledOnDate(item, date)) options.push("Off");
+    options.push("Paused");
     options.push("Skipped");
     return options.map((option) => (
       `<option value="${option.toLowerCase()}" ${option === currentState ? "selected" : ""}>${option}</option>`
@@ -873,34 +1015,46 @@
     item.completionCounts ||= {};
     item.skippedDates ||= [];
     item.openDates ||= [];
+    item.pauseWindows ||= [];
     const wasCompleted = item.completedDates.includes(key);
     const wasCompletionCount = completionCount(item, dateFromInput(key));
     const wasSkipped = item.skippedDates.includes(key);
     const wasOpen = item.openDates.includes(key);
+    const wasPauseWindows = JSON.stringify(normalizePauseWindows(item.pauseWindows));
 
     if (nextState === "done") {
       setCompletionCount(item, key, quantity(item));
       item.skippedDates = item.skippedDates.filter((date) => date !== key);
       item.openDates = item.openDates.filter((date) => date !== key);
+      item.pauseWindows = pauseWindowsClearedOn(item.pauseWindows, key);
     } else if (nextState === "skipped") {
       setCompletionCount(item, key, 0);
       if (!item.skippedDates.includes(key)) item.skippedDates.push(key);
       item.openDates = item.openDates.filter((date) => date !== key);
+      item.pauseWindows = pauseWindowsClearedOn(item.pauseWindows, key);
     } else if (nextState === "open") {
       setCompletionCount(item, key, 0);
       item.skippedDates = item.skippedDates.filter((date) => date !== key);
       if (!item.openDates.includes(key)) item.openDates.push(key);
+      item.pauseWindows = pauseWindowsClearedOn(item.pauseWindows, key);
+    } else if (nextState === "paused") {
+      setCompletionCount(item, key, 0);
+      item.skippedDates = item.skippedDates.filter((date) => date !== key);
+      item.openDates = item.openDates.filter((date) => date !== key);
+      item.pauseWindows = pauseWindowsForOneDay(item.pauseWindows, key);
     } else {
       setCompletionCount(item, key, 0);
       item.skippedDates = item.skippedDates.filter((date) => date !== key);
       item.openDates = item.openDates.filter((date) => date !== key);
+      item.pauseWindows = pauseWindowsClearedOn(item.pauseWindows, key);
     }
 
     const isCompleted = item.completedDates.includes(key);
     const nextCompletionCount = completionCount(item, dateFromInput(key));
     const isSkipped = item.skippedDates.includes(key);
     const isOpen = item.openDates.includes(key);
-    if (wasCompleted === isCompleted && wasCompletionCount === nextCompletionCount && wasSkipped === isSkipped && wasOpen === isOpen) return;
+    const pauseChanged = wasPauseWindows !== JSON.stringify(normalizePauseWindows(item.pauseWindows));
+    if (wasCompleted === isCompleted && wasCompletionCount === nextCompletionCount && wasSkipped === isSkipped && wasOpen === isOpen && !pauseChanged) return;
 
     if (wasCompleted !== isCompleted || wasCompletionCount !== nextCompletionCount || (!isCompleted && (isSkipped || wasSkipped))) {
       state.pending.push(mutation("completion", {
@@ -910,11 +1064,15 @@
         completionCount: nextCompletionCount
       }));
     }
-    if (wasSkipped !== isSkipped || wasOpen !== isOpen) {
+    if (wasSkipped !== isSkipped || wasOpen !== isOpen || pauseChanged) {
       state.pending.push(mutation("upsert", {
         itemID: item.id,
-        changedFields: ["skippedDates", "openDates"],
-        item: { skippedDates: item.skippedDates, openDates: item.openDates }
+        changedFields: [
+          ...(wasSkipped !== isSkipped ? ["skippedDates"] : []),
+          ...(wasOpen !== isOpen ? ["openDates"] : []),
+          ...(pauseChanged ? ["pauseWindows"] : [])
+        ],
+        item: { skippedDates: item.skippedDates, openDates: item.openDates, pauseWindows: item.pauseWindows }
       }));
     }
     persistData();
@@ -939,12 +1097,12 @@
     if (!template) return;
     let group = state.groups.find((candidate) => candidate.name.toLowerCase() === template.groupName.toLowerCase());
     if (!group) {
-      group = { id: crypto.randomUUID(), name: template.groupName, sortOrder: state.groups.length, isCollapsed: false };
+      group = { id: crypto.randomUUID(), name: template.groupName, sortOrder: state.groups.length, isCollapsed: false, pauseWindows: [] };
       state.groups.push(group);
       state.pending.push(mutation("groupUpsert", {
         groupID: group.id,
-        changedFields: ["name", "sortOrder", "isCollapsed"],
-        group: { name: group.name, sortOrder: group.sortOrder, isCollapsed: group.isCollapsed }
+        changedFields: ["name", "sortOrder", "isCollapsed", "pauseWindows"],
+        group: { name: group.name, sortOrder: group.sortOrder, isCollapsed: group.isCollapsed, pauseWindows: group.pauseWindows }
       }));
     }
     const firstOrder = state.items.filter((item) => item.groupID === group.id).length;
@@ -966,11 +1124,12 @@
         endedAt: null,
         groupID: group.id,
         sortOrder: firstOrder + index,
+        pauseWindows: [],
       };
       state.items.push(item);
       state.pending.push(mutation("upsert", {
         itemID: item.id,
-        changedFields: ["title","notes","schedule","customWeekdays","reminderMinutes","quantity","skippedDates","openDates","createdAt","startDate","endedAt","groupID","sortOrder"],
+        changedFields: ["title","notes","schedule","customWeekdays","reminderMinutes","quantity","skippedDates","openDates","createdAt","startDate","endedAt","groupID","sortOrder","pauseWindows"],
         item
       }));
     }
@@ -995,11 +1154,11 @@
     if (groupID === "__new") {
       const name = prompt("Name this group");
       if (!name?.trim()) return;
-      const group = { id: crypto.randomUUID(), name: name.trim(), sortOrder: state.groups.length, isCollapsed: false };
+      const group = { id: crypto.randomUUID(), name: name.trim(), sortOrder: state.groups.length, isCollapsed: false, pauseWindows: [] };
       state.groups.push(group);
       state.pending.push(mutation("groupUpsert", {
-        groupID: group.id, changedFields: ["name", "sortOrder", "isCollapsed"],
-        group: { name: group.name, sortOrder: group.sortOrder, isCollapsed: group.isCollapsed }
+        groupID: group.id, changedFields: ["name", "sortOrder", "isCollapsed", "pauseWindows"],
+        group: { name: group.name, sortOrder: group.sortOrder, isCollapsed: group.isCollapsed, pauseWindows: group.pauseWindows }
       }));
       groupID = group.id;
     }
@@ -1027,6 +1186,7 @@
       endedAt,
       groupID,
       sortOrder: existing?.sortOrder ?? state.items.filter((candidate) => candidate.groupID === groupID).length,
+      pauseWindows: existing?.pauseWindows || [],
     };
     if (!item.title) return;
     const index = state.items.findIndex((candidate) => candidate.id === item.id);
@@ -1034,13 +1194,13 @@
     state.modal = null;
     queue(mutation("upsert", {
       itemID: item.id,
-      changedFields: ["title","notes","schedule","customWeekdays","reminderMinutes","quantity","skippedDates","openDates","createdAt","startDate","endedAt","groupID","sortOrder"],
+      changedFields: ["title","notes","schedule","customWeekdays","reminderMinutes","quantity","skippedDates","openDates","createdAt","startDate","endedAt","groupID","sortOrder","pauseWindows"],
       item: {
         title: item.title, notes: item.notes, schedule: item.schedule,
         customWeekdays: item.customWeekdays, reminderMinutes: item.reminderMinutes, quantity: item.quantity,
         skippedDates: item.skippedDates, openDates: item.openDates,
         createdAt: item.createdAt, startDate: item.startDate, endedAt: item.endedAt,
-        groupID: item.groupID, sortOrder: item.sortOrder
+        groupID: item.groupID, sortOrder: item.sortOrder, pauseWindows: item.pauseWindows
       }
     }));
   }
@@ -1066,6 +1226,8 @@
     if (action === "toggle") toggle(state.items.find((item) => item.id === target.dataset.id));
     if (action === "skip") setSkipped(state.items.find((item) => item.id === target.dataset.id), true);
     if (action === "unskip") setSkipped(state.items.find((item) => item.id === target.dataset.id), false);
+    if (action === "pause") pauseItem(state.items.find((item) => item.id === target.dataset.id));
+    if (action === "resume") resumeItem(state.items.find((item) => item.id === target.dataset.id));
     if (action === "delay") delayItem(state.items.find((item) => item.id === target.dataset.id));
     if (action === "bring-forward") bringForwardItem(state.items.find((item) => item.id === target.dataset.id));
     if (action === "delay-history") {
@@ -1079,12 +1241,14 @@
       render();
     }
     if (action === "delete-item") permanentlyDeleteItem(target.dataset.id);
-    if (action === "complete-all") completeItems(visibleItems());
+    if (action === "complete-all") completeItems(visibleItems().filter((item) => !isPaused(item, state.selectedDate)));
     if (action === "complete-group") {
       const id = target.dataset.group || null;
-      completeItems(visibleItems().filter((item) => (item.groupID || null) === id));
+      completeItems(visibleItems().filter((item) => (item.groupID || null) === id && !isPaused(item, state.selectedDate)));
     }
     if (action === "toggle-group") toggleGroupCollapsed(target.dataset.group);
+    if (action === "pause-group") pauseGroup(target.dataset.group);
+    if (action === "resume-group") resumeGroup(target.dataset.group);
     if (action === "account") { state.modal = { type: "account" }; render(); }
     if (action === "sign-out") await signOut();
     if (action === "export-data") {

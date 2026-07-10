@@ -710,8 +710,8 @@ function stampWins(incoming, current) {
   return incoming.deviceID > current.deviceID;
 }
 
-const itemFields = ["title", "notes", "schedule", "customWeekdays", "reminderMinutes", "quantity", "skippedDates", "openDates", "createdAt", "startDate", "endedAt", "groupID", "sortOrder"];
-const groupFields = ["name", "sortOrder", "isCollapsed"];
+const itemFields = ["title", "notes", "schedule", "customWeekdays", "reminderMinutes", "quantity", "skippedDates", "openDates", "createdAt", "startDate", "endedAt", "groupID", "sortOrder", "pauseWindows"];
+const groupFields = ["name", "sortOrder", "isCollapsed", "pauseWindows"];
 
 function validID(value) {
   return typeof value === "string" && /^[a-z0-9._:-]{1,120}$/i.test(value);
@@ -736,6 +736,20 @@ function validWeekdays(value) {
     && value.length <= 7
     && value.every((day) => Number.isInteger(day) && day >= 1 && day <= 7)
     && new Set(value).size === value.length;
+}
+
+function validPauseWindows(value) {
+  return value == null || (
+    Array.isArray(value)
+    && value.length <= 500
+    && value.every((window) => (
+      window
+      && typeof window === "object"
+      && validDateKey(window.startDate)
+      && (window.endDate == null || validDateKey(window.endDate))
+      && (window.endDate == null || window.startDate <= window.endDate)
+    ))
+  );
 }
 
 function validChangedFields(value, allowed) {
@@ -768,14 +782,16 @@ function validItemPayload(item = {}) {
     && validISODate(item.startDate)
     && validISODate(item.endedAt)
     && (item.groupID == null || validID(item.groupID))
-    && validFiniteNumber(item.sortOrder);
+    && validFiniteNumber(item.sortOrder)
+    && validPauseWindows(item.pauseWindows);
 }
 
 function validGroupPayload(group = {}) {
   return group && typeof group === "object"
     && (group.name == null || (typeof group.name === "string" && group.name.length <= 120))
     && validFiniteNumber(group.sortOrder)
-    && (group.isCollapsed == null || typeof group.isCollapsed === "boolean");
+    && (group.isCollapsed == null || typeof group.isCollapsed === "boolean")
+    && validPauseWindows(group.pauseWindows);
 }
 
 function validMutation(mutation) {
@@ -918,6 +934,7 @@ function materializeAccount(account) {
         endedAt: value.endedAt,
         groupID: value.groupID,
         sortOrder: value.sortOrder,
+        pauseWindows: value.pauseWindows || [],
         completedDates: Object.entries(record.completions || {})
           .filter(([, state]) => state.value)
           .map(([date]) => date),
@@ -939,7 +956,8 @@ function materializeAccount(account) {
       id: record.id,
       name: record.fields.name?.value || "Untitled group",
       sortOrder: record.fields.sortOrder?.value ?? 0,
-      isCollapsed: record.fields.isCollapsed?.value === true
+      isCollapsed: record.fields.isCollapsed?.value === true,
+      pauseWindows: record.fields.pauseWindows?.value || []
     }))
     .sort((left, right) => left.sortOrder - right.sortOrder || left.name.localeCompare(right.name));
   return {

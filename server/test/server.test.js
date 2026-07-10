@@ -961,6 +961,37 @@ test("group collapsed state syncs independently", () => {
   assert.equal(group.isCollapsed, true);
 });
 
+test("pause windows sync for items and groups", () => {
+  const state = account();
+  applyMutation(state, {
+    id: "group-home",
+    groupID: "group-home",
+    kind: "groupUpsert",
+    stamp: "2026-06-25T10:00:00.000Z",
+    changedFields: ["name", "pauseWindows"],
+    group: {
+      name: "Home",
+      pauseWindows: [{ startDate: "2026-07-10", endDate: "2026-07-16" }]
+    }
+  }, "device-a");
+  applyMutation(state, {
+    id: "item-1",
+    itemID: "item-1",
+    kind: "upsert",
+    stamp: "2026-06-25T10:01:00.000Z",
+    changedFields: ["title", "groupID", "pauseWindows"],
+    item: {
+      title: "Water plants",
+      groupID: "group-home",
+      pauseWindows: [{ startDate: "2026-07-11", endDate: "2026-07-11" }]
+    }
+  }, "device-a");
+
+  const materialized = materializeAccount(state);
+  assert.deepEqual(materialized.groups[0].pauseWindows, [{ startDate: "2026-07-10", endDate: "2026-07-16" }]);
+  assert.deepEqual(materialized.items[0].pauseWindows, [{ startDate: "2026-07-11", endDate: "2026-07-11" }]);
+});
+
 test("group deletions tombstone empty groups", () => {
   const state = account();
   applyMutation(state, {

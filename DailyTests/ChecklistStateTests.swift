@@ -155,6 +155,45 @@ final class ChecklistStateTests: XCTestCase {
         XCTAssertEqual(item.historyState(on: thirdDate, calendar: calendar), .open)
     }
 
+    func testPausedDatesAreNotMissed() throws {
+        let today = calendar.startOfDay(for: Date())
+        let yesterday = try XCTUnwrap(calendar.date(byAdding: .day, value: -1, to: today))
+        let twoDaysAgo = try XCTUnwrap(calendar.date(byAdding: .day, value: -2, to: today))
+        var item = ChecklistItem(title: "Take vitamins", schedule: .everyDay, createdAt: twoDaysAgo)
+
+        item.pause(from: yesterday, until: yesterday)
+
+        XCTAssertFalse(item.occurs(on: yesterday, calendar: calendar))
+        XCTAssertTrue(item.isTracked(on: yesterday, calendar: calendar))
+        XCTAssertEqual(item.historyState(on: yesterday, calendar: calendar), .paused)
+        XCTAssertEqual(item.consecutiveMissedDays(asOf: today, calendar: calendar), 1)
+    }
+
+    @MainActor
+    func testPausedGroupIsHiddenFromTodayButVisibleInAllItems() throws {
+        let accountID = "pause-group-test-\(UUID().uuidString)"
+        let today = calendar.startOfDay(for: Date())
+        cleanCaches(for: [accountID])
+        defer {
+            cleanCaches(for: [accountID])
+            UserDefaults.standard.removeObject(forKey: "activeAccountID")
+        }
+
+        UserDefaults.standard.set(accountID, forKey: "activeAccountID")
+        let store = ChecklistStore()
+        store.selectedDate = today
+        let group = try XCTUnwrap(store.createGroup(named: "Travel"))
+        store.save(ChecklistItem(title: "Water plants", createdAt: today, groupID: group.id))
+
+        store.pauseGroup(group.id)
+
+        XCTAssertTrue(store.visibleItems.isEmpty)
+        XCTAssertTrue(store.todoItems.isEmpty)
+        store.scope = .all
+        XCTAssertEqual(store.visibleItems.map(\.title), ["Water plants"])
+        XCTAssertTrue(store.isPaused(store.visibleItems[0], on: today))
+    }
+
     @MainActor
     func testQuantityRequiresMultipleCheckoffs() throws {
         let accountID = "quantity-test-\(UUID().uuidString)"

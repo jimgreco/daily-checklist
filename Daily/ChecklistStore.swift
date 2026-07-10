@@ -123,9 +123,12 @@ final class ChecklistStore: ObservableObject {
         let scoped: [ChecklistItem]
         switch scope {
         case .today:
-            scoped = items.filter { $0.isTracked(on: selectedDate) }
+            scoped = items.filter { item in
+                let paused = isPaused(item, on: selectedDate)
+                return isTracked(item, on: selectedDate) && (!paused || item.hasRecordedState(on: selectedDate))
+            }
         case .all:
-            scoped = items.filter { $0.isActive(on: selectedDate) || $0.hasRecordedState(on: selectedDate) }
+            scoped = items.filter { $0.isActive(on: selectedDate) || $0.hasRecordedState(on: selectedDate) || isPaused($0, on: selectedDate) }
         case .archive:
             scoped = items.filter { $0.endedAt != nil }
         }
@@ -140,7 +143,7 @@ final class ChecklistStore: ObservableObject {
     }
 
     var todoItems: [ChecklistItem] {
-        visibleItems.filter { !$0.isComplete(on: selectedDate) && !$0.isSkipped(on: selectedDate) }
+        visibleItems.filter { !$0.isComplete(on: selectedDate) && !$0.isSkipped(on: selectedDate) && !isPaused($0, on: selectedDate) }
     }
 
     var completedItems: [ChecklistItem] {
@@ -159,6 +162,36 @@ final class ChecklistStore: ObservableObject {
         !items.contains { $0.groupID == groupID && $0.endedAt == nil }
     }
 
+    func isGroupPaused(_ groupID: UUID, on date: Date? = nil) -> Bool {
+        guard let group = groups.first(where: { $0.id == groupID }) else { return false }
+        return group.isPaused(on: date ?? selectedDate)
+    }
+
+    func isPaused(_ item: ChecklistItem, on date: Date? = nil) -> Bool {
+        let targetDate = date ?? selectedDate
+        if item.isPaused(on: targetDate) { return true }
+        guard let groupID = item.groupID else { return false }
+        return isGroupPaused(groupID, on: targetDate)
+    }
+
+    func isTracked(_ item: ChecklistItem, on date: Date? = nil) -> Bool {
+        let targetDate = date ?? selectedDate
+        if isPaused(item, on: targetDate) { return true }
+        return item.occurs(on: targetDate) || item.hasRecordedState(on: targetDate)
+    }
+
+    func historyState(for item: ChecklistItem, on date: Date) -> ChecklistHistoryState {
+        let day = Calendar.current.startOfDay(for: date)
+        if item.isComplete(on: day) { return .done }
+        if item.isSkipped(on: day) { return .skipped }
+        if item.isExplicitlyOpen(on: day) { return .open }
+        if isPaused(item, on: day) { return .paused }
+        if item.isScheduled(on: day) {
+            return day < Calendar.current.startOfDay(for: .now) ? .missed : .open
+        }
+        return .off
+    }
+
     func moveSelectedDate(by days: Int) {
         guard let date = Calendar.current.date(byAdding: .day, value: days, to: selectedDate) else { return }
         selectedDate = Calendar.current.startOfDay(for: date)
@@ -175,7 +208,7 @@ final class ChecklistStore: ObservableObject {
         loadCache()
         hasLoaded = true
         await notifications.requestAuthorization()
-        await notifications.reschedule(items: items, eveningMinutes: eveningReminderMinutes)
+        await notifications.reschedule(items: items, groups: groups, eveningMinutes: eveningReminderMinutes)
     }
 
     func connect(to authStore: AuthStore) {
@@ -314,36 +347,50 @@ final class ChecklistStore: ObservableObject {
         let wasCompletionCount = items[index].completionCount(on: date)
         let wasSkipped = items[index].skippedDates.contains(key)
         let wasOpen = items[index].openDates.contains(key)
+        let wasPauseWindows = items[index].pauseWindows
 
         switch state {
         case .done:
             items[index].setCompletionCount(items[index].quantity, forKey: key)
             items[index].skippedDates.remove(key)
             items[index].openDates.remove(key)
+            items[index].clearPause(on: date)
         case .skipped:
             items[index].setCompletionCount(0, forKey: key)
             items[index].skippedDates.insert(key)
             items[index].openDates.remove(key)
+            items[index].clearPause(on: date)
         case .open:
             items[index].setCompletionCount(0, forKey: key)
             items[index].skippedDates.remove(key)
             items[index].openDates.insert(key)
+            items[index].clearPause(on: date)
+        case .paused:
+            items[index].setCompletionCount(0, forKey: key)
+            items[index].skippedDates.remove(key)
+            items[index].openDates.remove(key)
+            items[index].pause(from: date, until: date)
         case .missed, .off:
             items[index].setCompletionCount(0, forKey: key)
             items[index].skippedDates.remove(key)
             items[index].openDates.remove(key)
+            items[index].clearPause(on: date)
         }
 
         let isCompleted = items[index].completedDates.contains(key)
         let completionCount = items[index].completionCount(on: date)
         let isSkipped = items[index].skippedDates.contains(key)
         let isOpen = items[index].openDates.contains(key)
-        guard wasCompleted != isCompleted || wasCompletionCount != completionCount || wasSkipped != isSkipped || wasOpen != isOpen else { return }
+        let pauseChanged = items[index].pauseWindows != wasPauseWindows
+        guard wasCompleted != isCompleted || wasCompletionCount != completionCount || wasSkipped != isSkipped || wasOpen != isOpen || pauseChanged else { return }
 
         if wasCompleted != isCompleted || wasCompletionCount != completionCount || (!isCompleted && (isSkipped || wasSkipped)) {
             pendingMutations.append(.completion(itemID: itemID, date: key, completed: isCompleted, count: completionCount))
         }
         queueDaySetMutationIfNeeded(for: items[index], wasSkipped: wasSkipped, wasOpen: wasOpen, key: key)
+        if pauseChanged {
+            pendingMutations.append(.upsert(item: items[index], changedFields: ["pauseWindows"]))
+        }
 
         persistAndSchedule()
     }
@@ -581,8 +628,44 @@ final class ChecklistStore: ObservableObject {
     }
 
     func skipGroup(_ groupID: UUID?) {
-        let groupItems = visibleItems.filter { $0.groupID == groupID && !$0.isComplete(on: selectedDate) }
+        let groupItems = visibleItems.filter { $0.groupID == groupID && !$0.isComplete(on: selectedDate) && !isPaused($0, on: selectedDate) }
         groupItems.forEach { setSkipped($0, skipped: true) }
+    }
+
+    func pause(_ item: ChecklistItem, days: Int = 7) {
+        guard let index = items.firstIndex(where: { $0.id == item.id }) else { return }
+        let start = Calendar.current.startOfDay(for: selectedDate)
+        guard let end = Calendar.current.date(byAdding: .day, value: max(1, days) - 1, to: start) else { return }
+        items[index].pause(from: start, until: end)
+        pendingMutations.append(.upsert(item: items[index], changedFields: ["pauseWindows"]))
+        persistAndSchedule()
+    }
+
+    func resume(_ item: ChecklistItem) {
+        guard let index = items.firstIndex(where: { $0.id == item.id }) else { return }
+        let before = items[index].pauseWindows
+        items[index].resume(on: selectedDate)
+        guard before != items[index].pauseWindows else { return }
+        pendingMutations.append(.upsert(item: items[index], changedFields: ["pauseWindows"]))
+        persistAndSchedule()
+    }
+
+    func pauseGroup(_ groupID: UUID, days: Int = 7) {
+        guard let index = groups.firstIndex(where: { $0.id == groupID }) else { return }
+        let start = Calendar.current.startOfDay(for: selectedDate)
+        guard let end = Calendar.current.date(byAdding: .day, value: max(1, days) - 1, to: start) else { return }
+        groups[index].pause(from: start, until: end)
+        pendingMutations.append(.upsert(group: groups[index], changedFields: ["pauseWindows"]))
+        persistAndSchedule()
+    }
+
+    func resumeGroup(_ groupID: UUID) {
+        guard let index = groups.firstIndex(where: { $0.id == groupID }) else { return }
+        let before = groups[index].pauseWindows
+        groups[index].resume(on: selectedDate)
+        guard before != groups[index].pauseWindows else { return }
+        pendingMutations.append(.upsert(group: groups[index], changedFields: ["pauseWindows"]))
+        persistAndSchedule()
     }
 
     func endGroupToday(_ groupID: UUID) {
@@ -638,7 +721,7 @@ final class ChecklistStore: ObservableObject {
             guard let date = Calendar.current.date(byAdding: .day, value: -offset, to: Calendar.current.startOfDay(for: selectedDate)) else {
                 return nil
             }
-            return (date, item.historyState(on: date))
+            return (date, historyState(for: item, on: date))
         }
     }
 
@@ -720,7 +803,7 @@ final class ChecklistStore: ObservableObject {
             try? data.write(to: cacheURL, options: .atomic)
         }
 
-        Task { await notifications.reschedule(items: items, eveningMinutes: eveningReminderMinutes) }
+        Task { await notifications.reschedule(items: items, groups: groups, eveningMinutes: eveningReminderMinutes) }
         if !pendingMutations.isEmpty {
             syncState = "Changes pending"
             syncTask?.cancel()
@@ -755,9 +838,9 @@ final class ChecklistStore: ObservableObject {
     }
 
     static let allFields: Set<String> = [
-        "title", "notes", "schedule", "customWeekdays", "reminderMinutes", "quantity", "skippedDates", "openDates", "createdAt", "startDate", "endedAt", "groupID", "sortOrder"
+        "title", "notes", "schedule", "customWeekdays", "reminderMinutes", "quantity", "skippedDates", "openDates", "createdAt", "startDate", "endedAt", "groupID", "sortOrder", "pauseWindows"
     ]
-    static let allGroupFields: Set<String> = ["name", "sortOrder", "isCollapsed"]
+    static let allGroupFields: Set<String> = ["name", "sortOrder", "isCollapsed", "pauseWindows"]
 
     private static func changedFields(from old: ChecklistItem, to new: ChecklistItem) -> Set<String> {
         var changed: Set<String> = []
@@ -773,6 +856,7 @@ final class ChecklistStore: ObservableObject {
         if old.endedAt != new.endedAt { changed.insert("endedAt") }
         if old.groupID != new.groupID { changed.insert("groupID") }
         if old.sortOrder != new.sortOrder { changed.insert("sortOrder") }
+        if old.pauseWindows != new.pauseWindows { changed.insert("pauseWindows") }
         return changed
     }
 

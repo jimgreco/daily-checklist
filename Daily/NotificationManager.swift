@@ -74,7 +74,7 @@ struct NotificationManager {
         ])
     }
 
-    func reschedule(items: [ChecklistItem], eveningMinutes: Int?) async {
+    func reschedule(items: [ChecklistItem], groups: [ChecklistGroup], eveningMinutes: Int?) async {
         #if DEBUG
         if ScreenshotSeedData.isEnabled { return }
         #endif
@@ -85,11 +85,18 @@ struct NotificationManager {
         center.removePendingNotificationRequests(withIdentifiers: managed)
 
         let calendar = Calendar.current
+        let groupsByID = Dictionary(uniqueKeysWithValues: groups.map { ($0.id, $0) })
+        func isPaused(_ item: ChecklistItem, on date: Date) -> Bool {
+            if item.isPaused(on: date) { return true }
+            guard let groupID = item.groupID else { return false }
+            return groupsByID[groupID]?.isPaused(on: date) == true
+        }
         var itemReminders: [(date: Date, item: ChecklistItem)] = []
         for dayOffset in 0..<60 {
             guard let date = calendar.date(byAdding: .day, value: dayOffset, to: .now) else { continue }
             for item in items {
                 guard let minutes = item.reminderMinutes,
+                      !isPaused(item, on: date),
                       item.occurs(on: date) || item.isExplicitlyOpen(on: date) else { continue }
                 var fireDate = calendar.dateComponents([.year, .month, .day], from: date)
                 fireDate.hour = minutes / 60
@@ -124,7 +131,8 @@ struct NotificationManager {
         for dayOffset in 0..<7 {
             guard let date = calendar.date(byAdding: .day, value: dayOffset, to: .now) else { continue }
             let remaining = items.filter {
-                ($0.occurs(on: date) || $0.isExplicitlyOpen(on: date))
+                !isPaused($0, on: date)
+                    && ($0.occurs(on: date) || $0.isExplicitlyOpen(on: date))
                     && !$0.isComplete(on: date)
                     && !$0.isSkipped(on: date)
             }.count

@@ -22,24 +22,115 @@ enum ScheduleKind: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+struct PauseWindow: Codable, Hashable {
+    private enum CodingKeys: String, CodingKey {
+        case startDate
+        case endDate
+    }
+
+    var startDate: String
+    var endDate: String?
+
+    init(startDate: String, endDate: String? = nil) {
+        self.startDate = startDate
+        self.endDate = endDate
+    }
+
+    func contains(_ date: Date) -> Bool {
+        contains(DateKey.string(from: date))
+    }
+
+    func contains(_ key: String) -> Bool {
+        guard key >= startDate else { return false }
+        guard let endDate else { return true }
+        return key <= endDate
+    }
+
+    static func normalized(_ windows: [PauseWindow]) -> [PauseWindow] {
+        var merged: [PauseWindow] = []
+        for window in windows
+            .filter({ DateKey.date(from: $0.startDate) != nil && ($0.endDate == nil || DateKey.date(from: $0.endDate ?? "") != nil) })
+            .filter({ $0.endDate == nil || $0.startDate <= ($0.endDate ?? "") })
+            .sorted(by: { $0.startDate < $1.startDate }) {
+            guard var last = merged.popLast() else {
+                merged.append(window)
+                continue
+            }
+            guard let lastEnd = last.endDate else {
+                merged.append(last)
+                continue
+            }
+            if window.startDate <= lastEnd {
+                if let endDate = window.endDate {
+                    last.endDate = max(lastEnd, endDate)
+                } else {
+                    last.endDate = nil
+                }
+                merged.append(last)
+            } else {
+                merged.append(last)
+                merged.append(window)
+            }
+        }
+        return merged
+    }
+
+    static func clearing(_ windows: [PauseWindow], on date: Date, calendar: Calendar = .current) -> [PauseWindow] {
+        let key = DateKey.string(from: date)
+        let previousKey = calendar
+            .date(byAdding: .day, value: -1, to: calendar.startOfDay(for: date))
+            .map(DateKey.string(from:))
+        let nextKey = calendar
+            .date(byAdding: .day, value: 1, to: calendar.startOfDay(for: date))
+            .map(DateKey.string(from:))
+
+        return normalized(windows.flatMap { window -> [PauseWindow] in
+            guard window.contains(key) else { return [window] }
+            var result: [PauseWindow] = []
+            if window.startDate < key, let previousKey {
+                result.append(PauseWindow(startDate: window.startDate, endDate: previousKey))
+            }
+            if let nextKey {
+                if let endDate = window.endDate {
+                    if key < endDate {
+                        result.append(PauseWindow(startDate: nextKey, endDate: endDate))
+                    }
+                } else {
+                    result.append(PauseWindow(startDate: nextKey))
+                }
+            }
+            return result
+        })
+    }
+}
+
 struct ChecklistGroup: Identifiable, Codable, Hashable {
     private enum CodingKeys: String, CodingKey {
         case id
         case name
         case sortOrder
         case isCollapsed
+        case pauseWindows
     }
 
     var id: UUID
     var name: String
     var sortOrder: Double
     var isCollapsed: Bool
+    var pauseWindows: [PauseWindow]
 
-    init(id: UUID = UUID(), name: String, sortOrder: Double = 0, isCollapsed: Bool = false) {
+    init(
+        id: UUID = UUID(),
+        name: String,
+        sortOrder: Double = 0,
+        isCollapsed: Bool = false,
+        pauseWindows: [PauseWindow] = []
+    ) {
         self.id = id
         self.name = name
         self.sortOrder = sortOrder
         self.isCollapsed = isCollapsed
+        self.pauseWindows = PauseWindow.normalized(pauseWindows)
     }
 
     init(from decoder: Decoder) throws {
@@ -48,6 +139,36 @@ struct ChecklistGroup: Identifiable, Codable, Hashable {
         name = try container.decode(String.self, forKey: .name)
         sortOrder = try container.decodeIfPresent(Double.self, forKey: .sortOrder) ?? 0
         isCollapsed = try container.decodeIfPresent(Bool.self, forKey: .isCollapsed) ?? false
+        pauseWindows = PauseWindow.normalized(try container.decodeIfPresent([PauseWindow].self, forKey: .pauseWindows) ?? [])
+    }
+
+    func isPaused(on date: Date) -> Bool {
+        pauseWindows.contains { $0.contains(date) }
+    }
+
+    mutating func pause(from startDate: Date, until endDate: Date) {
+        let startKey = DateKey.string(from: startDate)
+        let endKey = DateKey.string(from: endDate)
+        guard startKey <= endKey else { return }
+        pauseWindows = PauseWindow.normalized(pauseWindows + [PauseWindow(startDate: startKey, endDate: endKey)])
+    }
+
+    mutating func resume(on date: Date = .now, calendar: Calendar = .current) {
+        let key = DateKey.string(from: date)
+        let previousKey = calendar
+            .date(byAdding: .day, value: -1, to: calendar.startOfDay(for: date))
+            .map(DateKey.string(from:))
+        pauseWindows = PauseWindow.normalized(pauseWindows.compactMap { window in
+            guard window.contains(key) else { return window }
+            guard window.startDate < key, let previousKey else { return nil }
+            var closed = window
+            closed.endDate = previousKey
+            return closed
+        })
+    }
+
+    mutating func clearPause(on date: Date, calendar: Calendar = .current) {
+        pauseWindows = PauseWindow.clearing(pauseWindows, on: date, calendar: calendar)
     }
 }
 
@@ -69,6 +190,7 @@ struct ChecklistItem: Identifiable, Codable, Hashable {
         case endedAt
         case groupID
         case sortOrder
+        case pauseWindows
     }
 
     var id: UUID
@@ -87,6 +209,7 @@ struct ChecklistItem: Identifiable, Codable, Hashable {
     var endedAt: Date?
     var groupID: UUID?
     var sortOrder: Double?
+    var pauseWindows: [PauseWindow]
 
     init(
         id: UUID = UUID(),
@@ -104,7 +227,8 @@ struct ChecklistItem: Identifiable, Codable, Hashable {
         startDate: Date? = nil,
         endedAt: Date? = nil,
         groupID: UUID? = nil,
-        sortOrder: Double? = nil
+        sortOrder: Double? = nil,
+        pauseWindows: [PauseWindow] = []
     ) {
         self.id = id
         self.title = title
@@ -122,6 +246,7 @@ struct ChecklistItem: Identifiable, Codable, Hashable {
         self.endedAt = endedAt
         self.groupID = groupID
         self.sortOrder = sortOrder
+        self.pauseWindows = PauseWindow.normalized(pauseWindows)
     }
 
     init(from decoder: Decoder) throws {
@@ -144,6 +269,7 @@ struct ChecklistItem: Identifiable, Codable, Hashable {
         endedAt = try container.decodeIfPresent(Date.self, forKey: .endedAt)
         groupID = try container.decodeIfPresent(UUID.self, forKey: .groupID)
         sortOrder = try container.decodeIfPresent(Double.self, forKey: .sortOrder)
+        pauseWindows = PauseWindow.normalized(try container.decodeIfPresent([PauseWindow].self, forKey: .pauseWindows) ?? [])
     }
 
     func isActive(on date: Date, calendar: Calendar = .current) -> Bool {
@@ -154,7 +280,7 @@ struct ChecklistItem: Identifiable, Codable, Hashable {
         return day < calendar.startOfDay(for: endedAt)
     }
 
-    func occurs(on date: Date, calendar: Calendar = .current) -> Bool {
+    func isScheduled(on date: Date, calendar: Calendar = .current) -> Bool {
         guard isActive(on: date, calendar: calendar) else { return false }
         let weekday = calendar.component(.weekday, from: date)
         switch schedule {
@@ -163,6 +289,10 @@ struct ChecklistItem: Identifiable, Codable, Hashable {
         case .weekends: return weekday == 1 || weekday == 7
         case .custom: return customWeekdays.contains(weekday)
         }
+    }
+
+    func occurs(on date: Date, calendar: Calendar = .current) -> Bool {
+        isScheduled(on: date, calendar: calendar) && !isPaused(on: date)
     }
 
     func isComplete(on date: Date) -> Bool {
@@ -199,19 +329,24 @@ struct ChecklistItem: Identifiable, Codable, Hashable {
         openDates.contains(DateKey.string(from: date))
     }
 
+    func isPaused(on date: Date) -> Bool {
+        pauseWindows.contains { $0.contains(date) }
+    }
+
     func hasRecordedState(on date: Date) -> Bool {
         completionCount(on: date) > 0 || isSkipped(on: date) || isExplicitlyOpen(on: date)
     }
 
     func isTracked(on date: Date, calendar: Calendar = .current) -> Bool {
-        occurs(on: date, calendar: calendar) || hasRecordedState(on: date)
+        occurs(on: date, calendar: calendar) || hasRecordedState(on: date) || isPaused(on: date)
     }
 
     func firstTrackedDate(calendar: Calendar = .current) -> Date {
         let firstActiveDate = calendar.startOfDay(for: startDate ?? createdAt)
+        let pausedDates = pauseWindows.compactMap { DateKey.date(from: $0.startDate) }
         let recordedDates = (completedDates.union(Set(completionCounts.keys)).union(skippedDates).union(openDates))
             .compactMap(DateKey.date(from:))
-            .map { calendar.startOfDay(for: $0) }
+            .map { calendar.startOfDay(for: $0) } + pausedDates.map { calendar.startOfDay(for: $0) }
         guard let firstRecordedDate = recordedDates.min() else { return firstActiveDate }
         return min(firstActiveDate, firstRecordedDate)
     }
@@ -221,10 +356,36 @@ struct ChecklistItem: Identifiable, Codable, Hashable {
         if isComplete(on: day) { return .done }
         if isSkipped(on: day) { return .skipped }
         if isExplicitlyOpen(on: day) { return .open }
-        if occurs(on: day, calendar: calendar) {
+        if isPaused(on: day) { return .paused }
+        if isScheduled(on: day, calendar: calendar) {
             return day < calendar.startOfDay(for: .now) ? .missed : .open
         }
         return .off
+    }
+
+    mutating func pause(from startDate: Date, until endDate: Date) {
+        let startKey = DateKey.string(from: startDate)
+        let endKey = DateKey.string(from: endDate)
+        guard startKey <= endKey else { return }
+        pauseWindows = PauseWindow.normalized(pauseWindows + [PauseWindow(startDate: startKey, endDate: endKey)])
+    }
+
+    mutating func resume(on date: Date = .now, calendar: Calendar = .current) {
+        let key = DateKey.string(from: date)
+        let previousKey = calendar
+            .date(byAdding: .day, value: -1, to: calendar.startOfDay(for: date))
+            .map(DateKey.string(from:))
+        pauseWindows = PauseWindow.normalized(pauseWindows.compactMap { window in
+            guard window.contains(key) else { return window }
+            guard window.startDate < key, let previousKey else { return nil }
+            var closed = window
+            closed.endDate = previousKey
+            return closed
+        })
+    }
+
+    mutating func clearPause(on date: Date, calendar: Calendar = .current) {
+        pauseWindows = PauseWindow.clearing(pauseWindows, on: date, calendar: calendar)
     }
 
     func consecutiveMissedDays(asOf date: Date, calendar: Calendar = .current) -> Int {
@@ -243,6 +404,13 @@ struct ChecklistItem: Identifiable, Codable, Hashable {
 
         while cursor >= firstEligibleDate {
             if isTracked(on: cursor, calendar: calendar) {
+                if isPaused(on: cursor) {
+                    guard let previousDay = calendar.date(byAdding: .day, value: -1, to: cursor) else {
+                        break
+                    }
+                    cursor = previousDay
+                    continue
+                }
                 if isComplete(on: cursor) || isSkipped(on: cursor) {
                     break
                 }
@@ -276,6 +444,13 @@ struct ChecklistItem: Identifiable, Codable, Hashable {
 
         while cursor >= firstEligibleDate {
             if isTracked(on: cursor, calendar: calendar) {
+                if isPaused(on: cursor) {
+                    guard let previousDay = calendar.date(byAdding: .day, value: -1, to: cursor) else {
+                        break
+                    }
+                    cursor = previousDay
+                    continue
+                }
                 guard isComplete(on: cursor) else { break }
                 completedDays += 1
             }
@@ -434,6 +609,7 @@ struct ItemPayload: Codable {
         case endedAt
         case groupID
         case sortOrder
+        case pauseWindows
     }
 
     var title: String
@@ -449,6 +625,7 @@ struct ItemPayload: Codable {
     var endedAt: Date?
     var groupID: UUID?
     var sortOrder: Double?
+    var pauseWindows: [PauseWindow]
 
     init(
         title: String,
@@ -463,7 +640,8 @@ struct ItemPayload: Codable {
         startDate: Date?,
         endedAt: Date?,
         groupID: UUID?,
-        sortOrder: Double?
+        sortOrder: Double?,
+        pauseWindows: [PauseWindow]
     ) {
         self.title = title
         self.notes = notes
@@ -478,6 +656,7 @@ struct ItemPayload: Codable {
         self.endedAt = endedAt
         self.groupID = groupID
         self.sortOrder = sortOrder
+        self.pauseWindows = PauseWindow.normalized(pauseWindows)
     }
 
     init(from decoder: Decoder) throws {
@@ -495,6 +674,7 @@ struct ItemPayload: Codable {
         endedAt = try container.decodeIfPresent(Date.self, forKey: .endedAt)
         groupID = try container.decodeIfPresent(UUID.self, forKey: .groupID)
         sortOrder = try container.decodeIfPresent(Double.self, forKey: .sortOrder)
+        pauseWindows = PauseWindow.normalized(try container.decodeIfPresent([PauseWindow].self, forKey: .pauseWindows) ?? [])
     }
 }
 
@@ -503,16 +683,19 @@ struct GroupPayload: Codable {
         case name
         case sortOrder
         case isCollapsed
+        case pauseWindows
     }
 
     var name: String
     var sortOrder: Double
     var isCollapsed: Bool
+    var pauseWindows: [PauseWindow]
 
-    init(name: String, sortOrder: Double, isCollapsed: Bool) {
+    init(name: String, sortOrder: Double, isCollapsed: Bool, pauseWindows: [PauseWindow]) {
         self.name = name
         self.sortOrder = sortOrder
         self.isCollapsed = isCollapsed
+        self.pauseWindows = PauseWindow.normalized(pauseWindows)
     }
 
     init(from decoder: Decoder) throws {
@@ -520,6 +703,7 @@ struct GroupPayload: Codable {
         name = try container.decodeIfPresent(String.self, forKey: .name) ?? ""
         sortOrder = try container.decodeIfPresent(Double.self, forKey: .sortOrder) ?? 0
         isCollapsed = try container.decodeIfPresent(Bool.self, forKey: .isCollapsed) ?? false
+        pauseWindows = PauseWindow.normalized(try container.decodeIfPresent([PauseWindow].self, forKey: .pauseWindows) ?? [])
     }
 }
 
@@ -566,7 +750,8 @@ struct SyncMutation: Identifiable, Codable {
                 startDate: item.startDate,
                 endedAt: item.endedAt,
                 groupID: item.groupID,
-                sortOrder: item.sortOrder
+                sortOrder: item.sortOrder,
+                pauseWindows: item.pauseWindows
             )
         )
     }
@@ -578,7 +763,12 @@ struct SyncMutation: Identifiable, Codable {
             kind: .groupUpsert,
             stamp: SyncStamp.now,
             changedFields: changedFields,
-            group: GroupPayload(name: group.name, sortOrder: group.sortOrder, isCollapsed: group.isCollapsed)
+            group: GroupPayload(
+                name: group.name,
+                sortOrder: group.sortOrder,
+                isCollapsed: group.isCollapsed,
+                pauseWindows: group.pauseWindows
+            )
         )
     }
 
@@ -654,6 +844,7 @@ enum ChecklistHistoryState: String, CaseIterable, Identifiable {
     case skipped = "Skipped"
     case missed = "Missed"
     case open = "Open"
+    case paused = "Paused"
     case off = "Off"
 
     var id: String { rawValue }

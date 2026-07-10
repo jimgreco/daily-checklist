@@ -333,7 +333,9 @@ struct ChecklistView: View {
     }
 
     private var activeVisibleItems: [ChecklistItem] {
-        store.visibleItems.filter { store.scope == .all || !$0.isSkipped(on: store.selectedDate) }
+        store.visibleItems.filter {
+            store.scope == .all || (!$0.isSkipped(on: store.selectedDate) && !store.isPaused($0, on: store.selectedDate))
+        }
     }
 
     private var todoSectionItems: [ChecklistItem] {
@@ -622,6 +624,7 @@ struct ChecklistView: View {
                 ForEach(store.orderedGroups) { group in
                     let groupItems = items.filter { $0.groupID == group.id }
                     let isCompleteGroup = groupIsComplete(group.id)
+                    let groupPaused = store.isGroupPaused(group.id, on: store.selectedDate)
                     if !groupItems.isEmpty && isCompleteGroup == isCompletedSection {
                         groupBlock(
                             title: group.name,
@@ -629,6 +632,7 @@ struct ChecklistView: View {
                             items: groupItems,
                             isRealGroup: true,
                             isCollapsed: group.isCollapsed,
+                            isPaused: groupPaused,
                             canDeleteGroup: store.canDeleteGroup(group.id),
                             allowsGroupActions: allowsGroupActions,
                             allowsPermanentDelete: allowsPermanentDelete,
@@ -647,6 +651,7 @@ struct ChecklistView: View {
         items: [ChecklistItem],
         isRealGroup: Bool,
         isCollapsed: Bool = false,
+        isPaused: Bool = false,
         canDeleteGroup: Bool = false,
         allowsGroupActions: Bool = false,
         allowsPermanentDelete: Bool = false,
@@ -660,6 +665,7 @@ struct ChecklistView: View {
                 totalCount: items.count,
                 isRealGroup: isRealGroup,
                 isCollapsed: isCollapsed,
+                isPaused: isPaused,
                 canDeleteGroup: canDeleteGroup,
                 showsCompleteAll: showsCompleteAll,
                 allowsGroupActions: allowsGroupActions,
@@ -687,6 +693,18 @@ struct ChecklistView: View {
                 skipGroup: {
                     withAnimation(.snappy) {
                         store.skipGroup(groupID)
+                    }
+                },
+                pauseGroup: {
+                    guard let groupID else { return }
+                    withAnimation(.snappy) {
+                        store.pauseGroup(groupID)
+                    }
+                },
+                resumeGroup: {
+                    guard let groupID else { return }
+                    withAnimation(.snappy) {
+                        store.resumeGroup(groupID)
                     }
                 },
                 startTomorrow: {
@@ -740,6 +758,7 @@ struct ChecklistView: View {
         totalCount: Int,
         isRealGroup: Bool,
         isCollapsed: Bool,
+        isPaused: Bool,
         canDeleteGroup: Bool,
         showsCompleteAll: Bool,
         allowsGroupActions: Bool,
@@ -748,6 +767,8 @@ struct ChecklistView: View {
         delete: @escaping () -> Void,
         completeAll: @escaping () -> Void,
         skipGroup: @escaping () -> Void,
+        pauseGroup: @escaping () -> Void,
+        resumeGroup: @escaping () -> Void,
         startTomorrow: @escaping () -> Void,
         duplicate: @escaping () -> Void,
         endAll: @escaping () -> Void
@@ -779,12 +800,26 @@ struct ChecklistView: View {
             Text(completedCount == totalCount ? "\(totalCount)" : "\(completedCount)/\(totalCount)")
                 .font(.system(size: 11, weight: .bold, design: .rounded))
                 .foregroundStyle(.secondary)
+            if isPaused {
+                Label("Paused", systemImage: "pause.circle.fill")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(delayed)
+            }
             if isRealGroup, isEditingChecklist {
                 Menu {
                     Button(action: rename) {
                         Label("Rename", systemImage: "pencil")
                     }
                     if allowsGroupActions {
+                        if isPaused {
+                            Button(action: resumeGroup) {
+                                Label("Resume", systemImage: "play.circle")
+                            }
+                        } else {
+                            Button(action: pauseGroup) {
+                                Label("Pause 1 week", systemImage: "pause.circle")
+                            }
+                        }
                         Button(action: skipGroup) {
                             Label("Skip today", systemImage: "forward.end")
                         }
@@ -876,9 +911,12 @@ struct ChecklistView: View {
                         onEdit: { editingItem = item },
                         onSkip: { store.setSkipped(item, skipped: true) },
                         onUnskip: { store.setSkipped(item, skipped: false) },
+                        onPause: { store.pause(item) },
+                        onResume: { store.resume(item) },
                         onDelay: { delay(item) },
                         onBringForward: { bringForward(item) },
                         onHistory: { historyItem = item },
+                        paused: store.isPaused(item, on: store.selectedDate),
                         allowsPermanentDelete: allowsPermanentDelete,
                         onPermanentDelete: { permanentlyDeletingItem = item }
                     )
@@ -907,9 +945,12 @@ struct ChecklistView: View {
                         onEdit: { editingItem = item },
                         onSkip: { store.setSkipped(item, skipped: true) },
                         onUnskip: { store.setSkipped(item, skipped: false) },
+                        onPause: { store.pause(item) },
+                        onResume: { store.resume(item) },
                         onDelay: { delay(item) },
                         onBringForward: { bringForward(item) },
                         onHistory: { historyItem = item },
+                        paused: store.isPaused(item, on: store.selectedDate),
                         allowsPermanentDelete: allowsPermanentDelete,
                         onPermanentDelete: { permanentlyDeletingItem = item }
                     )
@@ -1098,17 +1139,20 @@ private struct ItemRow: View {
     let onEdit: () -> Void
     let onSkip: () -> Void
     let onUnskip: () -> Void
+    let onPause: () -> Void
+    let onResume: () -> Void
     let onDelay: () -> Void
     let onBringForward: () -> Void
     let onHistory: () -> Void
+    let paused: Bool
     let allowsPermanentDelete: Bool
     let onPermanentDelete: () -> Void
 
     private var completed: Bool { item.isComplete(on: date) }
     private var skipped: Bool { item.isSkipped(on: date) }
     private var completionCount: Int { item.completionCount(on: date) }
-    private var missedDays: Int { item.consecutiveMissedDays(asOf: date) }
-    private var completionStreak: Int { item.consecutiveCompletedDays(asOf: date) }
+    private var missedDays: Int { paused ? 0 : item.consecutiveMissedDays(asOf: date) }
+    private var completionStreak: Int { paused ? 0 : item.consecutiveCompletedDays(asOf: date) }
     private var delayedDays: Int { item.delayedDays(asOf: date) }
     private var canBringForward: Bool {
         Calendar.current.startOfDay(for: date) > Calendar.current.startOfDay(for: .now)
@@ -1171,6 +1215,14 @@ private struct ItemRow: View {
                             accessibilityLabel: "Delayed \(delayedDays) \(delayedDays == 1 ? "day" : "days")"
                         )
                     }
+                    if paused {
+                        statusBadge(
+                            "Paused",
+                            systemImage: "pause.circle.fill",
+                            color: delayed,
+                            accessibilityLabel: "Paused"
+                        )
+                    }
                 }
                 HStack(spacing: 8) {
                     Label(item.scheduleSummary, systemImage: "repeat")
@@ -1221,7 +1273,14 @@ private struct ItemRow: View {
                 Button(action: onUnskip) {
                     Label("Undo skip", systemImage: "arrow.uturn.backward")
                 }
+            } else if paused {
+                Button(action: onResume) {
+                    Label("Resume", systemImage: "play.circle")
+                }
             } else if !completed {
+                Button(action: onPause) {
+                    Label("Pause 1 week", systemImage: "pause.circle")
+                }
                 if canBringForward {
                     Button(action: onBringForward) {
                         Label("Bring to today", systemImage: "arrow.left.circle")
@@ -1240,7 +1299,7 @@ private struct ItemRow: View {
                 }
             }
         }
-        .accessibilityHint("Long press for edit, history, bring forward, delay, and skip actions")
+        .accessibilityHint("Long press for edit, history, pause, bring forward, delay, and skip actions")
     }
 
     private func statusBadge(
@@ -1380,13 +1439,14 @@ private struct ItemHistoryView: View {
     private func availableStates(for date: Date) -> [ChecklistHistoryState] {
         var states: [ChecklistHistoryState] = [.done, .open]
 
-        if currentItem.occurs(on: date),
+        if currentItem.isScheduled(on: date),
            Calendar.current.startOfDay(for: date) < Calendar.current.startOfDay(for: .now) {
             states.append(.missed)
-        } else if !currentItem.occurs(on: date) {
+        } else if !currentItem.isScheduled(on: date) {
             states.append(.off)
         }
 
+        states.append(.paused)
         states.append(.skipped)
         return states
     }
@@ -1397,6 +1457,7 @@ private struct ItemHistoryView: View {
         case .skipped, .off: .secondary
         case .missed: Color(red: 0.72, green: 0.22, blue: 0.20)
         case .open: Color(red: 0.13, green: 0.48, blue: 0.34)
+        case .paused: delayed
         }
     }
 
@@ -1406,6 +1467,7 @@ private struct ItemHistoryView: View {
         case .skipped: "forward.end.fill"
         case .missed: "xmark.circle.fill"
         case .open: "circle"
+        case .paused: "pause.circle.fill"
         case .off: "minus.circle"
         }
     }
