@@ -38,6 +38,37 @@ test.after(async () => {
   if (listener) await new Promise((resolve) => listener.close(resolve));
 });
 
+async function devLogin(email, name = "Test User") {
+  const response = await fetch(`${baseURL}/auth/dev`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ email, name })
+  });
+  assert.equal(response.status, 200);
+  const auth = await response.json();
+  return {
+    ...auth,
+    cookie: response.headers.get("set-cookie")
+  };
+}
+
+async function syncResponse(token, deviceID, mutations) {
+  return fetch(`${baseURL}/api/sync`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${token}`
+    },
+    body: JSON.stringify({ deviceID, mutations })
+  });
+}
+
+async function syncDevice(token, deviceID, mutations = []) {
+  const response = await syncResponse(token, deviceID, mutations);
+  assert.equal(response.status, 200);
+  return response.json();
+}
+
 test("serves the public landing page, web app, and auth configuration", async () => {
   const landing = await fetch(`${baseURL}/`);
   assert.equal(landing.status, 200);
@@ -554,6 +585,231 @@ test("authenticated users can export and delete account data", async () => {
     headers: { authorization: `Bearer ${auth.token}` }
   });
   assert.equal(afterDelete.status, 404);
+});
+
+test("two-client sync merges offline conflicts and preserves deletion tombstones", async () => {
+  resetRateLimits();
+  const suffix = crypto.randomUUID();
+  const auth = await devLogin(`sync-${suffix}@ritualcue.local`, "Sync Test");
+  const groupID = `group-${suffix}`;
+  const itemID = `item-${suffix}`;
+  const completionDate = "2026-07-10";
+
+  const created = await syncDevice(auth.token, "sync-device-a", [
+    {
+      id: `create-group-${suffix}`,
+      groupID,
+      kind: "groupUpsert",
+      stamp: "2026-07-10T10:00:00.000Z",
+      changedFields: ["name", "sortOrder", "isCollapsed"],
+      group: { name: "Home", sortOrder: 0, isCollapsed: false }
+    },
+    {
+      id: `create-item-${suffix}`,
+      itemID,
+      kind: "upsert",
+      stamp: "2026-07-10T10:01:00.000Z",
+      changedFields: [
+        "title", "notes", "schedule", "customWeekdays", "reminderMinutes",
+        "quantity", "createdAt", "groupID", "sortOrder", "skippedDates",
+        "openDates", "pauseWindows"
+      ],
+      item: {
+        title: "Water plants",
+        notes: "Kitchen shelf",
+        schedule: "everyDay",
+        customWeekdays: [],
+        reminderMinutes: null,
+        quantity: 3,
+        createdAt: "2026-07-10T09:00:00.000Z",
+        groupID,
+        sortOrder: 0,
+        skippedDates: [],
+        openDates: [],
+        pauseWindows: []
+      }
+    }
+  ]);
+  assert.equal(created.acceptedMutationIDs.length, 2);
+
+  const initialDeviceB = await syncDevice(auth.token, "sync-device-b");
+  assert.equal(initialDeviceB.items[0].title, "Water plants");
+  assert.equal(initialDeviceB.groups[0].name, "Home");
+
+  await syncDevice(auth.token, "sync-device-a", [
+    {
+      id: `device-a-title-${suffix}`,
+      itemID,
+      kind: "upsert",
+      stamp: "2026-07-10T10:03:00.000Z",
+      changedFields: ["title"],
+      item: { title: "Water balcony plants" }
+    },
+    {
+      id: `device-a-group-name-${suffix}`,
+      groupID,
+      kind: "groupUpsert",
+      stamp: "2026-07-10T10:04:00.000Z",
+      changedFields: ["name"],
+      group: { name: "Plant care" }
+    },
+    {
+      id: `device-a-partial-${suffix}`,
+      itemID,
+      kind: "completion",
+      stamp: "2026-07-10T10:05:00.000Z",
+      completionDate,
+      completed: false,
+      completionCount: 2
+    }
+  ]);
+
+  const mergedDeviceB = await syncDevice(auth.token, "sync-device-b", [
+    {
+      id: `device-b-stale-title-${suffix}`,
+      itemID,
+      kind: "upsert",
+      stamp: "2026-07-10T10:02:00.000Z",
+      changedFields: ["title"],
+      item: { title: "Water stale plants" }
+    },
+    {
+      id: `device-b-group-collapse-${suffix}`,
+      groupID,
+      kind: "groupUpsert",
+      stamp: "2026-07-10T10:04:00.000Z",
+      changedFields: ["isCollapsed"],
+      group: { isCollapsed: true }
+    },
+    {
+      id: `device-b-stale-partial-${suffix}`,
+      itemID,
+      kind: "completion",
+      stamp: "2026-07-10T10:04:30.000Z",
+      completionDate,
+      completed: false,
+      completionCount: 1
+    }
+  ]);
+
+  assert.equal(mergedDeviceB.items.length, 1);
+  assert.equal(mergedDeviceB.items[0].title, "Water balcony plants");
+  assert.deepEqual(mergedDeviceB.items[0].completionCounts, { [completionDate]: 2 });
+  assert.deepEqual(mergedDeviceB.items[0].completedDates, []);
+  assert.equal(mergedDeviceB.groups[0].name, "Plant care");
+  assert.equal(mergedDeviceB.groups[0].isCollapsed, true);
+
+  const mergedDeviceA = await syncDevice(auth.token, "sync-device-a");
+  assert.deepEqual(mergedDeviceA.items, mergedDeviceB.items);
+  assert.deepEqual(mergedDeviceA.groups, mergedDeviceB.groups);
+
+  await syncDevice(auth.token, "sync-device-a", [
+    {
+      id: `delete-item-${suffix}`,
+      itemID,
+      kind: "delete",
+      stamp: "2026-07-10T10:06:00.000Z"
+    },
+    {
+      id: `delete-group-${suffix}`,
+      groupID,
+      kind: "groupDelete",
+      stamp: "2026-07-10T10:06:00.000Z"
+    }
+  ]);
+
+  const afterStaleResurrection = await syncDevice(auth.token, "sync-device-b", [
+    {
+      id: `resurrect-item-${suffix}`,
+      itemID,
+      kind: "upsert",
+      stamp: "2026-07-10T10:07:00.000Z",
+      changedFields: ["title"],
+      item: { title: "Resurrected plant task" }
+    },
+    {
+      id: `resurrect-group-${suffix}`,
+      groupID,
+      kind: "groupUpsert",
+      stamp: "2026-07-10T10:07:00.000Z",
+      changedFields: ["name"],
+      group: { name: "Resurrected group" }
+    }
+  ]);
+
+  assert.deepEqual(afterStaleResurrection.items, []);
+  assert.deepEqual(afterStaleResurrection.groups, []);
+});
+
+test("two-client sync rejects deleted and disabled account sessions", async () => {
+  resetRateLimits();
+  const deleteSuffix = crypto.randomUUID();
+  const deleteEmail = `delete-sync-${deleteSuffix}@ritualcue.local`;
+  const deleteDeviceA = await devLogin(deleteEmail, "Delete Sync");
+  const deleteDeviceB = await devLogin(deleteEmail, "Delete Sync");
+
+  await syncDevice(deleteDeviceA.token, "delete-device-a", [{
+    id: `delete-sync-create-${deleteSuffix}`,
+    itemID: `delete-sync-item-${deleteSuffix}`,
+    kind: "upsert",
+    stamp: "2026-07-10T11:00:00.000Z",
+    changedFields: ["title", "createdAt"],
+    item: {
+      title: "Delete me",
+      createdAt: "2026-07-10T11:00:00.000Z"
+    }
+  }]);
+
+  const deleted = await fetch(`${baseURL}/api/account`, {
+    method: "DELETE",
+    headers: { authorization: `Bearer ${deleteDeviceA.token}` }
+  });
+  assert.equal(deleted.status, 204);
+
+  const afterDelete = await syncResponse(deleteDeviceB.token, "delete-device-b", []);
+  assert.equal(afterDelete.status, 404);
+  assert.deepEqual(await afterDelete.json(), { error: "User not found" });
+
+  const disableSuffix = crypto.randomUUID();
+  const adminEmail = `disable-admin-${disableSuffix}@ritualcue.local`;
+  const viewerEmail = `disable-viewer-${disableSuffix}@ritualcue.local`;
+  const previousAdminEmails = process.env.ADMIN_EMAILS;
+  process.env.ADMIN_EMAILS = adminEmail;
+
+  try {
+    const admin = await devLogin(adminEmail, "Disable Admin");
+    const viewerDeviceA = await devLogin(viewerEmail, "Disable Viewer");
+    const viewerDeviceB = await devLogin(viewerEmail, "Disable Viewer");
+
+    await syncDevice(viewerDeviceA.token, "disabled-device-a", [{
+      id: `disabled-sync-create-${disableSuffix}`,
+      itemID: `disabled-sync-item-${disableSuffix}`,
+      kind: "upsert",
+      stamp: "2026-07-10T12:00:00.000Z",
+      changedFields: ["title", "createdAt"],
+      item: {
+        title: "Disable me",
+        createdAt: "2026-07-10T12:00:00.000Z"
+      }
+    }]);
+
+    const disabled = await fetch(`${baseURL}/api/admin/users/${viewerDeviceA.user.id}/disable`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${admin.token}`
+      },
+      body: JSON.stringify({ reason: "sync integration test" })
+    });
+    assert.equal(disabled.status, 200);
+
+    const afterDisable = await syncResponse(viewerDeviceB.token, "disabled-device-b", []);
+    assert.equal(afterDisable.status, 403);
+    assert.deepEqual(await afterDisable.json(), { error: "Account disabled" });
+  } finally {
+    restoreEnv("ADMIN_EMAILS", previousAdminEmails);
+    resetRateLimits();
+  }
 });
 
 test("Apple web authorization code sign-in requires server credentials", async () => {

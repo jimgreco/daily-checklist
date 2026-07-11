@@ -4,7 +4,8 @@
   "private": true,
   "scripts": {
     "start": "node src/server.js",
-    "test": "node --test"
+    "test": "node --test test/*.test.js",
+    "test:e2e": "playwright test"
   },
   "engines": {
     "node": ">=20"
@@ -14,5 +15,8 @@
     "google-auth-library": "^10.6.2",
     "jsonwebtoken": "^9.0.2",
     "pg": "^8.22.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.61.1"
   }
 }
