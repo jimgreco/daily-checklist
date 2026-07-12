@@ -84,6 +84,7 @@ final class ChecklistStore: ObservableObject {
     }
     @Published var selectedDate = Calendar.current.startOfDay(for: .now)
     @Published var eveningReminderMinutes: Int? = 20 * 60
+    @Published var notificationGroupFilter: NotificationGroupFilter = .all
     @Published private(set) var syncState = "Saved locally"
     @Published private(set) var hasLoaded = false
     @Published var sortMode: ChecklistSort {
@@ -113,6 +114,10 @@ final class ChecklistStore: ObservableObject {
 
     var diagnosticDeviceID: String { deviceID }
     var pendingMutationCount: Int { pendingMutations.count }
+
+    private var notificationFilterForScheduling: NotificationGroupFilter {
+        notificationGroupFilter.normalized(availableGroupIDs: Set(groups.map(\.id)))
+    }
 
     private var cacheURL: URL {
         cacheURL(for: activeAccountID)
@@ -211,7 +216,12 @@ final class ChecklistStore: ObservableObject {
         loadCache()
         hasLoaded = true
         await notifications.requestAuthorization()
-        await notifications.reschedule(items: items, groups: groups, eveningMinutes: eveningReminderMinutes)
+        await notifications.reschedule(
+            items: items,
+            groups: groups,
+            eveningMinutes: eveningReminderMinutes,
+            groupFilter: notificationFilterForScheduling
+        )
     }
 
     func connect(to authStore: AuthStore) {
@@ -734,6 +744,14 @@ final class ChecklistStore: ObservableObject {
         persistAndSchedule()
     }
 
+    func updateNotificationGroupFilter(_ filter: NotificationGroupFilter) {
+        let normalized = filter.normalized(availableGroupIDs: Set(groups.map(\.id)))
+        guard notificationGroupFilter != normalized else { return }
+        notificationGroupFilter = normalized
+        pendingMutations.append(.notificationFilter(normalized))
+        persistAndSchedule()
+    }
+
     @discardableResult
     func sync(using authStore: AuthStore) async -> Bool {
         guard let token = await authStore.validAccessToken() else {
@@ -756,6 +774,7 @@ final class ChecklistStore: ObservableObject {
             items = response.items
             groups = response.groups ?? groups
             eveningReminderMinutes = response.eveningReminderMinutes
+            notificationGroupFilter = response.notificationGroupFilter ?? .all
             persistAndSchedule()
             let didFinishSyncing = pendingMutations.isEmpty
             syncState = didFinishSyncing ? "Synced" : "Changes pending"
@@ -772,6 +791,7 @@ final class ChecklistStore: ObservableObject {
         items = response.items
         groups = response.groups ?? []
         eveningReminderMinutes = response.eveningReminderMinutes
+        notificationGroupFilter = response.notificationGroupFilter ?? .all
         persistAndSchedule()
         syncState = "Restored from export"
     }
@@ -789,6 +809,7 @@ final class ChecklistStore: ObservableObject {
             items = envelope.items
             groups = envelope.groups ?? []
             eveningReminderMinutes = envelope.eveningReminderMinutes
+            notificationGroupFilter = envelope.notificationGroupFilter ?? .all
             pendingMutations = envelope.pendingMutations
             return
         }
@@ -796,6 +817,7 @@ final class ChecklistStore: ObservableObject {
             items = legacy.items
             groups = []
             eveningReminderMinutes = legacy.eveningReminderMinutes
+            notificationGroupFilter = .all
             pendingMutations = legacy.items.map { .upsert(item: $0, changedFields: Self.allFields) }
             if let minutes = legacy.eveningReminderMinutes {
                 pendingMutations.append(.evening(minutes: minutes))
@@ -808,6 +830,7 @@ final class ChecklistStore: ObservableObject {
             items: items,
             groups: groups,
             eveningReminderMinutes: eveningReminderMinutes,
+            notificationGroupFilter: notificationGroupFilter,
             pendingMutations: pendingMutations
         )
         let encoder = JSONEncoder()
@@ -816,7 +839,14 @@ final class ChecklistStore: ObservableObject {
             try? data.write(to: cacheURL, options: .atomic)
         }
 
-        Task { await notifications.reschedule(items: items, groups: groups, eveningMinutes: eveningReminderMinutes) }
+        Task {
+            await notifications.reschedule(
+                items: items,
+                groups: groups,
+                eveningMinutes: eveningReminderMinutes,
+                groupFilter: notificationFilterForScheduling
+            )
+        }
         if !pendingMutations.isEmpty {
             syncState = "Changes pending"
             syncTask?.cancel()
@@ -837,12 +867,19 @@ final class ChecklistStore: ObservableObject {
         groups = []
         pendingMutations = []
         eveningReminderMinutes = 20 * 60
+        notificationGroupFilter = .all
         loadCache()
         persistAndSchedule()
     }
 
     private func clearAnonymousCache() {
-        let empty = LocalEnvelope(items: [], groups: [], eveningReminderMinutes: 20 * 60, pendingMutations: [])
+        let empty = LocalEnvelope(
+            items: [],
+            groups: [],
+            eveningReminderMinutes: 20 * 60,
+            notificationGroupFilter: .all,
+            pendingMutations: []
+        )
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         guard let data = try? encoder.encode(empty) else { return }

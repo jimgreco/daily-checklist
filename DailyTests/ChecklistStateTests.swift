@@ -169,6 +169,28 @@ final class ChecklistStateTests: XCTestCase {
         XCTAssertEqual(item.consecutiveMissedDays(asOf: today, calendar: calendar), 1)
     }
 
+    func testNotificationGroupFilterIncludesAndExcludesGroups() {
+        let mustDoGroup = UUID()
+        let nightGroup = UUID()
+        let mustDoItem = ChecklistItem(title: "Medication", groupID: mustDoGroup)
+        let nightItem = ChecklistItem(title: "Skincare", groupID: nightGroup)
+        let ungroupedItem = ChecklistItem(title: "Loose task")
+
+        let include = NotificationGroupFilter(mode: .include, groupIDs: [mustDoGroup])
+        XCTAssertTrue(include.includes(item: mustDoItem))
+        XCTAssertFalse(include.includes(item: nightItem))
+        XCTAssertFalse(include.includes(item: ungroupedItem))
+
+        let exclude = NotificationGroupFilter(mode: .exclude, groupIDs: [nightGroup])
+        XCTAssertTrue(exclude.includes(item: mustDoItem))
+        XCTAssertFalse(exclude.includes(item: nightItem))
+        XCTAssertTrue(exclude.includes(item: ungroupedItem))
+
+        let normalized = NotificationGroupFilter(mode: .include, groupIDs: [mustDoGroup, nightGroup])
+            .normalized(availableGroupIDs: [mustDoGroup])
+        XCTAssertEqual(normalized.groupIDs, [mustDoGroup])
+    }
+
     @MainActor
     func testPausedGroupIsHiddenFromTodayButVisibleInAllItems() throws {
         let accountID = "pause-group-test-\(UUID().uuidString)"

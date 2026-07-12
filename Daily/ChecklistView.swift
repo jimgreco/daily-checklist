@@ -1241,13 +1241,6 @@ private struct ItemRow: View {
                 }
             }
             Spacer()
-            if showsDragHandle {
-                Image(systemName: "line.3.horizontal")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(.secondary.opacity(0.75))
-                    .frame(width: 24, height: 36)
-                    .accessibilityHidden(true)
-            }
             if showsEditButton {
                 Button(action: onEdit) {
                     Image(systemName: "pencil")
@@ -1257,6 +1250,13 @@ private struct ItemRow: View {
                         .background(subtleFill, in: Circle())
                 }
                 .accessibilityLabel("Edit \(item.title)")
+            }
+            if showsDragHandle {
+                Image(systemName: "line.3.horizontal")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(.secondary.opacity(0.75))
+                    .frame(width: 24, height: 36)
+                    .accessibilityHidden(true)
             }
             if skipped {
                 Text("Skipped")

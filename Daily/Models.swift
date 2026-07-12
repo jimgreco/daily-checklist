@@ -22,6 +22,52 @@ enum ScheduleKind: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+struct NotificationGroupFilter: Codable, Equatable {
+    enum Mode: String, Codable, CaseIterable, Identifiable {
+        case all
+        case include
+        case exclude
+
+        var id: String { rawValue }
+
+        var title: String {
+            switch self {
+            case .all: "All"
+            case .include: "Only"
+            case .exclude: "Except"
+            }
+        }
+    }
+
+    var mode: Mode
+    var groupIDs: Set<UUID>
+
+    static let all = NotificationGroupFilter(mode: .all)
+
+    init(mode: Mode = .all, groupIDs: Set<UUID> = []) {
+        self.mode = mode
+        self.groupIDs = mode == .all ? [] : groupIDs
+    }
+
+    func normalized(availableGroupIDs: Set<UUID>? = nil) -> NotificationGroupFilter {
+        let selected = availableGroupIDs.map { groupIDs.intersection($0) } ?? groupIDs
+        return NotificationGroupFilter(mode: mode, groupIDs: selected)
+    }
+
+    func includes(item: ChecklistItem) -> Bool {
+        switch mode {
+        case .all:
+            return true
+        case .include:
+            guard let groupID = item.groupID else { return false }
+            return groupIDs.contains(groupID)
+        case .exclude:
+            guard let groupID = item.groupID else { return true }
+            return !groupIDs.contains(groupID)
+        }
+    }
+}
+
 struct PauseWindow: Codable, Hashable {
     private enum CodingKeys: String, CodingKey {
         case startDate
@@ -585,6 +631,7 @@ struct LocalEnvelope: Codable {
     var items: [ChecklistItem]
     var groups: [ChecklistGroup]?
     var eveningReminderMinutes: Int?
+    var notificationGroupFilter: NotificationGroupFilter?
     var pendingMutations: [SyncMutation]
 }
 
@@ -713,6 +760,7 @@ struct SyncMutation: Identifiable, Codable {
         case delete
         case completion
         case eveningReminder
+        case notificationGroupFilter
         case groupUpsert
         case groupDelete
     }
@@ -729,6 +777,7 @@ struct SyncMutation: Identifiable, Codable {
     var completed: Bool?
     var completionCount: Int?
     var eveningReminderMinutes: Int?
+    var notificationGroupFilter: NotificationGroupFilter?
 
     static func upsert(item: ChecklistItem, changedFields: Set<String>) -> SyncMutation {
         SyncMutation(
@@ -800,6 +849,15 @@ struct SyncMutation: Identifiable, Codable {
             eveningReminderMinutes: minutes
         )
     }
+
+    static func notificationFilter(_ filter: NotificationGroupFilter) -> SyncMutation {
+        SyncMutation(
+            id: UUID(),
+            kind: .notificationGroupFilter,
+            stamp: SyncStamp.now,
+            notificationGroupFilter: filter
+        )
+    }
 }
 
 struct SyncRequest: Codable {
@@ -811,6 +869,7 @@ struct SyncResponse: Codable {
     var items: [ChecklistItem]
     var groups: [ChecklistGroup]?
     var eveningReminderMinutes: Int?
+    var notificationGroupFilter: NotificationGroupFilter?
     var acceptedMutationIDs: [UUID]
 }
 

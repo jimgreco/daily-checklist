@@ -154,6 +154,7 @@ struct AccountView: View {
                         saveReminderTime()
                     }
                 ), displayedComponents: .hourAndMinute)
+                notificationGroupFilterControls
             }
             Text("Ritual Cue will tell you how many scheduled tasks are still unfinished.")
                 .font(.footnote)
@@ -161,6 +162,42 @@ struct AccountView: View {
         }
         .padding(16)
         .background(surface, in: RoundedRectangle(cornerRadius: 18))
+    }
+
+    private var notificationGroupFilterControls: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Check-in groups")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.secondary)
+            Picker("Check-in groups", selection: notificationFilterModeBinding) {
+                ForEach(NotificationGroupFilter.Mode.allCases) { mode in
+                    Text(mode.title).tag(mode)
+                }
+            }
+            .pickerStyle(.segmented)
+
+            if store.notificationGroupFilter.mode != .all {
+                if store.orderedGroups.isEmpty {
+                    Text("No groups yet.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                } else {
+                    VStack(spacing: 0) {
+                        ForEach(Array(store.orderedGroups.enumerated()), id: \.element.id) { index, group in
+                            Toggle(isOn: notificationGroupBinding(for: group)) {
+                                Text(group.name)
+                                    .font(.system(size: 15, weight: .medium))
+                                    .foregroundStyle(ink)
+                            }
+                            .padding(.vertical, 8)
+                            if index < store.orderedGroups.count - 1 {
+                                Divider()
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     private var syncCard: some View {
@@ -312,6 +349,44 @@ struct AccountView: View {
         reminderEnabled = store.eveningReminderMinutes != nil
         let minutes = store.eveningReminderMinutes ?? 20 * 60
         reminderTime = Calendar.current.date(from: DateComponents(hour: minutes / 60, minute: minutes % 60)) ?? .now
+    }
+
+    private var notificationFilterModeBinding: Binding<NotificationGroupFilter.Mode> {
+        Binding(
+            get: { store.notificationGroupFilter.mode },
+            set: { mode in
+                let groupIDs = Set(store.orderedGroups.map(\.id))
+                let existing = store.notificationGroupFilter.groupIDs.intersection(groupIDs)
+                let selected: Set<UUID>
+                switch mode {
+                case .all:
+                    selected = []
+                case .include:
+                    selected = existing.isEmpty ? groupIDs : existing
+                case .exclude:
+                    selected = existing
+                }
+                store.updateNotificationGroupFilter(NotificationGroupFilter(mode: mode, groupIDs: selected))
+            }
+        )
+    }
+
+    private func notificationGroupBinding(for group: ChecklistGroup) -> Binding<Bool> {
+        Binding(
+            get: { store.notificationGroupFilter.groupIDs.contains(group.id) },
+            set: { isSelected in
+                var selected = store.notificationGroupFilter.groupIDs
+                if isSelected {
+                    selected.insert(group.id)
+                } else {
+                    selected.remove(group.id)
+                }
+                store.updateNotificationGroupFilter(NotificationGroupFilter(
+                    mode: store.notificationGroupFilter.mode,
+                    groupIDs: selected
+                ))
+            }
+        )
     }
 
     private func saveReminderTime() {

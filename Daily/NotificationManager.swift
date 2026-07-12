@@ -74,7 +74,12 @@ struct NotificationManager {
         ])
     }
 
-    func reschedule(items: [ChecklistItem], groups: [ChecklistGroup], eveningMinutes: Int?) async {
+    func reschedule(
+        items: [ChecklistItem],
+        groups: [ChecklistGroup],
+        eveningMinutes: Int?,
+        groupFilter: NotificationGroupFilter
+    ) async {
         #if DEBUG
         if ScreenshotSeedData.isEnabled { return }
         #endif
@@ -132,6 +137,7 @@ struct NotificationManager {
             guard let date = calendar.date(byAdding: .day, value: dayOffset, to: .now) else { continue }
             let remaining = items.filter {
                 !isPaused($0, on: date)
+                    && groupFilter.includes(item: $0)
                     && ($0.occurs(on: date) || $0.isExplicitlyOpen(on: date))
                     && !$0.isComplete(on: date)
                     && !$0.isSkipped(on: date)

@@ -645,7 +645,11 @@ test("authenticated users can import valid exports and reject malformed exports"
           sortOrder: 1,
           pauseWindows: []
         }],
-        eveningReminderMinutes: 1170
+        eveningReminderMinutes: 1170,
+        notificationGroupFilter: {
+          mode: "include",
+          groupIDs: ["22222222-2222-4222-8222-222222222222"]
+        }
       }
     })
   });
@@ -657,10 +661,15 @@ test("authenticated users can import valid exports and reject malformed exports"
   assert.equal(imported.items[0].completionCounts["2026-07-06"], 1);
   assert.equal(imported.groups[0].name, "Restored Group");
   assert.equal(imported.eveningReminderMinutes, 1170);
+  assert.deepEqual(imported.notificationGroupFilter, {
+    mode: "include",
+    groupIDs: ["22222222-2222-4222-8222-222222222222"]
+  });
 
   const synced = await syncDevice(auth.token, "import-viewer");
   assert.equal(synced.items.length, 1);
   assert.equal(synced.items[0].title, "Restore me");
+  assert.deepEqual(synced.notificationGroupFilter, imported.notificationGroupFilter);
   assert.equal(synced.items.some((item) => item.title === "Replace me"), false);
 });
 
@@ -904,7 +913,7 @@ test("Apple web authorization code sign-in requires server credentials", async (
 });
 
 function account() {
-  return { items: {}, appliedMutations: {}, eveningReminder: null };
+  return { items: {}, groups: {}, appliedMutations: {}, eveningReminder: null, notificationGroupFilter: null };
 }
 
 function record(id, title, stamp = "2026-06-28T10:00:00.000Z") {
@@ -988,6 +997,24 @@ test("repairs previously split provider accounts with the same email", () => {
 test("validates a sync request", () => {
   assert.equal(validSyncRequest({ deviceID: "device-1234", mutations: [] }), true);
   assert.equal(validSyncRequest({ deviceID: "../bad", mutations: [] }), false);
+  assert.equal(validSyncRequest({
+    deviceID: "device-1234",
+    mutations: [{
+      id: "filter-ok",
+      kind: "notificationGroupFilter",
+      stamp: "2026-07-12T10:00:00.000Z",
+      notificationGroupFilter: { mode: "exclude", groupIDs: ["group-a"] }
+    }]
+  }), true);
+  assert.equal(validSyncRequest({
+    deviceID: "device-1234",
+    mutations: [{
+      id: "filter-bad-mode",
+      kind: "notificationGroupFilter",
+      stamp: "2026-07-12T10:00:00.000Z",
+      notificationGroupFilter: { mode: "sometimes", groupIDs: ["group-a"] }
+    }]
+  }), false);
 });
 
 test("field-level merging preserves unrelated offline edits", () => {
@@ -1351,6 +1378,33 @@ test("group deletions tombstone empty groups", () => {
   }, "device-b");
 
   assert.deepEqual(materializeAccount(state).groups, []);
+});
+
+test("notification group filter syncs with last-writer wins", () => {
+  const state = account();
+  applyMutation(state, {
+    id: "filter-include",
+    kind: "notificationGroupFilter",
+    stamp: "2026-07-12T10:00:00.000Z",
+    notificationGroupFilter: { mode: "include", groupIDs: ["group-morning"] }
+  }, "device-a");
+  applyMutation(state, {
+    id: "filter-exclude",
+    kind: "notificationGroupFilter",
+    stamp: "2026-07-12T10:05:00.000Z",
+    notificationGroupFilter: { mode: "exclude", groupIDs: ["group-night", "group-morning", "group-night"] }
+  }, "device-b");
+  applyMutation(state, {
+    id: "filter-stale",
+    kind: "notificationGroupFilter",
+    stamp: "2026-07-12T10:01:00.000Z",
+    notificationGroupFilter: { mode: "all", groupIDs: ["group-stale"] }
+  }, "device-a");
+
+  assert.deepEqual(materializeAccount(state).notificationGroupFilter, {
+    mode: "exclude",
+    groupIDs: ["group-morning", "group-night"]
+  });
 });
 
 test("equal timestamps use device ID as deterministic tie breaker", () => {

@@ -346,7 +346,8 @@ function mergeAccount(database, targetUserID, sourceUserID) {
       items: {},
       groups: {},
       appliedMutations: {},
-      eveningReminder: null
+      eveningReminder: null,
+      notificationGroupFilter: null
     };
     target.items ||= {};
     target.groups ||= {};
@@ -365,6 +366,9 @@ function mergeAccount(database, targetUserID, sourceUserID) {
     target.appliedMutations = { ...source.appliedMutations, ...target.appliedMutations };
     if (source.eveningReminder && stampWins(source.eveningReminder, target.eveningReminder)) {
       target.eveningReminder = source.eveningReminder;
+    }
+    if (source.notificationGroupFilter && stampWins(source.notificationGroupFilter, target.notificationGroupFilter)) {
+      target.notificationGroupFilter = source.notificationGroupFilter;
     }
     delete database.accounts[sourceUserID];
   }
@@ -712,9 +716,27 @@ function stampWins(incoming, current) {
 
 const itemFields = ["title", "notes", "schedule", "customWeekdays", "reminderMinutes", "quantity", "skippedDates", "openDates", "createdAt", "startDate", "endedAt", "groupID", "sortOrder", "pauseWindows"];
 const groupFields = ["name", "sortOrder", "isCollapsed", "pauseWindows"];
+const notificationGroupFilterModes = ["all", "include", "exclude"];
 
 function validID(value) {
   return typeof value === "string" && /^[a-z0-9._:-]{1,120}$/i.test(value);
+}
+
+function validNotificationGroupFilter(filter) {
+  return filter && typeof filter === "object" && !Array.isArray(filter)
+    && notificationGroupFilterModes.includes(filter.mode)
+    && Array.isArray(filter.groupIDs)
+    && filter.groupIDs.length <= 1000
+    && filter.groupIDs.every(validID);
+}
+
+function normalizedNotificationGroupFilter(filter) {
+  if (!validNotificationGroupFilter(filter)) return { mode: "all", groupIDs: [] };
+  const groupIDs = [...new Set(filter.groupIDs)].sort();
+  return {
+    mode: filter.mode,
+    groupIDs: filter.mode === "all" ? [] : groupIDs
+  };
 }
 
 function validISODate(value, { nullable = true } = {}) {
@@ -843,6 +865,10 @@ function validImportedChecklist(checklist) {
       || (Number.isInteger(checklist.eveningReminderMinutes)
         && checklist.eveningReminderMinutes >= 0
         && checklist.eveningReminderMinutes <= 1439)
+    )
+    && (
+      checklist.notificationGroupFilter == null
+      || validNotificationGroupFilter(checklist.notificationGroupFilter)
     );
 }
 
@@ -933,6 +959,11 @@ function accountFromImportedChecklist(checklist, previousAccount = emptyAccount(
   }
 
   account.eveningReminder = importedField(checklist.eveningReminderMinutes ?? 1200, stamp, deviceID);
+  account.notificationGroupFilter = importedField(
+    normalizedNotificationGroupFilter(checklist.notificationGroupFilter),
+    stamp,
+    deviceID
+  );
   return account;
 }
 
@@ -944,6 +975,9 @@ function validMutation(mutation) {
       || (Number.isInteger(mutation.eveningReminderMinutes)
         && mutation.eveningReminderMinutes >= 0
         && mutation.eveningReminderMinutes <= 1439);
+  }
+  if (mutation.kind === "notificationGroupFilter") {
+    return validNotificationGroupFilter(mutation.notificationGroupFilter);
   }
   if (mutation.kind === "groupUpsert") {
     return validID(mutation.groupID)
@@ -980,6 +1014,16 @@ function applyMutation(account, mutation, deviceID) {
       deviceID
     };
     if (stampWins(incoming, account.eveningReminder)) account.eveningReminder = incoming;
+    return true;
+  }
+
+  if (mutation.kind === "notificationGroupFilter") {
+    const incoming = {
+      value: normalizedNotificationGroupFilter(mutation.notificationGroupFilter),
+      stamp: mutation.stamp,
+      deviceID
+    };
+    if (stampWins(incoming, account.notificationGroupFilter)) account.notificationGroupFilter = incoming;
     return true;
   }
 
@@ -1105,7 +1149,8 @@ function materializeAccount(account) {
   return {
     items,
     groups,
-    eveningReminderMinutes: account.eveningReminder?.value ?? 1200
+    eveningReminderMinutes: account.eveningReminder?.value ?? 1200,
+    notificationGroupFilter: normalizedNotificationGroupFilter(account.notificationGroupFilter?.value)
   };
 }
 
@@ -1114,7 +1159,8 @@ function emptyAccount() {
     items: {},
     groups: {},
     appliedMutations: {},
-    eveningReminder: null
+    eveningReminder: null,
+    notificationGroupFilter: null
   };
 }
 

@@ -96,6 +96,7 @@ enum ScreenshotSeedData {
             items: items,
             groups: [morning, home, planning],
             eveningReminderMinutes: 20 * 60,
+            notificationGroupFilter: .all,
             pendingMutations: []
         )
         let encoder = JSONEncoder()
