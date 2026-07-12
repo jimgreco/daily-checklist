@@ -89,6 +89,21 @@ async function ensureBundle(authToken, identifier, name) {
   return created.data;
 }
 
+function capabilityAttributes(capabilityType) {
+  if (capabilityType === 'APPLE_ID_AUTH') {
+    return {
+      capabilityType,
+      settings: [
+        {
+          key: 'APPLE_ID_AUTH_APP_CONSENT',
+          options: [{ key: 'PRIMARY_APP_CONSENT' }],
+        },
+      ],
+    };
+  }
+  return { capabilityType };
+}
+
 async function ensureCapability(authToken, bundleId, capabilityType) {
   const capabilities = await pages(
     authToken,
@@ -98,7 +113,7 @@ async function ensureCapability(authToken, bundleId, capabilityType) {
   await request(authToken, 'POST', '/bundleIdCapabilities', {
     data: {
       type: 'bundleIdCapabilities',
-      attributes: { capabilityType },
+      attributes: capabilityAttributes(capabilityType),
       relationships: { bundleId: { data: { type: 'bundleIds', id: bundleId } } },
     },
   });

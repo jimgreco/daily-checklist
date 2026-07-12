@@ -420,6 +420,7 @@ jobs:
             local profile_path="$1"
             local expected_app_id="$2"
             local label="$3"
+            local require_apple_sign_in="${4:-false}"
             local plist_path="$RUNNER_TEMP/$label.plist"
 
             security cms -D -i "$profile_path" > "$plist_path"
@@ -436,11 +437,17 @@ jobs:
               echo "Enable App Groups on '$expected_app_id', assign '$IOS_APP_GROUP_ID', then rerun this workflow."
               exit 1
             fi
+
+            if [ "$require_apple_sign_in" = "true" ] && ! /usr/libexec/PlistBuddy -c "Print :Entitlements:com.apple.developer.applesignin" "$plist_path" 2>/dev/null | grep -Fq "Default"; then
+              echo "$label provisioning profile does not include Sign in with Apple."
+              echo "Enable Sign in with Apple on '$expected_app_id' as the primary App ID, then rerun this workflow."
+              exit 1
+            fi
           }
 
           mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
           PROFILE_UUID="$(security cms -D -i "$RUNNER_TEMP/daily.mobileprovision" | plutil -extract UUID raw -o - -)"
-          validate_profile "$RUNNER_TEMP/daily.mobileprovision" "$APPLE_TEAM_ID.$IOS_BUNDLE_ID" "daily-app"
+          validate_profile "$RUNNER_TEMP/daily.mobileprovision" "$APPLE_TEAM_ID.$IOS_BUNDLE_ID" "daily-app" true
           cp "$RUNNER_TEMP/daily.mobileprovision" "$HOME/Library/MobileDevice/Provisioning Profiles/$PROFILE_UUID.mobileprovision"
 
           node .github/scripts/ensure-app-store-profile.mjs \
