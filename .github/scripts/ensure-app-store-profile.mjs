@@ -77,9 +77,10 @@ async function ensureBundle(authToken, identifier, name) {
   const found = await request(
     authToken,
     'GET',
-    `/bundleIds?filter[identifier]=${encodeURIComponent(identifier)}&filter[platform]=IOS&limit=1`,
+    `/bundleIds?filter[identifier]=${encodeURIComponent(identifier)}&filter[platform]=IOS&limit=200`,
   );
-  if (found.data?.[0]) return found.data[0];
+  const exact = found.data?.find((bundle) => bundle.attributes?.identifier === identifier);
+  if (exact) return exact;
   const created = await request(authToken, 'POST', '/bundleIds', {
     data: {
       type: 'bundleIds',
