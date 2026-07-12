@@ -14,16 +14,21 @@
 		3DE80678325E1D0817A04EA7 /* ItemEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5451BA5CFBB1BB1D77988B59 /* ItemEditor.swift */; };
 		41CF4360EFA4DAFA43763646 /* SnapshotHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E6ABFE737D6699849E75E01 /* SnapshotHelper.swift */; };
 		4403380735BDEBE57A870733 /* ChecklistView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CEEFE571E0BAFE77D62FD109 /* ChecklistView.swift */; };
+		4648D0995FED0B02548C4DD8 /* RitualWidgetSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = 99D7B2CA7FB82847776BFE18 /* RitualWidgetSnapshot.swift */; };
 		4F5F4E362BA0DA8E375F604E /* SupportDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 15C282123C1491A425CFE064 /* SupportDiagnostics.swift */; };
+		691F8C9E85AF2CF5B8B5E1AF /* RitualWidgetSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = 99D7B2CA7FB82847776BFE18 /* RitualWidgetSnapshot.swift */; };
 		8935C1F6072250846C42A8E8 /* AuthStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6296E6DE360FB5DBF00638A4 /* AuthStore.swift */; };
 		93746D3DD7AA23022BA1C55D /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = C0BF8AD72B19D5F262801193 /* Assets.xcassets */; };
+		A2E6D9DF83D18010BCB9BD47 /* RitualCueTodayWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A65503FBACE25B70F68FCFE /* RitualCueTodayWidget.swift */; };
 		AA90A6CE28B7B93E61C65088 /* AppIcon.icon in Resources */ = {isa = PBXBuildFile; fileRef = B9FD2567CD66DF3B64A11ACF /* AppIcon.icon */; };
 		AE9E912BEC0AE5D52EB52DFD /* ChecklistStateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A41EE58486533D38C68B25F /* ChecklistStateTests.swift */; };
 		C172FF5C70D0357DB558884F /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 9224F7E2196FA2D3D19C2740 /* PrivacyInfo.xcprivacy */; };
 		CE6DEE12289CF5C63E2D2E1D /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 56B43CDEAB88147B7130CE27 /* Models.swift */; };
 		D57BCA9E8222E7335B3566AF /* DailyScreenshots.swift in Sources */ = {isa = PBXBuildFile; fileRef = F509E8CDBEA8C5109FB98F7F /* DailyScreenshots.swift */; };
+		F0C19FD7E219FF13A856AC7E /* RitualCueWidgetBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9EA7EE401999214622A0E348 /* RitualCueWidgetBundle.swift */; };
 		F9F897C01D85E48C26BE9058 /* ScreenshotSeedData.swift in Sources */ = {isa = PBXBuildFile; fileRef = 183CA8B509846F26B48AC906 /* ScreenshotSeedData.swift */; };
 		FDF8B9215945601581232C91 /* NotificationManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = D2E003FC6837E3D09EE90157 /* NotificationManager.swift */; };
+		FEDFF3D1FD25B1F15D332C8E /* DailyWidget.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = F8517CFC06F68AA398338FB1 /* DailyWidget.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		FF5727462EEE699A4E91792F /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F795026AC3D729773F4B309 /* APIClient.swift */; };
 /* End PBXBuildFile section */
 
@@ -42,7 +47,28 @@
 			remoteGlobalIDString = CE715FA2773048DAE25E7252;
 			remoteInfo = Daily;
 		};
+		76853D54F4C55D7DCF1A91AE /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 1E8050E2EBF4B3BCFF5AF9D5 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = FC4AC3EEC6F7CCA0D08F2DA2;
+			remoteInfo = DailyWidget;
+		};
 /* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		6222C21EF29DC048E86AE2FA /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				FEDFF3D1FD25B1F15D332C8E /* DailyWidget.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		0B06A7486EE5A328A26E2FDE /* DailyScreenshots.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = DailyScreenshots.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -52,14 +78,18 @@
 		380B7E82D3FC05CCA571C320 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		3A41EE58486533D38C68B25F /* ChecklistStateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChecklistStateTests.swift; sourceTree = "<group>"; };
 		4162467A71517BA6F53716B1 /* AccountView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountView.swift; sourceTree = "<group>"; };
+		4A65503FBACE25B70F68FCFE /* RitualCueTodayWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RitualCueTodayWidget.swift; sourceTree = "<group>"; };
 		5249D5CADB178F98244A2F6C /* ChecklistStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChecklistStore.swift; sourceTree = "<group>"; };
 		5451BA5CFBB1BB1D77988B59 /* ItemEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ItemEditor.swift; sourceTree = "<group>"; };
 		56B43CDEAB88147B7130CE27 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		6296E6DE360FB5DBF00638A4 /* AuthStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthStore.swift; sourceTree = "<group>"; };
 		662D254436332CA222BB53DA /* DailyApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DailyApp.swift; sourceTree = "<group>"; };
 		6F795026AC3D729773F4B309 /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
+		82DF1E4640EF266665AFDB26 /* DailyWidget.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = DailyWidget.entitlements; sourceTree = "<group>"; };
 		8E6ABFE737D6699849E75E01 /* SnapshotHelper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SnapshotHelper.swift; sourceTree = "<group>"; };
 		9224F7E2196FA2D3D19C2740 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		99D7B2CA7FB82847776BFE18 /* RitualWidgetSnapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RitualWidgetSnapshot.swift; sourceTree = "<group>"; };
+		9EA7EE401999214622A0E348 /* RitualCueWidgetBundle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RitualCueWidgetBundle.swift; sourceTree = "<group>"; };
 		B9FD2567CD66DF3B64A11ACF /* AppIcon.icon */ = {isa = PBXFileReference; lastKnownFileType = wrapper.icon; path = AppIcon.icon; sourceTree = "<group>"; };
 		C0BF8AD72B19D5F262801193 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		CEEFE571E0BAFE77D62FD109 /* ChecklistView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChecklistView.swift; sourceTree = "<group>"; };
@@ -67,6 +97,8 @@
 		E1440B860E7836764524A860 /* Daily.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Daily.entitlements; sourceTree = "<group>"; };
 		F3BF5A47CD145BD020886179 /* DailyTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = DailyTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		F509E8CDBEA8C5109FB98F7F /* DailyScreenshots.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DailyScreenshots.swift; sourceTree = "<group>"; };
+		F8517CFC06F68AA398338FB1 /* DailyWidget.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = DailyWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		F98A4A8DCE9A6CF1D8C64F54 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -87,6 +119,14 @@
 				3A41EE58486533D38C68B25F /* ChecklistStateTests.swift */,
 			);
 			path = DailyTests;
+			sourceTree = "<group>";
+		};
+		4A4948463B2921DE6A3659F3 /* DailyShared */ = {
+			isa = PBXGroup;
+			children = (
+				99D7B2CA7FB82847776BFE18 /* RitualWidgetSnapshot.swift */,
+			);
+			path = DailyShared;
 			sourceTree = "<group>";
 		};
 		4CC5E57BA278CCCD08C43AC4 /* Daily */ = {
@@ -117,7 +157,9 @@
 			children = (
 				4CC5E57BA278CCCD08C43AC4 /* Daily */,
 				E392734F93084F44A115DC21 /* DailyScreenshots */,
+				4A4948463B2921DE6A3659F3 /* DailyShared */,
 				0C7E7571E7AD51A35F5F6044 /* DailyTests */,
+				D0B78CDE6133CAF93316B107 /* DailyWidget */,
 				B93FEC9B7E07899A92846908 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -128,8 +170,20 @@
 				218EDB48D27B308A527774CD /* Daily.app */,
 				0B06A7486EE5A328A26E2FDE /* DailyScreenshots.xctest */,
 				F3BF5A47CD145BD020886179 /* DailyTests.xctest */,
+				F8517CFC06F68AA398338FB1 /* DailyWidget.appex */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		D0B78CDE6133CAF93316B107 /* DailyWidget */ = {
+			isa = PBXGroup;
+			children = (
+				82DF1E4640EF266665AFDB26 /* DailyWidget.entitlements */,
+				F98A4A8DCE9A6CF1D8C64F54 /* Info.plist */,
+				4A65503FBACE25B70F68FCFE /* RitualCueTodayWidget.swift */,
+				9EA7EE401999214622A0E348 /* RitualCueWidgetBundle.swift */,
+			);
+			path = DailyWidget;
 			sourceTree = "<group>";
 		};
 		E392734F93084F44A115DC21 /* DailyScreenshots */ = {
@@ -169,10 +223,12 @@
 				70C823522867D176CB19FA6F /* Sources */,
 				29512F8D76FA919807DA0324 /* Resources */,
 				F2C1EA614C355B5520CB92AB /* Frameworks */,
+				6222C21EF29DC048E86AE2FA /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				E2C7C1A58E3A7707E0867CAA /* PBXTargetDependency */,
 			);
 			name = Daily;
 			packageProductDependencies = (
@@ -200,6 +256,23 @@
 			productReference = F3BF5A47CD145BD020886179 /* DailyTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
+		FC4AC3EEC6F7CCA0D08F2DA2 /* DailyWidget */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 4562481B98D307B7051126B3 /* Build configuration list for PBXNativeTarget "DailyWidget" */;
+			buildPhases = (
+				9FA63E9960389B4C8E2CF85A /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = DailyWidget;
+			packageProductDependencies = (
+			);
+			productName = DailyWidget;
+			productReference = F8517CFC06F68AA398338FB1 /* DailyWidget.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -217,6 +290,9 @@
 						DevelopmentTeam = V6JPQCD336;
 					};
 					F5144C7943842BB9EC71DB03 = {
+						DevelopmentTeam = V6JPQCD336;
+					};
+					FC4AC3EEC6F7CCA0D08F2DA2 = {
 						DevelopmentTeam = V6JPQCD336;
 					};
 				};
@@ -241,6 +317,7 @@
 				CE715FA2773048DAE25E7252 /* Daily */,
 				04E0CC462BA0E73E6EC9026B /* DailyScreenshots */,
 				F5144C7943842BB9EC71DB03 /* DailyTests */,
+				FC4AC3EEC6F7CCA0D08F2DA2 /* DailyWidget */,
 			);
 		};
 /* End PBXProject section */
@@ -272,6 +349,7 @@
 				3DE80678325E1D0817A04EA7 /* ItemEditor.swift in Sources */,
 				CE6DEE12289CF5C63E2D2E1D /* Models.swift in Sources */,
 				FDF8B9215945601581232C91 /* NotificationManager.swift in Sources */,
+				4648D0995FED0B02548C4DD8 /* RitualWidgetSnapshot.swift in Sources */,
 				F9F897C01D85E48C26BE9058 /* ScreenshotSeedData.swift in Sources */,
 				4F5F4E362BA0DA8E375F604E /* SupportDiagnostics.swift in Sources */,
 			);
@@ -282,6 +360,16 @@
 			buildActionMask = 2147483647;
 			files = (
 				AE9E912BEC0AE5D52EB52DFD /* ChecklistStateTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		9FA63E9960389B4C8E2CF85A /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A2E6D9DF83D18010BCB9BD47 /* RitualCueTodayWidget.swift in Sources */,
+				F0C19FD7E219FF13A856AC7E /* RitualCueWidgetBundle.swift in Sources */,
+				691F8C9E85AF2CF5B8B5E1AF /* RitualWidgetSnapshot.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -306,6 +394,11 @@
 			isa = PBXTargetDependency;
 			target = CE715FA2773048DAE25E7252 /* Daily */;
 			targetProxy = 1F3BF91C240B0DD287320916 /* PBXContainerItemProxy */;
+		};
+		E2C7C1A58E3A7707E0867CAA /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = FC4AC3EEC6F7CCA0D08F2DA2 /* DailyWidget */;
+			targetProxy = 76853D54F4C55D7DCF1A91AE /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -350,6 +443,29 @@
 				TEST_TARGET_NAME = Daily;
 			};
 			name = Debug;
+		};
+		508AD3EC1EF5863DE1EDC099 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = DailyWidget/DailyWidget.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Distribution";
+				CODE_SIGN_STYLE = Manual;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = DailyWidget/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.jimgreco.dailychecklist.widget;
+				PRODUCT_NAME = RitualCueWidget;
+				PROVISIONING_PROFILE_SPECIFIER = "$(IOS_WIDGET_PROFILE_NAME)";
+				SDKROOT = iphoneos;
+				SUPPORTS_MACCATALYST = NO;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
 		};
 		8A1F10B9E223CAF54A6E963B /* Release */ = {
 			isa = XCBuildConfiguration;
@@ -462,6 +578,26 @@
 			};
 			name = Release;
 		};
+		CABF573A11D57718A0C5C242 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = DailyWidget/DailyWidget.entitlements;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = DailyWidget/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.jimgreco.dailychecklist.widget;
+				PRODUCT_NAME = RitualCueWidget;
+				SDKROOT = iphoneos;
+				SUPPORTS_MACCATALYST = NO;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
 		F1F79BEF58FB6054378B374D /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -568,6 +704,15 @@
 			buildConfigurations = (
 				F6BF9F57701F94DCE35133BE /* Debug */,
 				00CE66CC6ED41BE4C1025A1E /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		4562481B98D307B7051126B3 /* Build configuration list for PBXNativeTarget "DailyWidget" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				CABF573A11D57718A0C5C242 /* Debug */,
+				508AD3EC1EF5863DE1EDC099 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;

@@ -10,6 +10,12 @@ function argument(name) {
   return process.argv[index + 1];
 }
 
+function optionalArgument(name, fallback) {
+  const index = process.argv.indexOf(`--${name}`);
+  if (index < 0 || !process.argv[index + 1]) return fallback;
+  return process.argv[index + 1];
+}
+
 function base64url(value) {
   return Buffer.from(value).toString('base64url');
 }
@@ -67,7 +73,7 @@ async function pages(authToken, path) {
   return values;
 }
 
-async function ensureBundle(authToken, identifier) {
+async function ensureBundle(authToken, identifier, name) {
   const found = await request(
     authToken,
     'GET',
@@ -77,7 +83,7 @@ async function ensureBundle(authToken, identifier) {
   const created = await request(authToken, 'POST', '/bundleIds', {
     data: {
       type: 'bundleIds',
-      attributes: { identifier, name: 'Daily', platform: 'IOS' },
+      attributes: { identifier, name, platform: 'IOS' },
     },
   });
   return created.data;
@@ -140,10 +146,14 @@ async function main() {
   const profileName = argument('profile-name');
   const certificatePath = argument('certificate-der');
   const output = argument('output');
+  const bundleName = optionalArgument('bundle-name', 'Daily');
+  const appleSignIn = optionalArgument('apple-sign-in', 'true') !== 'false';
   const authToken = token();
 
-  const bundle = await ensureBundle(authToken, bundleIdentifier);
-  await ensureCapability(authToken, bundle.id, 'APPLE_ID_AUTH');
+  const bundle = await ensureBundle(authToken, bundleIdentifier, bundleName);
+  if (appleSignIn) {
+    await ensureCapability(authToken, bundle.id, 'APPLE_ID_AUTH');
+  }
   const certificate = await matchingCertificate(authToken, certificatePath);
   const profile = await createProfile(authToken, profileName, bundle.id, certificate.id);
   const content = profile.attributes?.profileContent;

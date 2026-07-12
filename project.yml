@@ -20,9 +20,12 @@ targets:
     platform: iOS
     sources:
       - path: Daily
+      - path: DailyShared
     dependencies:
       - package: GoogleSignIn
         product: GoogleSignIn
+      - target: DailyWidget
+        embed: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.jimgreco.dailychecklist
@@ -42,6 +45,27 @@ targets:
     scheme:
       testTargets:
         - DailyTests
+  DailyWidget:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: DailyWidget
+      - path: DailyShared
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.jimgreco.dailychecklist.widget
+        PRODUCT_NAME: RitualCueWidget
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: DailyWidget/Info.plist
+        CODE_SIGN_ENTITLEMENTS: DailyWidget/DailyWidget.entitlements
+        APPLICATION_EXTENSION_API_ONLY: YES
+        TARGETED_DEVICE_FAMILY: "1"
+        SUPPORTS_MACCATALYST: NO
+      configs:
+        Release:
+          CODE_SIGN_STYLE: Manual
+          CODE_SIGN_IDENTITY: Apple Distribution
+          PROVISIONING_PROFILE_SPECIFIER: "$(IOS_WIDGET_PROFILE_NAME)"
   DailyTests:
     type: bundle.unit-test
     platform: iOS

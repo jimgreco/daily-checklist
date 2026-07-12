@@ -1,4 +1,5 @@
 import Foundation
+import WidgetKit
 
 enum ChecklistSort: String, CaseIterable, Identifiable {
     case manual
@@ -215,6 +216,7 @@ final class ChecklistStore: ObservableObject {
         hasStarted = true
         loadCache()
         hasLoaded = true
+        persistWidgetSnapshot(reloadTimelines: true)
         await notifications.requestAuthorization()
         await notifications.reschedule(
             items: items,
@@ -796,6 +798,44 @@ final class ChecklistStore: ObservableObject {
         syncState = "Restored from export"
     }
 
+    func widgetSnapshot(now: Date = .now) -> RitualWidgetSnapshot {
+        widgetSnapshot(for: Calendar.current.startOfDay(for: now), now: now)
+    }
+
+    private func widgetSnapshots(now: Date = .now, days: Int = 7) -> [RitualWidgetSnapshot] {
+        let today = Calendar.current.startOfDay(for: now)
+        return (0..<max(1, days)).compactMap { offset in
+            guard let date = Calendar.current.date(byAdding: .day, value: offset, to: today) else { return nil }
+            return widgetSnapshot(for: date, now: now)
+        }
+    }
+
+    private func widgetSnapshot(for date: Date, now: Date) -> RitualWidgetSnapshot {
+        let today = Calendar.current.startOfDay(for: date)
+        let visibleTodayItems = items.filter { item in
+            let paused = isPaused(item, on: today)
+            return isTracked(item, on: today) && (!paused || item.hasRecordedState(on: today))
+        }
+        let remainingItems = visibleTodayItems.filter {
+            !$0.isComplete(on: today) && !$0.isSkipped(on: today) && !isPaused($0, on: today)
+        }
+        let completedCount = visibleTodayItems.filter { $0.isComplete(on: today) }.count
+        let skippedCount = visibleTodayItems.filter { $0.isSkipped(on: today) && !$0.isComplete(on: today) }.count
+        let reminderMinutes = widgetReminderMinutes(remainingItems: remainingItems)
+
+        return RitualWidgetSnapshot(
+            remainingCount: remainingItems.count,
+            scheduledCount: visibleTodayItems.count,
+            completedCount: completedCount,
+            skippedCount: skippedCount,
+            reminderMinutes: reminderMinutes,
+            nextReminderMinutes: nextWidgetReminderMinutes(on: today, now: now, reminderMinutes: reminderMinutes),
+            dateKey: DateKey.string(from: today),
+            updatedAt: now,
+            hasChecklist: !items.isEmpty
+        )
+    }
+
     private func loadCache() {
         var sourceURL = cacheURL
         if activeAccountID == "anonymous", !FileManager.default.fileExists(atPath: sourceURL.path) {
@@ -838,6 +878,7 @@ final class ChecklistStore: ObservableObject {
         if let data = try? encoder.encode(envelope) {
             try? data.write(to: cacheURL, options: .atomic)
         }
+        persistWidgetSnapshot(reloadTimelines: true)
 
         Task {
             await notifications.reschedule(
@@ -885,6 +926,38 @@ final class ChecklistStore: ObservableObject {
         guard let data = try? encoder.encode(empty) else { return }
         let url = URL.documentsDirectory.appending(path: "daily-checklist-anonymous.json")
         try? data.write(to: url, options: .atomic)
+    }
+
+    private func widgetReminderMinutes(remainingItems: [ChecklistItem]) -> [Int] {
+        var candidates = remainingItems.compactMap(\.reminderMinutes)
+        if let eveningReminderMinutes {
+            let eveningRemainingCount = remainingItems.filter { notificationFilterForScheduling.includes(item: $0) }.count
+            if eveningRemainingCount > 0 {
+                candidates.append(eveningReminderMinutes)
+            }
+        }
+        return Array(Set(candidates)).sorted()
+    }
+
+    private func nextWidgetReminderMinutes(
+        on date: Date,
+        now: Date,
+        reminderMinutes: [Int]
+    ) -> Int? {
+        let calendar = Calendar.current
+        return reminderMinutes.filter { minutes in
+            var components = calendar.dateComponents([.year, .month, .day], from: date)
+            components.hour = minutes / 60
+            components.minute = minutes % 60
+            guard let reminderDate = calendar.date(from: components) else { return false }
+            return reminderDate > now
+        }.min()
+    }
+
+    private func persistWidgetSnapshot(reloadTimelines: Bool) {
+        guard RitualWidgetSnapshotStore.save(widgetSnapshots()) else { return }
+        guard reloadTimelines else { return }
+        WidgetCenter.shared.reloadTimelines(ofKind: RitualWidgetSnapshotStore.kind)
     }
 
     static let allFields: Set<String> = [

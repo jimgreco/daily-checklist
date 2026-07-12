@@ -292,7 +292,10 @@ jobs:
     env:
       APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID || 'V6JPQCD336' }}
       IOS_BUNDLE_ID: com.jimgreco.dailychecklist
+      IOS_WIDGET_BUNDLE_ID: com.jimgreco.dailychecklist.widget
+      IOS_APP_GROUP_ID: group.com.jimgreco.dailychecklist
       IOS_PROFILE_NAME: Daily App Store ${{ github.run_id }}
+      IOS_WIDGET_PROFILE_NAME: Daily Widget App Store ${{ github.run_id }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -408,12 +411,49 @@ jobs:
           node .github/scripts/ensure-app-store-profile.mjs \
             --bundle-id "$IOS_BUNDLE_ID" \
             --profile-name "$IOS_PROFILE_NAME" \
+            --bundle-name "Ritual Cue" \
+            --apple-sign-in true \
             --certificate-der "$RUNNER_TEMP/distribution.der" \
             --output "$RUNNER_TEMP/daily.mobileprovision"
 
+          validate_profile() {
+            local profile_path="$1"
+            local expected_app_id="$2"
+            local label="$3"
+            local plist_path="$RUNNER_TEMP/$label.plist"
+
+            security cms -D -i "$profile_path" > "$plist_path"
+
+            local profile_app_id
+            profile_app_id="$(plutil -extract Entitlements.application-identifier raw -o - "$plist_path")"
+            if [ "$profile_app_id" != "$expected_app_id" ]; then
+              echo "$label provisioning profile App ID '$profile_app_id' does not match '$expected_app_id'."
+              exit 1
+            fi
+
+            if ! /usr/libexec/PlistBuddy -c "Print :Entitlements:com.apple.security.application-groups" "$plist_path" 2>/dev/null | grep -Fq "$IOS_APP_GROUP_ID"; then
+              echo "$label provisioning profile does not include App Group '$IOS_APP_GROUP_ID'."
+              echo "Enable App Groups on '$expected_app_id', assign '$IOS_APP_GROUP_ID', then rerun this workflow."
+              exit 1
+            fi
+          }
+
           mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
           PROFILE_UUID="$(security cms -D -i "$RUNNER_TEMP/daily.mobileprovision" | plutil -extract UUID raw -o - -)"
+          validate_profile "$RUNNER_TEMP/daily.mobileprovision" "$APPLE_TEAM_ID.$IOS_BUNDLE_ID" "daily-app"
           cp "$RUNNER_TEMP/daily.mobileprovision" "$HOME/Library/MobileDevice/Provisioning Profiles/$PROFILE_UUID.mobileprovision"
+
+          node .github/scripts/ensure-app-store-profile.mjs \
+            --bundle-id "$IOS_WIDGET_BUNDLE_ID" \
+            --profile-name "$IOS_WIDGET_PROFILE_NAME" \
+            --bundle-name "Ritual Cue Widget" \
+            --apple-sign-in false \
+            --certificate-der "$RUNNER_TEMP/distribution.der" \
+            --output "$RUNNER_TEMP/daily-widget.mobileprovision"
+
+          WIDGET_PROFILE_UUID="$(security cms -D -i "$RUNNER_TEMP/daily-widget.mobileprovision" | plutil -extract UUID raw -o - -)"
+          validate_profile "$RUNNER_TEMP/daily-widget.mobileprovision" "$APPLE_TEAM_ID.$IOS_WIDGET_BUNDLE_ID" "daily-widget"
+          cp "$RUNNER_TEMP/daily-widget.mobileprovision" "$HOME/Library/MobileDevice/Provisioning Profiles/$WIDGET_PROFILE_UUID.mobileprovision"
           echo "KEYCHAIN_PATH=$KEYCHAIN" >> "$GITHUB_ENV"
 
       - name: Archive
@@ -433,6 +473,7 @@ jobs:
             -archivePath "$RUNNER_TEMP/Daily.xcarchive" \
             DEVELOPMENT_TEAM="$APPLE_TEAM_ID" \
             IOS_PROFILE_NAME="$IOS_PROFILE_NAME" \
+            IOS_WIDGET_PROFILE_NAME="$IOS_WIDGET_PROFILE_NAME" \
             CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
             GIT_COMMIT_HASH="$GIT_COMMIT_HASH" \
             API_BASE_URL="$API_BASE_URL" \
@@ -452,7 +493,10 @@ jobs:
             <key>signingStyle</key><string>manual</string>
             <key>signingCertificate</key><string>Apple Distribution</string>
             <key>provisioningProfiles</key>
-            <dict><key>${IOS_BUNDLE_ID}</key><string>${IOS_PROFILE_NAME}</string></dict>
+            <dict>
+              <key>${IOS_BUNDLE_ID}</key><string>${IOS_PROFILE_NAME}</string>
+              <key>${IOS_WIDGET_BUNDLE_ID}</key><string>${IOS_WIDGET_PROFILE_NAME}</string>
+            </dict>
             <key>stripSwiftSymbols</key><true/>
             <key>uploadSymbols</key><true/>
           </dict></plist>

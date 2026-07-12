@@ -33,7 +33,13 @@ struct RitualCueApp: App {
                     }
                     await store.sync(using: authStore)
                 }
-                .onOpenURL { GIDSignIn.sharedInstance.handle($0) }
+                .onOpenURL { url in
+                    guard url.scheme != "ritualcue" else {
+                        store.selectToday()
+                        return
+                    }
+                    GIDSignIn.sharedInstance.handle(url)
+                }
                 .onChange(of: scenePhase) { _, phase in
                     guard phase == .active else { return }
                     Task { await store.sync(using: authStore) }

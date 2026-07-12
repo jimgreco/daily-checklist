@@ -300,6 +300,54 @@ final class ChecklistStateTests: XCTestCase {
     }
 
     @MainActor
+    func testWidgetSnapshotCountsTodayWithoutChecklistContent() throws {
+        let accountID = "widget-snapshot-test-\(UUID().uuidString)"
+        let now = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 7, day: 6, hour: 9)))
+        let today = calendar.startOfDay(for: now)
+        cleanCaches(for: [accountID])
+        defer {
+            cleanCaches(for: [accountID])
+            UserDefaults.standard.removeObject(forKey: "activeAccountID")
+        }
+
+        UserDefaults.standard.set(accountID, forKey: "activeAccountID")
+        let store = ChecklistStore()
+        store.selectedDate = today
+
+        let remaining = ChecklistItem(title: "Medication", reminderMinutes: 10 * 60, createdAt: today)
+        let completed = ChecklistItem(title: "Private completed task", createdAt: today)
+        let skipped = ChecklistItem(title: "Private skipped task", createdAt: today)
+        let paused = ChecklistItem(
+            title: "Private paused task",
+            createdAt: today,
+            pauseWindows: [PauseWindow(startDate: DateKey.string(from: today), endDate: DateKey.string(from: today))]
+        )
+
+        store.save(remaining)
+        store.save(completed)
+        store.save(skipped)
+        store.save(paused)
+        store.complete(itemID: completed.id, on: today)
+        store.setSkipped(skipped, skipped: true, on: today)
+
+        let snapshot = store.widgetSnapshot(now: now)
+
+        XCTAssertEqual(snapshot.remainingCount, 1)
+        XCTAssertEqual(snapshot.scheduledCount, 3)
+        XCTAssertEqual(snapshot.completedCount, 1)
+        XCTAssertEqual(snapshot.skippedCount, 1)
+        XCTAssertEqual(snapshot.reminderMinutes, [10 * 60, 20 * 60])
+        XCTAssertEqual(snapshot.nextReminderMinutes, 10 * 60)
+        XCTAssertTrue(snapshot.hasChecklist)
+
+        let encoded = try XCTUnwrap(String(data: JSONEncoder().encode(snapshot), encoding: .utf8))
+        XCTAssertFalse(encoded.contains("Medication"))
+        XCTAssertFalse(encoded.contains("Private completed task"))
+        XCTAssertFalse(encoded.contains("Private skipped task"))
+        XCTAssertFalse(encoded.contains("Private paused task"))
+    }
+
+    @MainActor
     func testReturningAuthenticatedAccountKeepsExistingLocalProgressCache() throws {
         let accountID = "test-user-\(UUID().uuidString)"
         let itemID = UUID()

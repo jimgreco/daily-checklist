@@ -120,3 +120,5 @@ Optional runtime secret:
 - `DAILY_DATABASE_URL` overrides the default shared Postgres URL `postgresql://admin:${DB_PASSWORD}@db:5432/daily_checklist`.
 
 Before the first upload, create the Ritual Cue app record in App Store Connect for bundle ID `com.jimgreco.dailychecklist`. The workflow can register the bundle ID and provisioning profile, but Apple does not expose app-record creation through the same provisioning API.
+
+The iOS app and widget extension use the App Group `group.com.jimgreco.dailychecklist`. Enable App Groups for both `com.jimgreco.dailychecklist` and `com.jimgreco.dailychecklist.widget` in Apple Developer, assign that group to both App IDs, then rerun publish so the generated profiles include the shared container entitlement.
