@@ -1248,6 +1248,16 @@ private struct ItemRow: View {
                     .frame(width: 24, height: 36)
                     .accessibilityHidden(true)
             }
+            if showsEditButton {
+                Button(action: onEdit) {
+                    Image(systemName: "pencil")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 36, height: 36)
+                        .background(subtleFill, in: Circle())
+                }
+                .accessibilityLabel("Edit \(item.title)")
+            }
             if skipped {
                 Text("Skipped")
                     .font(.system(size: 12, weight: .bold))

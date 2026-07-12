@@ -23,6 +23,12 @@ final class RitualCueScreenshots: XCTestCase {
     }
 
     func testAppStoreScreenshots() throws {
+        let editChecklistButton = app.buttons["Edit checklist"].firstMatch
+        XCTAssertTrue(editChecklistButton.waitForExistence(timeout: 5))
+        editChecklistButton.tap()
+        XCTAssertTrue(app.buttons["Edit Review calendar"].waitForExistence(timeout: 5))
+        app.buttons["Done editing checklist"].tap()
+
         snapshot("01-Today")
 
         let allFilter = app.buttons["All"].firstMatch
