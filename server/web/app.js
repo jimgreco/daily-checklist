@@ -56,6 +56,7 @@
       chevronLeft: '<path d="m15 18-6-6 6-6"/>',
       chevronRight: '<path d="m9 18 6-6-6-6"/>',
       check: '<path d="M20 6 9 17l-5-5"/>',
+      circle: '<circle cx="12" cy="12" r="8"/>',
       clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
       copy: '<rect x="8" y="8" width="12" height="12" rx="2"/><rect x="4" y="4" width="12" height="12" rx="2"/>',
       folderClosed: '<path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H10l2 2h6.5A2.5 2.5 0 0 1 21 9.5v7A2.5 2.5 0 0 1 18.5 19h-13A2.5 2.5 0 0 1 3 16.5z"/>',
@@ -66,10 +67,12 @@
       play: '<circle cx="12" cy="12" r="9"/><path d="m10 8 6 4-6 4z"/>',
       repeat: '<path d="m17 2 4 4-4 4"/><path d="M3 11V9a3 3 0 0 1 3-3h15"/><path d="m7 22-4-4 4-4"/><path d="M21 13v2a3 3 0 0 1-3 3H3"/>',
       search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>',
+      skip: '<path d="m5 5 7 7-7 7"/><path d="M19 5v14"/>',
       startToday: '<path d="M17 17 7 7"/><path d="M15 7H7v8"/>',
       startTomorrow: '<path d="M7 17 17 7"/><path d="M9 7h8v8"/>',
       trash: '<path d="M4 7h16"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M6 7l1 14h10l1-14"/><path d="M9 7V4h6v3"/>',
-      user: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>'
+      user: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
+      xCircle: '<circle cx="12" cy="12" r="9"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/>'
     };
     return `<svg class="icon ${className}" aria-hidden="true" focusable="false" viewBox="0 0 24 24">${paths[name] || ""}</svg>`;
   }
@@ -617,10 +620,13 @@
     }
     if (state.modal.type === "history") {
       const item = state.modal.item;
+      const historyEntries = historyFor(item);
+      const calendarEntries = historyCalendarFor(historyEntries);
       return `<div class="scrim" data-action="close"><section class="modal" data-modal>
         <h2>${escapeHTML(item.title)}</h2>
+        ${renderHistoryCalendar(calendarEntries)}
         <div class="history-list">
-          ${historyFor(item).map((entry) => `<div class="history-row">
+          ${historyEntries.map((entry) => `<div class="history-row">
             <span>${escapeHTML(entry.label)}</span>
             <div class="history-actions">
               ${canDelayHistoryState(entry.state) ? `<button class="history-delay" data-action="delay-history" data-id="${item.id}" data-date="${entry.key}" aria-label="Delay ${escapeHTML(entry.label)} to next day">${icon("startTomorrow")}</button>` : ""}
@@ -1041,19 +1047,92 @@
     const today = startOfDay(state.selectedDate);
     return Array.from({ length: 21 }, (_, offset) => {
       const date = addDays(today, -offset);
-      let stateLabel = "Off";
-      if ((item.completedDates || []).includes(dateKey(date))) stateLabel = "Done";
-      else if ((item.skippedDates || []).includes(dateKey(date))) stateLabel = "Skipped";
-      else if ((item.openDates || []).includes(dateKey(date))) stateLabel = "Open";
-      else if (isPaused(item, date)) stateLabel = "Paused";
-      else if (isScheduledOnDate(item, date) && date < startOfDay(new Date())) stateLabel = "Missed";
-      else if (isScheduledOnDate(item, date)) stateLabel = "Open";
-      return {
-        label: date.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" }),
-        key: dateKey(date),
-        state: stateLabel
-      };
+      return historyEntryForDate(item, date);
     });
+  }
+
+  function historyEntryForDate(item, date) {
+    const day = startOfDay(date);
+    return {
+      date: day,
+      day: day.getDate(),
+      label: day.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" }),
+      fullLabel: day.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric", year: "numeric" }),
+      key: dateKey(day),
+      state: historyStateForDate(item, day)
+    };
+  }
+
+  function historyStateForDate(item, date) {
+    const key = dateKey(date);
+    if ((item.completedDates || []).includes(key)) return "Done";
+    if ((item.skippedDates || []).includes(key)) return "Skipped";
+    if ((item.openDates || []).includes(key)) return "Open";
+    if (isPaused(item, date)) return "Paused";
+    if (isScheduledOnDate(item, date) && date < startOfDay(new Date())) return "Missed";
+    if (isScheduledOnDate(item, date)) return "Open";
+    return "Off";
+  }
+
+  function historyCalendarFor(historyEntries) {
+    const chronological = [...historyEntries].reverse();
+    if (!chronological.length) return [];
+
+    const leading = chronological[0].date.getDay();
+    const occupied = leading + chronological.length;
+    const trailing = (7 - (occupied % 7)) % 7;
+
+    return [
+      ...Array.from({ length: leading }, (_, index) => ({ empty: true, id: `leading-${index}` })),
+      ...chronological.map((entry) => ({ ...entry, id: entry.key })),
+      ...Array.from({ length: trailing }, (_, index) => ({ empty: true, id: `trailing-${index}` }))
+    ];
+  }
+
+  function renderHistoryCalendar(calendarEntries) {
+    const weekdays = ["S", "M", "T", "W", "T", "F", "S"];
+    return `<div class="history-calendar">
+      <div class="history-calendar-title">${escapeHTML(historyCalendarTitle(calendarEntries))}</div>
+      <div class="history-calendar-weekdays">
+        ${weekdays.map((weekday) => `<span>${weekday}</span>`).join("")}
+      </div>
+      <div class="history-calendar-grid">
+        ${calendarEntries.map((entry) => entry.empty
+          ? `<div class="history-calendar-day empty" aria-hidden="true"></div>`
+          : `<div class="history-calendar-day ${historyStateClass(entry.state)}" aria-label="${escapeHTML(entry.fullLabel)}, ${escapeHTML(entry.state)}">
+              <span>${entry.day}</span>
+              <span class="history-calendar-icon">${historyIcon(entry.state)}</span>
+            </div>`).join("")}
+      </div>
+    </div>`;
+  }
+
+  function historyCalendarTitle(calendarEntries) {
+    const dates = calendarEntries.filter((entry) => !entry.empty).map((entry) => dateFromInput(entry.key));
+    const first = dates[0];
+    const last = dates[dates.length - 1];
+    if (!first || !last) return "History";
+    if (first.getMonth() === last.getMonth() && first.getFullYear() === last.getFullYear()) {
+      return last.toLocaleDateString([], { month: "long", year: "numeric" });
+    }
+    const startLabel = first.toLocaleDateString([], { month: "short" });
+    const endLabel = last.toLocaleDateString([], { month: "short", year: "numeric" });
+    return `${startLabel} - ${endLabel}`;
+  }
+
+  function historyStateClass(historyState) {
+    return historyState.toLowerCase();
+  }
+
+  function historyIcon(historyState) {
+    switch (historyState) {
+      case "Done": return icon("check");
+      case "Skipped": return icon("skip");
+      case "Missed": return icon("xCircle");
+      case "Open": return icon("circle");
+      case "Paused": return icon("pause");
+      default: return "";
+    }
   }
 
   function canDelayHistoryState(historyState) {

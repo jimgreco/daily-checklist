@@ -130,6 +130,19 @@ h1 { margin: 0; font-size: clamp(48px, 14vw, 68px); line-height: .96; letter-spa
 .template-list { display: grid; gap: 10px; }
 .template-option { display: grid; gap: 5px; min-height: 74px; padding: 14px 16px; border-radius: 14px; background: white; color: var(--ink); text-align: left; }
 .template-option span { color: var(--muted); font-size: 13px; line-height: 1.35; }
+.history-calendar { display: grid; gap: 10px; margin-bottom: 16px; padding: 14px; border-radius: 16px; background: white; }
+.history-calendar-title { color: var(--ink); font-size: 16px; font-weight: 820; }
+.history-calendar-weekdays, .history-calendar-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px; }
+.history-calendar-weekdays span { min-width: 0; color: var(--muted); font-size: 11px; font-weight: 850; text-align: center; }
+.history-calendar-day { display: grid; min-width: 0; min-height: 44px; place-items: center; padding: 4px 2px; border: 1px solid #e3e1dd; border-radius: 10px; background: #f3f1ed; color: var(--muted); font-size: 13px; font-weight: 850; line-height: 1; }
+.history-calendar-day.empty { border-color: transparent; background: transparent; }
+.history-calendar-icon { display: grid; width: 16px; height: 16px; place-items: center; margin-top: 3px; }
+.history-calendar-icon .icon { width: 14px; height: 14px; }
+.history-calendar-day.done { border-color: rgba(98,84,245,.22); background: var(--accent-soft); color: var(--accent); }
+.history-calendar-day.skipped { border-color: #dbdfe6; background: #f0f2f5; color: #626b78; }
+.history-calendar-day.missed { border-color: rgba(201,74,74,.22); background: var(--danger-soft); color: var(--danger); }
+.history-calendar-day.open { border-color: rgba(35,122,87,.22); background: #e8f5ef; color: #237a57; }
+.history-calendar-day.paused { border-color: rgba(184,109,8,.22); background: var(--delayed-soft); color: var(--delayed); }
 .history-list { display: grid; gap: 8px; }
 .history-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; min-height: 46px; padding: 0 14px; border-radius: 14px; background: white; color: var(--ink); }
 .history-actions { display: inline-flex; align-items: center; gap: 8px; }

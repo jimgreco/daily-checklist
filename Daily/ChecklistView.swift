@@ -1344,10 +1344,32 @@ private struct ItemRow: View {
     }
 }
 
+private struct HistoryCalendarCell: Identifiable {
+    let id: String
+    let date: Date?
+    let state: ChecklistHistoryState?
+
+    static func empty(id: String) -> HistoryCalendarCell {
+        HistoryCalendarCell(id: id, date: nil, state: nil)
+    }
+
+    static func day(date: Date, state: ChecklistHistoryState) -> HistoryCalendarCell {
+        HistoryCalendarCell(id: DateKey.string(from: date), date: date, state: state)
+    }
+}
+
 private struct ItemHistoryView: View {
     @EnvironmentObject private var store: ChecklistStore
     let item: ChecklistItem
     @State private var actionErrorMessage: String?
+
+    private let calendarColumns = Array(repeating: GridItem(.flexible(), spacing: 6), count: 7)
+
+    private var weekdaySymbols: [String] {
+        let symbols = Calendar.current.veryShortWeekdaySymbols
+        let firstIndex = Calendar.current.firstWeekday - 1
+        return Array(symbols[firstIndex..<symbols.count]) + Array(symbols[0..<firstIndex])
+    }
 
     private var currentItem: ChecklistItem {
         store.items.first(where: { $0.id == item.id }) ?? item
@@ -1357,47 +1379,69 @@ private struct ItemHistoryView: View {
         store.completionHistory(for: currentItem)
     }
 
+    private var calendarDays: [(date: Date, state: ChecklistHistoryState)] {
+        Array(history.reversed())
+    }
+
+    private var calendarCells: [HistoryCalendarCell] {
+        guard let firstDate = calendarDays.first?.date else { return [] }
+        let leadingEmptyDays = weekdayOffset(for: firstDate)
+        let occupiedCells = leadingEmptyDays + calendarDays.count
+        let trailingEmptyDays = (7 - occupiedCells % 7) % 7
+
+        return (0..<leadingEmptyDays).map { HistoryCalendarCell.empty(id: "leading-\($0)") }
+            + calendarDays.map { HistoryCalendarCell.day(date: $0.date, state: $0.state) }
+            + (0..<trailingEmptyDays).map { HistoryCalendarCell.empty(id: "trailing-\($0)") }
+    }
+
     var body: some View {
         NavigationStack {
-            List(history, id: \.date) { entry in
-                HStack {
-                    Text(entry.date.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day()))
-                    Spacer()
-                    if canDelay(entry.state) {
-                        Button {
-                            delay(entry.date)
-                        } label: {
-                            Label("Delay", systemImage: "arrow.right.circle")
-                                .labelStyle(.iconOnly)
-                        }
-                        .buttonStyle(.borderless)
-                        .accessibilityLabel("Delay to next day")
-                    }
-                    if canBringForward(entry.date, state: entry.state) {
-                        Button {
-                            bringForward(entry.date)
-                        } label: {
-                            Label("Bring to today", systemImage: "arrow.left.circle")
-                                .labelStyle(.iconOnly)
-                        }
-                        .buttonStyle(.borderless)
-                        .accessibilityLabel("Bring to today")
-                    }
-                    Menu {
-                        ForEach(availableStates(for: entry.date)) { state in
+            VStack(spacing: 0) {
+                historyCalendar
+                    .padding(.horizontal, 18)
+                    .padding(.top, 18)
+                    .padding(.bottom, 12)
+
+                List(history, id: \.date) { entry in
+                    HStack {
+                        Text(entry.date.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day()))
+                        Spacer()
+                        if canDelay(entry.state) {
                             Button {
-                                withAnimation(.snappy) {
-                                    store.setHistoryState(state, for: currentItem.id, on: entry.date)
-                                }
+                                delay(entry.date)
                             } label: {
-                                Label(state.rawValue, systemImage: state == entry.state ? "checkmark" : icon(for: state))
+                                Label("Delay", systemImage: "arrow.right.circle")
+                                    .labelStyle(.iconOnly)
                             }
+                            .buttonStyle(.borderless)
+                            .accessibilityLabel("Delay to next day")
                         }
-                    } label: {
-                        statePill(entry.state)
+                        if canBringForward(entry.date, state: entry.state) {
+                            Button {
+                                bringForward(entry.date)
+                            } label: {
+                                Label("Bring to today", systemImage: "arrow.left.circle")
+                                    .labelStyle(.iconOnly)
+                            }
+                            .buttonStyle(.borderless)
+                            .accessibilityLabel("Bring to today")
+                        }
+                        Menu {
+                            ForEach(availableStates(for: entry.date)) { state in
+                                Button {
+                                    withAnimation(.snappy) {
+                                        store.setHistoryState(state, for: currentItem.id, on: entry.date)
+                                    }
+                                } label: {
+                                    Label(state.rawValue, systemImage: state == entry.state ? "checkmark" : icon(for: state))
+                                }
+                            }
+                        } label: {
+                            statePill(entry.state)
+                        }
+                        .accessibilityLabel("Change \(entry.date.formatted(.dateTime.month(.wide).day())) state")
+                        .accessibilityValue(entry.state.rawValue)
                     }
-                    .accessibilityLabel("Change \(entry.date.formatted(.dateTime.month(.wide).day())) state")
-                    .accessibilityValue(entry.state.rawValue)
                 }
             }
             .navigationTitle(currentItem.title)
@@ -1411,6 +1455,81 @@ private struct ItemHistoryView: View {
                 Text(actionErrorMessage ?? "")
             }
         }
+    }
+
+    private var historyCalendar: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(calendarTitle)
+                .font(.headline)
+                .foregroundStyle(ink)
+
+            LazyVGrid(columns: calendarColumns, spacing: 7) {
+                ForEach(Array(weekdaySymbols.enumerated()), id: \.offset) { _, symbol in
+                    Text(symbol)
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity)
+                        .accessibilityHidden(true)
+                }
+
+                ForEach(calendarCells) { cell in
+                    calendarCell(cell)
+                }
+            }
+        }
+        .padding(14)
+        .background(surface, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+    }
+
+    private var calendarTitle: String {
+        guard let start = calendarDays.first?.date,
+              let end = calendarDays.last?.date else {
+            return "History"
+        }
+        let startMonth = start.formatted(.dateTime.month(.abbreviated))
+        let endMonth = end.formatted(.dateTime.month(.abbreviated).year())
+        if Calendar.current.isDate(start, equalTo: end, toGranularity: .month) {
+            return end.formatted(.dateTime.month(.wide).year())
+        }
+        return "\(startMonth) - \(endMonth)"
+    }
+
+    private func weekdayOffset(for date: Date) -> Int {
+        let weekday = Calendar.current.component(.weekday, from: date)
+        return (weekday - Calendar.current.firstWeekday + 7) % 7
+    }
+
+    @ViewBuilder
+    private func calendarCell(_ cell: HistoryCalendarCell) -> some View {
+        if let date = cell.date, let state = cell.state {
+            calendarDay(date: date, state: state)
+        } else {
+            Color.clear
+                .frame(maxWidth: .infinity, minHeight: 45)
+                .accessibilityHidden(true)
+        }
+    }
+
+    private func calendarDay(date: Date, state: ChecklistHistoryState) -> some View {
+        let color = color(for: state)
+        let isOff = state == .off
+
+        return VStack(spacing: 4) {
+            Text(date.formatted(.dateTime.day()))
+                .font(.system(size: 13, weight: .semibold))
+            Image(systemName: icon(for: state))
+                .font(.system(size: 11, weight: .bold))
+                .opacity(isOff ? 0 : 1)
+        }
+        .foregroundStyle(isOff ? .secondary : color)
+        .frame(maxWidth: .infinity, minHeight: 45)
+        .background(color.opacity(isOff ? 0.06 : 0.14), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(color.opacity(isOff ? 0.10 : 0.22), lineWidth: 1)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(date.formatted(.dateTime.weekday(.wide).month(.wide).day())), \(state.rawValue)")
     }
 
     private func canDelay(_ state: ChecklistHistoryState) -> Bool {
