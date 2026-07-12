@@ -111,6 +111,9 @@ final class ChecklistStore: ObservableObject {
         return id
     }
 
+    var diagnosticDeviceID: String { deviceID }
+    var pendingMutationCount: Int { pendingMutations.count }
+
     private var cacheURL: URL {
         cacheURL(for: activeAccountID)
     }
@@ -761,6 +764,16 @@ final class ChecklistStore: ObservableObject {
             syncState = "Saved offline"
             return false
         }
+    }
+
+    func applyImportedState(_ response: SyncResponse) {
+        syncTask?.cancel()
+        pendingMutations = []
+        items = response.items
+        groups = response.groups ?? []
+        eveningReminderMinutes = response.eveningReminderMinutes
+        persistAndSchedule()
+        syncState = "Restored from export"
     }
 
     private func loadCache() {

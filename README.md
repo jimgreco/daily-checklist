@@ -57,7 +57,7 @@ On the web, the rotating refresh token is stored in an `HttpOnly` cookie so the 
 
 Ritual Cue stores checklist items, groups, completion history, reminder settings, sync metadata, and account identity fields returned by Google or Apple. The iOS app keeps an offline cache in app documents storage, and the web app keeps an offline cache in browser storage.
 
-Signed-in users can export their synced checklist data and delete their server-side account from the Account screen. The public web support pages are served at:
+Signed-in users can export their synced checklist data, restore from a Ritual Cue JSON export, and delete their server-side account from the Account screen. Restoring from an export replaces the signed-in account's synced checklist data with the imported checklist; malformed or oversized files are rejected before anything is changed. The diagnostics action copies build, sync, device, and API-origin details for support without including tokens or checklist content. The public web support pages are served at:
 
 - `https://ritualcue.com/privacy.html`
 - `https://ritualcue.com/support.html`

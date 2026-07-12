@@ -587,6 +587,83 @@ test("authenticated users can export and delete account data", async () => {
   assert.equal(afterDelete.status, 404);
 });
 
+test("authenticated users can import valid exports and reject malformed exports", async () => {
+  const auth = await devLogin(`import-test-${Date.now()}@ritualcue.local`, "Import Test");
+  await syncDevice(auth.token, "import-device", [{
+    id: "import-old-create",
+    itemID: "11111111-1111-4111-8111-111111111111",
+    kind: "upsert",
+    stamp: "2026-07-05T12:00:00.000Z",
+    changedFields: ["title", "createdAt"],
+    item: { title: "Replace me", createdAt: "2026-07-05T12:00:00.000Z" }
+  }]);
+
+  const malformed = await fetch(`${baseURL}/api/import`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${auth.token}`
+    },
+    body: JSON.stringify({ checklist: { items: "not-an-array" } })
+  });
+  assert.equal(malformed.status, 422);
+  assert.match((await malformed.json()).error, /Invalid Ritual Cue export/);
+
+  const restored = await fetch(`${baseURL}/api/import`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${auth.token}`
+    },
+    body: JSON.stringify({
+      exportedAt: "2026-07-06T12:00:00.000Z",
+      user: { id: "ignored", email: "ignored@example.com", name: "Ignored" },
+      checklist: {
+        groups: [{
+          id: "22222222-2222-4222-8222-222222222222",
+          name: "Restored Group",
+          sortOrder: 1,
+          isCollapsed: false,
+          pauseWindows: []
+        }],
+        items: [{
+          id: "33333333-3333-4333-8333-333333333333",
+          title: "Restore me",
+          notes: "Imported note",
+          schedule: "everyDay",
+          customWeekdays: [],
+          reminderMinutes: 540,
+          quantity: 2,
+          completedDates: [],
+          completionCounts: { "2026-07-06": 1 },
+          skippedDates: [],
+          openDates: [],
+          createdAt: "2026-07-06T12:00:00.000Z",
+          startDate: null,
+          endedAt: null,
+          groupID: "22222222-2222-4222-8222-222222222222",
+          sortOrder: 1,
+          pauseWindows: []
+        }],
+        eveningReminderMinutes: 1170
+      }
+    })
+  });
+  assert.equal(restored.status, 200);
+  const imported = await restored.json();
+  assert.deepEqual(imported.acceptedMutationIDs, []);
+  assert.equal(imported.items.length, 1);
+  assert.equal(imported.items[0].title, "Restore me");
+  assert.equal(imported.items[0].completionCounts["2026-07-06"], 1);
+  assert.equal(imported.groups[0].name, "Restored Group");
+  assert.equal(imported.eveningReminderMinutes, 1170);
+
+  const synced = await syncDevice(auth.token, "import-viewer");
+  assert.equal(synced.items.length, 1);
+  assert.equal(synced.items[0].title, "Restore me");
+  assert.equal(synced.items.some((item) => item.title === "Replace me"), false);
+});
+
 test("two-client sync merges offline conflicts and preserves deletion tombstones", async () => {
   resetRateLimits();
   const suffix = crypto.randomUUID();

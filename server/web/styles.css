@@ -94,8 +94,9 @@ h1 { margin: 0; font-size: clamp(48px, 14vw, 68px); line-height: .96; letter-spa
 .auth-shell p { margin: 18px auto 30px; color: var(--muted); font-size: 18px; line-height: 1.45; }
 .auth-options { --auth-button-width: min(100%, 400px); display: grid; justify-items: center; gap: 12px; }
 .google-provider { display: grid; width: var(--auth-button-width); min-height: 42px; place-items: center; overflow: hidden; }
-.provider, .dev-button { display: grid; width: var(--auth-button-width); min-height: 42px; place-items: center; border-radius: 4px; background: white; color: var(--ink); font-size: 14px; font-weight: 600; overflow: hidden; }
+.provider, .dev-button, .diagnostic-button { display: grid; width: var(--auth-button-width); min-height: 42px; place-items: center; border-radius: 4px; background: white; color: var(--ink); font-size: 14px; font-weight: 600; overflow: hidden; }
 .provider.apple { background: black; color: white; }
+.diagnostic-button { background: #e9e7e3; color: var(--ink); }
 .auth-note { min-height: 22px; margin-top: 16px; color: var(--danger); font-size: 14px; }
 
 .scrim { position: fixed; inset: 0; z-index: 50; display: grid; align-items: end; background: rgba(22,22,28,.34); backdrop-filter: blur(4px); }

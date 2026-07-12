@@ -568,6 +568,7 @@
         ${state.googleClientId ? `<div class="google-provider" data-google-host></div>` : ""}
         ${state.appleClientId ? `<button class="provider apple" data-action="apple">&nbsp; Continue with Apple</button>` : ""}
         ${local ? `<button class="dev-button" data-action="dev">Local dev sign in</button>` : ""}
+        <button class="diagnostic-button" data-action="copy-diagnostics">Copy diagnostics</button>
       </div>
       <div class="auth-note">${state.authLoaded && !state.googleClientId && !state.appleClientId && !local ? "Web sign-in providers are not configured yet." : ""}</div>
       ${state.toast ? `<div class="toast">${escapeHTML(state.toast)}</div>` : ""}
@@ -600,6 +601,8 @@
           </div>
           <div class="account-panel">
             <button data-action="export-data"><span>Export data</span><small>Copy a JSON backup</small></button>
+            <button data-action="import-data"><span>Restore from export</span><small>Replace synced data with a JSON backup</small></button>
+            <button data-action="copy-diagnostics"><span>Copy diagnostics</span><small>Copy build and sync details for support</small></button>
             <button data-action="privacy"><span>Privacy</span><small>Review data handling</small></button>
             <button data-action="support"><span>Support</span><small>Get help with Ritual Cue</small></button>
           </div>
@@ -607,6 +610,7 @@
             <button class="danger" data-action="sign-out"><span>Sign out</span></button>
             <button class="danger" data-action="delete-account"><span>Delete account</span><small>Remove synced account data</small></button>
           </div>
+          <input type="file" accept="application/json,.json" data-import-file hidden>
         </div>
         <div class="modal-actions"><span></span><button class="secondary" data-action="close">Done</button></div>
       </section></div>`;
@@ -758,6 +762,70 @@
     link.click();
     link.remove();
     URL.revokeObjectURL(url);
+  }
+
+  function webSyncState() {
+    if (state.syncing) return "Syncing";
+    if (state.pending.length) return "Changes pending";
+    return hasSession() ? "Synced or cached" : "Signed out";
+  }
+
+  function diagnosticSummary() {
+    return [
+      "Ritual Cue Diagnostics",
+      `Generated: ${new Date().toISOString()}`,
+      "Surface: Web",
+      `App Origin: ${location.origin}`,
+      `Auth State: ${state.user ? "Signed in" : "Signed out"}`,
+      `User ID: ${state.user?.id || "none"}`,
+      `Device ID: ${state.deviceID}`,
+      `Sync State: ${webSyncState()}`,
+      `Pending Mutations: ${state.pending.length}`
+    ].join("\n");
+  }
+
+  async function copyText(text) {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return;
+    }
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.setAttribute("readonly", "");
+    textarea.style.position = "fixed";
+    textarea.style.opacity = "0";
+    document.body.appendChild(textarea);
+    textarea.select();
+    document.execCommand("copy");
+    textarea.remove();
+  }
+
+  async function copyDiagnostics() {
+    await copyText(diagnosticSummary());
+    showToast("Diagnostics copied.");
+  }
+
+  async function importDataFromFile(file) {
+    if (!file) return;
+    if (file.size > 2_000_000) throw new Error("That export file is too large.");
+    let parsed;
+    try {
+      parsed = JSON.parse(await file.text());
+    } catch {
+      throw new Error("Select a valid Ritual Cue export.");
+    }
+    if (!confirm("Restore this Ritual Cue export? This replaces the synced checklist data on this account.")) return;
+    const result = await request("/api/import", {
+      method: "POST",
+      body: JSON.stringify(parsed)
+    });
+    state.items = result.items || [];
+    state.groups = result.groups || [];
+    state.pending = [];
+    state.modal = null;
+    persistData();
+    render();
+    showToast("Export restored.");
   }
 
   async function deleteAccount(confirmed = false) {
@@ -1254,6 +1322,13 @@
     if (action === "export-data") {
       try { await exportData(); } catch (error) { showToast(error.message); }
     }
+    if (action === "import-data") {
+      const input = app.querySelector("[data-import-file]");
+      if (input) input.click();
+    }
+    if (action === "copy-diagnostics") {
+      try { await copyDiagnostics(); } catch { showToast("Unable to copy diagnostics."); }
+    }
     if (action === "delete-account") {
       try { await deleteAccount(); } catch (error) { showToast(error.message); }
     }
@@ -1282,6 +1357,12 @@
   });
 
   app.addEventListener("change", (event) => {
+    if (event.target.matches("[data-import-file]")) {
+      const [file] = event.target.files || [];
+      event.target.value = "";
+      importDataFromFile(file).catch((error) => showToast(error.message));
+      return;
+    }
     if (event.target.matches("[data-history-state]")) {
       setHistoryState(event.target.dataset.id, event.target.dataset.date, event.target.value);
       return;

@@ -1,6 +1,7 @@
 import AuthenticationServices
 import GoogleSignIn
 import SwiftUI
+import UniformTypeIdentifiers
 import UIKit
 
 struct AccountView: View {
@@ -14,6 +15,9 @@ struct AccountView: View {
     @State private var accountMessage: String?
     @State private var reminderEnabled = true
     @State private var reminderTime = Date.now
+    @State private var showingImportPicker = false
+    @State private var showingImportConfirmation = false
+    @State private var pendingImportData: Data?
 
     var body: some View {
         NavigationStack {
@@ -69,6 +73,12 @@ struct AccountView: View {
                 }
             }
             .onAppear(perform: loadReminderState)
+            .fileImporter(
+                isPresented: $showingImportPicker,
+                allowedContentTypes: [.json],
+                allowsMultipleSelection: false,
+                onCompletion: handleImportSelection
+            )
             .confirmationDialog(
                 "Delete Account?",
                 isPresented: $showingDeleteConfirmation,
@@ -85,6 +95,20 @@ struct AccountView: View {
                 Button("Cancel", role: .cancel) {}
             } message: {
                 Text("This removes your synced checklist data from the server. Local offline copies on other devices may remain until those devices sign out or clear local data.")
+            }
+            .confirmationDialog(
+                "Restore from Export?",
+                isPresented: $showingImportConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button("Restore Export", role: .destructive) {
+                    restorePendingImport()
+                }
+                Button("Cancel", role: .cancel) {
+                    pendingImportData = nil
+                }
+            } message: {
+                Text("This replaces the synced checklist data on this account with the selected Ritual Cue export.")
             }
         }
     }
@@ -161,6 +185,14 @@ struct AccountView: View {
                     }
                 }
             }
+            Divider().padding(.leading, 48)
+            AccountActionRow(
+                title: "Restore from export",
+                subtitle: "Replace synced data with a JSON backup",
+                systemImage: "square.and.arrow.up"
+            ) {
+                showingImportPicker = true
+            }
         }
         .background(surface, in: RoundedRectangle(cornerRadius: 18))
     }
@@ -169,6 +201,10 @@ struct AccountView: View {
         VStack(spacing: 0) {
             AccountActionRow(title: "Run tutorial again", subtitle: "Review the basics and starter routines", systemImage: "graduationcap") {
                 onShowTutorial()
+            }
+            Divider().padding(.leading, 48)
+            AccountActionRow(title: "Copy diagnostics", subtitle: "Copy build and sync details for support", systemImage: "doc.on.clipboard") {
+                copyDiagnostics()
             }
             Divider().padding(.leading, 48)
             AccountActionRow(title: "Privacy", subtitle: nil, systemImage: "hand.raised") {
@@ -199,6 +235,16 @@ struct AccountView: View {
         VStack(spacing: 0) {
             AccountActionRow(title: "Run tutorial again", subtitle: "Review the basics and starter routines", systemImage: "graduationcap") {
                 onShowTutorial()
+            }
+            Divider().padding(.leading, 48)
+            AccountActionRow(title: "Copy diagnostics", subtitle: "Copy build and device details for support", systemImage: "doc.on.clipboard") {
+                copyDiagnostics()
+            }
+            Divider().padding(.leading, 48)
+            AccountActionRow(title: "Support", subtitle: nil, systemImage: "questionmark.circle") {
+                if let url = URL(string: "https://ritualcue.com/support.html") {
+                    openURL(url)
+                }
             }
         }
         .background(surface, in: RoundedRectangle(cornerRadius: 18))
@@ -273,6 +319,51 @@ struct AccountView: View {
         store.updateEveningReminder((parts.hour ?? 20) * 60 + (parts.minute ?? 0))
     }
 
+    private func copyDiagnostics() {
+        UIPasteboard.general.string = SupportDiagnostics.text(
+            user: authStore.user,
+            syncState: store.syncState,
+            pendingMutationCount: store.pendingMutationCount,
+            deviceID: store.diagnosticDeviceID
+        )
+        accountMessage = "Diagnostics copied."
+    }
+
+    private func handleImportSelection(_ result: Result<[URL], Error>) {
+        switch result {
+        case .success(let urls):
+            guard let url = urls.first else { return }
+            let scoped = url.startAccessingSecurityScopedResource()
+            defer {
+                if scoped { url.stopAccessingSecurityScopedResource() }
+            }
+            do {
+                let data = try Data(contentsOf: url)
+                guard data.count <= 2_000_000 else {
+                    authStore.errorMessage = "That export file is too large."
+                    return
+                }
+                pendingImportData = data
+                showingImportConfirmation = true
+            } catch {
+                authStore.errorMessage = "Unable to read that export file."
+            }
+        case .failure:
+            authStore.errorMessage = "Unable to read that export file."
+        }
+    }
+
+    private func restorePendingImport() {
+        guard let data = pendingImportData else { return }
+        Task {
+            if let response = await authStore.importData(data) {
+                store.applyImportedState(response)
+                pendingImportData = nil
+                accountMessage = "Export restored."
+            }
+        }
+    }
+
     private func googleSignIn() {
         guard let clientID = Bundle.main.object(forInfoDictionaryKey: "GIDClientID") as? String,
               !clientID.hasPrefix("YOUR_") else {
@@ -313,27 +404,6 @@ struct AccountView: View {
         store.activateAuthenticatedAccount(userID)
         let didSync = await store.sync(using: authStore)
         if didSync { dismiss() }
-    }
-}
-
-private enum BuildInformation {
-    static var displayText: String {
-        let version = bundleString("CFBundleShortVersionString", fallback: "1.0")
-        let build = bundleString("CFBundleVersion", fallback: "0")
-        let hash = bundleString("GitCommitHash")
-        let versionAndBuild = "\(version) (\(build))"
-        return hash.isEmpty ? versionAndBuild : "\(versionAndBuild) \(hash)"
-    }
-
-    private static func bundleString(_ key: String, fallback: String = "") -> String {
-        guard let value = Bundle.main.object(forInfoDictionaryKey: key) as? String else {
-            return fallback
-        }
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, !trimmed.hasPrefix("$(") else {
-            return fallback
-        }
-        return trimmed
     }
 }
 

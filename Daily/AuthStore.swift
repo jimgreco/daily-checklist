@@ -89,6 +89,34 @@ final class AuthStore: ObservableObject {
         }
     }
 
+    func importData(_ data: Data) async -> SyncResponse? {
+        guard let token = await validAccessToken() else {
+            errorMessage = "Sign in again to restore your data."
+            return nil
+        }
+        do {
+            let response = try await importData(data, token: token)
+            errorMessage = nil
+            return response
+        } catch APIClient.APIError.badResponse(401) {
+            guard let refreshed = await refreshAccessToken() else {
+                errorMessage = "Sign in again to restore your data."
+                return nil
+            }
+            do {
+                let response = try await importData(data, token: refreshed)
+                errorMessage = nil
+                return response
+            } catch {
+                errorMessage = restoreErrorMessage(for: error)
+                return nil
+            }
+        } catch {
+            errorMessage = restoreErrorMessage(for: error)
+            return nil
+        }
+    }
+
     func deleteAccount() async -> Bool {
         guard let token = await validAccessToken() else {
             errorMessage = "Sign in again to delete your account."
@@ -102,6 +130,21 @@ final class AuthStore: ObservableObject {
         } catch {
             errorMessage = "Unable to delete your account. Try again later."
             return false
+        }
+    }
+
+    private func importData(_ data: Data, token: String) async throws -> SyncResponse {
+        try await api.importData(data, token: token)
+    }
+
+    private func restoreErrorMessage(for error: Error) -> String {
+        switch error {
+        case APIClient.APIError.badResponse(413):
+            return "That export file is too large."
+        case APIClient.APIError.badResponse(422):
+            return "That file is not a valid Ritual Cue export."
+        default:
+            return "Unable to restore your data. Try again later."
         }
     }
 

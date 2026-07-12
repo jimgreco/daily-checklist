@@ -794,6 +794,148 @@ function validGroupPayload(group = {}) {
     && validPauseWindows(group.pauseWindows);
 }
 
+function validDateKeyArray(value, { nullable = true } = {}) {
+  if (value == null) return nullable;
+  return Array.isArray(value)
+    && value.length <= 5000
+    && value.every(validDateKey);
+}
+
+function validCompletionCounts(value) {
+  if (value == null) return true;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const entries = Object.entries(value);
+  return entries.length <= 5000
+    && entries.every(([date, count]) => (
+      validDateKey(date)
+      && Number.isInteger(count)
+      && count >= 0
+      && count <= 99
+    ));
+}
+
+function validImportedItem(item) {
+  return item && typeof item === "object"
+    && validID(item.id)
+    && validItemPayload(item)
+    && validDateKeyArray(item.completedDates)
+    && validCompletionCounts(item.completionCounts);
+}
+
+function validImportedGroup(group) {
+  return group && typeof group === "object"
+    && validID(group.id)
+    && validGroupPayload(group);
+}
+
+function validImportedChecklist(checklist) {
+  return checklist && typeof checklist === "object" && !Array.isArray(checklist)
+    && Array.isArray(checklist.items)
+    && checklist.items.length <= 5000
+    && checklist.items.every(validImportedItem)
+    && (checklist.groups == null || (
+      Array.isArray(checklist.groups)
+      && checklist.groups.length <= 1000
+      && checklist.groups.every(validImportedGroup)
+    ))
+    && (
+      checklist.eveningReminderMinutes == null
+      || (Number.isInteger(checklist.eveningReminderMinutes)
+        && checklist.eveningReminderMinutes >= 0
+        && checklist.eveningReminderMinutes <= 1439)
+    );
+}
+
+function uniqueDateKeys(value = []) {
+  return [...new Set(value.filter(validDateKey))].sort();
+}
+
+function normalizedCompletionCounts(value = {}) {
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([date, count]) => validDateKey(date) && Number.isInteger(count) && count > 0 && count <= 99)
+      .sort(([left], [right]) => left.localeCompare(right))
+  );
+}
+
+function importedField(value, stamp, deviceID) {
+  return { value: value ?? null, stamp, deviceID };
+}
+
+function accountFromImportedChecklist(checklist, previousAccount = emptyAccount()) {
+  if (!validImportedChecklist(checklist)) {
+    throw Object.assign(new Error("Invalid Ritual Cue export."), { status: 422, quiet: true });
+  }
+
+  const stamp = new Date().toISOString();
+  const deviceID = "server-import";
+  const account = emptyAccount();
+  const importedItemIDs = new Set(checklist.items.map((item) => item.id));
+  const importedGroupIDs = new Set((checklist.groups || []).map((group) => group.id));
+
+  for (const [id] of Object.entries(previousAccount.items || {})) {
+    if (!importedItemIDs.has(id)) {
+      account.items[id] = { id, fields: {}, completions: {}, deleted: { stamp, deviceID } };
+    }
+  }
+  for (const [id] of Object.entries(previousAccount.groups || {})) {
+    if (!importedGroupIDs.has(id)) {
+      account.groups[id] = { id, fields: {}, deleted: { stamp, deviceID } };
+    }
+  }
+
+  for (const group of checklist.groups || []) {
+    account.groups[group.id] = {
+      id: group.id,
+      fields: {
+        name: importedField(group.name || "Untitled group", stamp, deviceID),
+        sortOrder: importedField(Number.isFinite(group.sortOrder) ? group.sortOrder : 0, stamp, deviceID),
+        isCollapsed: importedField(group.isCollapsed === true, stamp, deviceID),
+        pauseWindows: importedField(group.pauseWindows || [], stamp, deviceID)
+      }
+    };
+  }
+
+  for (const item of checklist.items) {
+    const quantity = Number.isInteger(item.quantity) ? Math.min(Math.max(item.quantity, 1), 99) : 1;
+    const completedDates = new Set(uniqueDateKeys(item.completedDates || []));
+    const completionCounts = normalizedCompletionCounts(item.completionCounts || {});
+    const completionDates = new Set([...completedDates, ...Object.keys(completionCounts)]);
+    const completions = {};
+    for (const date of completionDates) {
+      const isComplete = completedDates.has(date);
+      const count = completionCounts[date] ?? (isComplete ? quantity : 0);
+      if (isComplete || count > 0) {
+        completions[date] = { value: isComplete, count, stamp, deviceID };
+      }
+    }
+
+    account.items[item.id] = {
+      id: item.id,
+      fields: {
+        title: importedField(item.title || "Untitled", stamp, deviceID),
+        notes: importedField(item.notes || "", stamp, deviceID),
+        schedule: importedField(item.schedule || "everyDay", stamp, deviceID),
+        customWeekdays: importedField(item.customWeekdays || [], stamp, deviceID),
+        reminderMinutes: importedField(item.reminderMinutes, stamp, deviceID),
+        quantity: importedField(quantity, stamp, deviceID),
+        skippedDates: importedField(uniqueDateKeys(item.skippedDates || []), stamp, deviceID),
+        openDates: importedField(uniqueDateKeys(item.openDates || []), stamp, deviceID),
+        createdAt: importedField(item.createdAt || stamp, stamp, deviceID),
+        startDate: importedField(item.startDate, stamp, deviceID),
+        endedAt: importedField(item.endedAt, stamp, deviceID),
+        groupID: importedField(item.groupID, stamp, deviceID),
+        sortOrder: importedField(item.sortOrder, stamp, deviceID),
+        pauseWindows: importedField(item.pauseWindows || [], stamp, deviceID)
+      },
+      completions
+    };
+  }
+
+  account.eveningReminder = importedField(checklist.eveningReminderMinutes ?? 1200, stamp, deviceID);
+  return account;
+}
+
 function validMutation(mutation) {
   if (!mutation || typeof mutation !== "object") return false;
   if (!validID(mutation.id) || !validISODate(mutation.stamp, { nullable: false })) return false;
@@ -1265,6 +1407,21 @@ const server = http.createServer(async (request, response) => {
         "content-disposition": "attachment; filename=\"ritual-cue-export.json\""
       });
     }
+    if (request.method === "POST" && pathname === "/api/import") {
+      if (enforceRateLimit(request, response, "api-import", { limit: 10, windowMs: 60 * 60_000 })) return;
+      const database = await store.read();
+      const authCheck = requireActiveUser(database, request);
+      if (authCheck.error) return sendAuthError(response, authCheck.error);
+      const body = await readJSON(request);
+      const result = await store.update((database) => {
+        const auth = requireActiveUser(database, request);
+        if (auth.error) throw Object.assign(new Error(auth.error.message), { status: auth.error.status, quiet: true });
+        const previousAccount = database.accounts[auth.claims.userId] || emptyAccount();
+        database.accounts[auth.claims.userId] = accountFromImportedChecklist(body.checklist, previousAccount);
+        return materializeAccount(database.accounts[auth.claims.userId]);
+      });
+      return send(response, 200, { ...result, acceptedMutationIDs: [] });
+    }
     if (request.method === "DELETE" && pathname === "/api/account") {
       if (enforceRateLimit(request, response, "api-delete-account", { limit: 5, windowMs: 60 * 60_000 })) return;
       await store.update((database) => {
@@ -1310,6 +1467,7 @@ module.exports = {
   server,
   applyMutation,
   materializeAccount,
+  accountFromImportedChecklist,
   validSyncRequest,
   stampWins,
   refreshCookieMaxAgeSeconds,

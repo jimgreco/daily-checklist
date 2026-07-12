@@ -251,6 +251,32 @@ final class ChecklistStateTests: XCTestCase {
         XCTAssertFalse(store.groups.first?.isCollapsed == true)
     }
 
+    func testSupportDiagnosticsExcludeSensitiveUserFields() throws {
+        let user = AppUser(
+            id: "user-123",
+            email: "private@example.com",
+            name: "Private User",
+            profileImageURL: URL(string: "https://example.com/private.jpg")
+        )
+        let diagnostics = SupportDiagnostics.text(
+            user: user,
+            syncState: "Changes pending",
+            pendingMutationCount: 2,
+            deviceID: "device-123",
+            apiBaseURL: try XCTUnwrap(URL(string: "https://api.ritualcue.com/app")),
+            generatedAt: Date(timeIntervalSince1970: 0)
+        )
+
+        XCTAssertTrue(diagnostics.contains("Ritual Cue Diagnostics"))
+        XCTAssertTrue(diagnostics.contains("User ID: user-123"))
+        XCTAssertTrue(diagnostics.contains("Device ID: device-123"))
+        XCTAssertTrue(diagnostics.contains("API Origin: https://api.ritualcue.com"))
+        XCTAssertTrue(diagnostics.contains("Pending Mutations: 2"))
+        XCTAssertFalse(diagnostics.contains("private@example.com"))
+        XCTAssertFalse(diagnostics.contains("Private User"))
+        XCTAssertFalse(diagnostics.localizedCaseInsensitiveContains("token"))
+    }
+
     @MainActor
     func testReturningAuthenticatedAccountKeepsExistingLocalProgressCache() throws {
         let accountID = "test-user-\(UUID().uuidString)"

@@ -6,11 +6,15 @@ struct APIClient {
         case badResponse(Int)
     }
 
+    static var configuredBaseURL: URL {
+        let configured = Bundle.main.object(forInfoDictionaryKey: "API_BASE_URL") as? String
+        return URL(string: configured ?? "http://127.0.0.1:8787")!
+    }
+
     private let baseURL: URL
 
-    init() {
-        let configured = Bundle.main.object(forInfoDictionaryKey: "API_BASE_URL") as? String
-        self.baseURL = URL(string: configured ?? "http://127.0.0.1:8787")!
+    init(baseURL: URL = APIClient.configuredBaseURL) {
+        self.baseURL = baseURL
     }
 
     func signInWithGoogle(idToken: String, profileImageURL: URL?) async throws -> AuthResponse {
@@ -53,6 +57,10 @@ struct APIClient {
 
     func exportData(token: String) async throws -> Data {
         try await requestData(path: "api/export", method: "GET", token: token, body: nil)
+    }
+
+    func importData(_ data: Data, token: String) async throws -> SyncResponse {
+        try await request(path: "api/import", method: "POST", token: token, body: data)
     }
 
     func deleteAccount(token: String) async throws {
