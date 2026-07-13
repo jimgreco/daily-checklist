@@ -101,6 +101,7 @@ jobs:
           EC2_USER: ${{ secrets.EC2_USER }}
         run: |
           set -euo pipefail
+          node -e 'require("node:fs").writeFileSync("server/src/deployment.json", JSON.stringify({ buildHash: process.env.GITHUB_SHA, deployedAt: new Date().toISOString() }))'
           ssh -i "$HOME/.ssh/daily" \
             -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
             -o StrictHostKeyChecking=yes \

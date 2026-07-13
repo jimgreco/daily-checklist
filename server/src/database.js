@@ -6,7 +6,7 @@ const { Pool } = require("pg");
 const isProduction = process.env.NODE_ENV === "production";
 
 function emptyDatabase() {
-  return { users: {}, identities: {}, sessions: {}, accounts: {} };
+  return { users: {}, identities: {}, sessions: {}, accounts: {}, auditEvents: [] };
 }
 
 function cloneDatabase(database) {

@@ -6,6 +6,14 @@ const jwt = require("jsonwebtoken");
 const { OAuth2Client } = require("google-auth-library");
 const appleSignin = require("apple-signin-auth");
 const { createStore } = require("./database");
+const packageMetadata = require("../package.json");
+
+let generatedDeployment = {};
+try {
+  generatedDeployment = require("./deployment.json");
+} catch (error) {
+  if (error.code !== "MODULE_NOT_FOUND") throw error;
+}
 
 const port = Number(process.env.PORT || 8787);
 const sessionSecret = process.env.SESSION_SECRET || "daily-local-development-secret-change-me";
@@ -56,6 +64,17 @@ function noContent(response, headers = {}) {
     ...headers
   });
   response.end();
+}
+
+function sendDownload(response, body, filename) {
+  response.writeHead(200, {
+    ...securityHeaders(),
+    "content-type": "application/json; charset=utf-8",
+    "content-disposition": `attachment; filename="${filename}"`,
+    "cache-control": "no-store",
+    "x-content-type-options": "nosniff"
+  });
+  response.end(JSON.stringify(body, null, 2));
 }
 
 const contentTypes = {
@@ -215,9 +234,11 @@ function clearRefreshCookie() {
 }
 
 const rateBuckets = new Map();
+const authRateLimitAuditAt = new Map();
 
 function resetRateLimits() {
   rateBuckets.clear();
+  authRateLimitAuditAt.clear();
 }
 
 function clientIP(request) {
@@ -239,9 +260,24 @@ function rateLimit(request, key, { limit, windowMs }) {
   return Math.max(1, Math.ceil((bucket.resetAt - now) / 1000));
 }
 
-function enforceRateLimit(request, response, key, options) {
+async function enforceRateLimit(request, response, key, options) {
   const retryAfter = rateLimit(request, key, options);
   if (!retryAfter) return false;
+  if (key.startsWith("auth-")) {
+    const clientFingerprint = hash(clientIP(request)).slice(0, 16);
+    const auditKey = `${key}:${clientFingerprint}`;
+    const now = Date.now();
+    if ((authRateLimitAuditAt.get(auditKey) || 0) + options.windowMs <= now) {
+      authRateLimitAuditAt.set(auditKey, now);
+      await store.update((database) => {
+        appendAuditEvent(database, {
+          action: "auth_rate_limit_exceeded",
+          metadata: { route: key, clientFingerprint, retryAfterSeconds: retryAfter }
+        });
+        return null;
+      });
+    }
+  }
   send(response, 429, { error: "Too many requests. Try again shortly." }, { "retry-after": String(retryAfter) });
   return true;
 }
@@ -252,6 +288,54 @@ function hash(value) {
 
 function newID() {
   return crypto.randomUUID();
+}
+
+const maximumAuditEvents = 2_000;
+
+function auditIdentity(user) {
+  if (!user) return null;
+  return {
+    userId: String(user.id || "") || null,
+    email: normalizeEmail(user.email) || null
+  };
+}
+
+function safeAuditMetadata(metadata = {}) {
+  return Object.fromEntries(Object.entries(metadata)
+    .filter(([key, value]) => /^[a-z][a-z0-9_]{0,39}$/i.test(key)
+      && ["string", "number", "boolean"].includes(typeof value))
+    .map(([key, value]) => [key, typeof value === "string" ? value.slice(0, 240) : value]));
+}
+
+function appendAuditEvent(database, { action, actor = null, target = null, reason = null, metadata = {} }) {
+  database.auditEvents ||= [];
+  const event = {
+    id: newID(),
+    timestamp: new Date().toISOString(),
+    action: String(action || "unknown").slice(0, 80),
+    actor: auditIdentity(actor),
+    target: auditIdentity(target),
+    reason: String(reason || "").trim().slice(0, 240) || null,
+    metadata: safeAuditMetadata(metadata)
+  };
+  database.auditEvents.push(event);
+  if (database.auditEvents.length > maximumAuditEvents) {
+    database.auditEvents.splice(0, database.auditEvents.length - maximumAuditEvents);
+  }
+  return event;
+}
+
+function recentAuditEvents(database, limit = 50) {
+  return [...(database.auditEvents || [])]
+    .sort((left, right) => String(right.timestamp || "").localeCompare(String(left.timestamp || "")))
+    .slice(0, limit);
+}
+
+function redactDeletedUserAuditIdentity(database, userID) {
+  for (const event of database.auditEvents || []) {
+    if (event.actor?.userId === userID) event.actor.email = null;
+    if (event.target?.userId === userID) event.target.email = null;
+  }
 }
 
 function issueAccessToken(user, sessionID) {
@@ -604,26 +688,10 @@ function adminUserSummary(database, user, sessions = sessionIndex(database)) {
   };
 }
 
-function userAuditEvents(user) {
-  const events = [];
-  const disabledAt = user.disabledAt || user.lastDisabledAt;
-  if (disabledAt) {
-    events.push({
-      type: "disabled",
-      at: disabledAt,
-      actor: user.disabledBy || user.lastDisabledBy || null,
-      reason: user.disabledReason || user.lastDisabledReason || null
-    });
-  }
-  if (user.reenabledAt) {
-    events.push({
-      type: "reenabled",
-      at: user.reenabledAt,
-      actor: user.reenabledBy || null,
-      reason: null
-    });
-  }
-  return events.sort((left, right) => String(right.at || "").localeCompare(String(left.at || "")));
+function userAuditEvents(database, user) {
+  return recentAuditEvents(database, maximumAuditEvents)
+    .filter((event) => event.target?.userId === user.id)
+    .slice(0, 50);
 }
 
 function adminUserDetail(database, userID) {
@@ -633,7 +701,7 @@ function adminUserDetail(database, userID) {
   return {
     ...adminUserSummary(database, user, sessions),
     recentSessions: (sessions.byUser[user.id] || []).slice(0, 20),
-    auditEvents: userAuditEvents(user)
+    auditEvents: userAuditEvents(database, user)
   };
 }
 
@@ -674,7 +742,135 @@ function adminOverview(database) {
     mutationCount: 0
   });
 
-  return { generatedAt: new Date().toISOString(), totals, users: userRows };
+  return {
+    generatedAt: new Date().toISOString(),
+    totals,
+    users: userRows,
+    recentAuditEvents: recentAuditEvents(database, 50)
+  };
+}
+
+function deploymentMetadata() {
+  return {
+    version: packageMetadata.version,
+    buildHash: envValue("DEPLOYMENT_SHA") || generatedDeployment.buildHash || "development",
+    deployedAt: envValue("DEPLOYED_AT") || generatedDeployment.deployedAt || null
+  };
+}
+
+function adminAllowlistStatus() {
+  const sources = [
+    { name: "built-in", configured: defaultAdminEmails.length > 0 },
+    { name: "ADMIN_EMAILS", configured: Boolean(envValue("ADMIN_EMAILS")) },
+    { name: "DAILY_ADMIN_EMAILS", configured: Boolean(envValue("DAILY_ADMIN_EMAILS")) }
+  ];
+  return { entryCount: adminEmails().size, sources };
+}
+
+async function adminRuntimeStatus() {
+  const databaseHealth = await store.health();
+  return {
+    generatedAt: new Date().toISOString(),
+    server: deploymentMetadata(),
+    database: {
+      ok: databaseHealth.ok === true,
+      provider: envValue("DATABASE_URL") ? "postgres" : "json-file"
+    },
+    oauth: {
+      google: {
+        nativeConfigured: Boolean(envValue("GOOGLE_CLIENT_ID")),
+        webConfigured: Boolean(envValue("GOOGLE_WEB_CLIENT_ID"))
+      },
+      apple: {
+        nativeConfigured: Boolean(envValue("APPLE_BUNDLE_ID")),
+        webConfigured: appleWebAuthConfigured()
+      }
+    },
+    monitor: { configured: Boolean(envValue("DAILY_MONITOR_TOKEN") || envValue("MONITOR_TOKEN")) },
+    adminAllowlist: adminAllowlistStatus(),
+    links: {
+      health: "/health",
+      support: "/support.html",
+      privacy: "/privacy.html"
+    }
+  };
+}
+
+function snapshotDate(value = new Date()) {
+  return value.toISOString().replace(/[:.]/g, "-");
+}
+
+function pseudonymousUserID(userID) {
+  return `user-${hash(String(userID || "unknown")).slice(0, 12)}`;
+}
+
+function sanitizedAuditEvent(event) {
+  const scrub = (identity) => identity?.userId
+    ? { userId: pseudonymousUserID(identity.userId), email: null }
+    : null;
+  return { ...event, actor: scrub(event.actor), target: scrub(event.target) };
+}
+
+function buildAdminSnapshot(database, mode) {
+  const generatedAt = new Date().toISOString();
+  const metadata = {
+    format: "ritual-cue-admin-snapshot",
+    formatVersion: 1,
+    mode,
+    generatedAt,
+    server: deploymentMetadata(),
+    excluded: ["authentication sessions", "token values", "secret configuration"]
+  };
+  if (mode === "sanitized") {
+    const sessions = sessionIndex(database);
+    return {
+      metadata,
+      totals: adminOverview(database).totals,
+      users: Object.values(database.users || {}).map((user) => ({
+        id: pseudonymousUserID(user.id),
+        createdAt: user.createdAt || null,
+        disabledAt: user.disabledAt || null,
+        providers: identityProviders(database, user.id),
+        activeSessionCount: sessions.activeCounts[user.id] || 0,
+        ...accountSummary(database.accounts?.[user.id])
+      })),
+      auditEvents: recentAuditEvents(database, maximumAuditEvents).map(sanitizedAuditEvent)
+    };
+  }
+  return {
+    metadata,
+    state: {
+      users: database.users || {},
+      identities: database.identities || {},
+      accounts: database.accounts || {},
+      auditEvents: database.auditEvents || []
+    },
+    sessionSummary: { count: Object.keys(database.sessions || {}).length }
+  };
+}
+
+function buildAdminUserSnapshot(database, userID) {
+  const user = database.users?.[userID];
+  if (!user) return null;
+  return {
+    metadata: {
+      format: "ritual-cue-admin-user-snapshot",
+      formatVersion: 1,
+      generatedAt: new Date().toISOString(),
+      server: deploymentMetadata(),
+      excluded: ["authentication sessions", "provider subject identifiers", "token values"]
+    },
+    user: {
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      createdAt: user.createdAt || null,
+      disabledAt: user.disabledAt || null,
+      providers: identityProviders(database, user.id)
+    },
+    checklist: materializeAccount(database.accounts?.[user.id] || emptyAccount()),
+    auditEvents: userAuditEvents(database, user)
+  };
 }
 
 async function requireAdmin(request, response) {
@@ -1286,20 +1482,38 @@ async function handleAuth(request, response, pathname) {
   }
 
   if (pathname === "/auth/dev" && request.method === "POST") {
-    if (enforceRateLimit(request, response, "auth-dev", { limit: 10, windowMs: 15 * 60_000 })) return true;
+    if (await enforceRateLimit(request, response, "auth-dev", { limit: 10, windowMs: 15 * 60_000 })) return true;
     if (process.env.NODE_ENV === "production") return send(response, 404, { error: "Not found" });
     const auth = await store.update((database) => {
+      const providerID = body.email || "dev@ritualcue.local";
+      const alreadyLinked = Boolean(database.identities?.[`dev:${providerID}`]);
+      const matchingUserExists = Object.values(database.users || {})
+        .some((candidate) => normalizeEmail(candidate.email) === normalizeEmail(body.email || "dev@ritualcue.local"));
       const user = upsertUser(database, "dev", body.email || "dev@ritualcue.local", {
         email: body.email || "dev@ritualcue.local",
         name: body.name || "Local Dev"
       });
+      appendAuditEvent(database, {
+        action: "auth_sign_in",
+        actor: user,
+        target: user,
+        metadata: { provider: "dev", newProviderLink: !alreadyLinked }
+      });
+      if (!alreadyLinked && matchingUserExists) {
+        appendAuditEvent(database, {
+          action: "auth_provider_linked",
+          actor: user,
+          target: user,
+          metadata: { provider: "dev" }
+        });
+      }
       return createSession(database, ensureUserCanSignIn(user));
     });
     return send(response, 200, auth, { "set-cookie": refreshCookie(auth.refreshToken) });
   }
 
   if (pathname === "/auth/google" && request.method === "POST") {
-    if (enforceRateLimit(request, response, "auth-google", { limit: 20, windowMs: 15 * 60_000 })) return true;
+    if (await enforceRateLimit(request, response, "auth-google", { limit: 20, windowMs: 15 * 60_000 })) return true;
     if (!body.idToken) return send(response, 400, { error: "idToken required" });
     const audiences = [process.env.GOOGLE_CLIENT_ID, process.env.GOOGLE_WEB_CLIENT_ID].filter(Boolean);
     if (!audiences.length) return send(response, 503, { error: "Google Sign-In is not configured" });
@@ -1307,18 +1521,35 @@ async function handleAuth(request, response, pathname) {
     const payload = ticket.getPayload();
     if (!payload?.sub || !payload.email) return send(response, 401, { error: "Invalid Google token" });
     const auth = await store.update((database) => {
+      const alreadyLinked = Boolean(database.identities?.[`google:${payload.sub}`]);
+      const matchingUserExists = Object.values(database.users || {})
+        .some((candidate) => normalizeEmail(candidate.email) === normalizeEmail(payload.email));
       const user = upsertUser(database, "google", payload.sub, {
         email: payload.email,
         name: payload.name || payload.email,
         profileImageURL: payload.picture || body.profileImageURL || null
       });
+      appendAuditEvent(database, {
+        action: "auth_sign_in",
+        actor: user,
+        target: user,
+        metadata: { provider: "google", newProviderLink: !alreadyLinked }
+      });
+      if (!alreadyLinked && matchingUserExists) {
+        appendAuditEvent(database, {
+          action: "auth_provider_linked",
+          actor: user,
+          target: user,
+          metadata: { provider: "google" }
+        });
+      }
       return createSession(database, ensureUserCanSignIn(user));
     });
     return send(response, 200, auth, { "set-cookie": refreshCookie(auth.refreshToken) });
   }
 
   if (pathname === "/auth/apple" && request.method === "POST") {
-    if (enforceRateLimit(request, response, "auth-apple", { limit: 20, windowMs: 15 * 60_000 })) return true;
+    if (await enforceRateLimit(request, response, "auth-apple", { limit: 20, windowMs: 15 * 60_000 })) return true;
     const identityToken = body.identityToken || (body.authorizationCode
       ? await exchangeAppleAuthorizationCode(body.authorizationCode)
       : null);
@@ -1336,14 +1567,31 @@ async function handleAuth(request, response, pathname) {
     const email = payload.email || `${payload.sub}@privaterelay.appleid.com`;
     const providedName = [body.fullName?.givenName, body.fullName?.familyName].filter(Boolean).join(" ");
     const auth = await store.update((database) => {
+      const alreadyLinked = Boolean(database.identities?.[`apple:${payload.sub}`]);
+      const matchingUserExists = Object.values(database.users || {})
+        .some((candidate) => normalizeEmail(candidate.email) === normalizeEmail(email));
       const user = upsertUser(database, "apple", payload.sub, { email, name: providedName || email });
+      appendAuditEvent(database, {
+        action: "auth_sign_in",
+        actor: user,
+        target: user,
+        metadata: { provider: "apple", newProviderLink: !alreadyLinked }
+      });
+      if (!alreadyLinked && matchingUserExists) {
+        appendAuditEvent(database, {
+          action: "auth_provider_linked",
+          actor: user,
+          target: user,
+          metadata: { provider: "apple" }
+        });
+      }
       return createSession(database, ensureUserCanSignIn(user));
     });
     return send(response, 200, auth, { "set-cookie": refreshCookie(auth.refreshToken) });
   }
 
   if (pathname === "/auth/refresh" && request.method === "POST") {
-    if (enforceRateLimit(request, response, "auth-refresh", { limit: 60, windowMs: 15 * 60_000 })) return true;
+    if (await enforceRateLimit(request, response, "auth-refresh", { limit: 60, windowMs: 15 * 60_000 })) return true;
     const cookieToken = parseCookies(request)[refreshCookieName];
     if (rejectCrossOriginCookieAuth(request, response, body, cookieToken)) return true;
     const refreshToken = refreshTokenFromBody(body) || cookieToken || "";
@@ -1376,7 +1624,8 @@ async function handleAuth(request, response, pathname) {
 
 const server = http.createServer(async (request, response) => {
   try {
-    const pathname = new URL(request.url, "http://localhost").pathname;
+    const requestURL = new URL(request.url, "http://localhost");
+    const pathname = requestURL.pathname;
     if (request.method === "GET" && pathname === "/health") {
       await store.health();
       return send(response, 200, { ok: true });
@@ -1390,6 +1639,50 @@ const server = http.createServer(async (request, response) => {
       if (!admin) return;
       return send(response, 200, adminOverview(admin.database));
     }
+    if (request.method === "GET" && pathname === "/api/admin/status") {
+      const admin = await requireAdmin(request, response);
+      if (!admin) return;
+      return send(response, 200, await adminRuntimeStatus());
+    }
+    if (request.method === "GET" && pathname === "/api/admin/snapshot") {
+      const admin = await requireAdmin(request, response);
+      if (!admin) return;
+      if (await enforceRateLimit(request, response, "api-admin-snapshot", { limit: 5, windowMs: 60 * 60_000 })) return;
+      const mode = requestURL.searchParams.get("mode") === "full" ? "full" : "sanitized";
+      const snapshot = await store.update((database) => {
+        const actor = database.users?.[admin.user.id] || admin.user;
+        appendAuditEvent(database, {
+          action: "admin_snapshot_downloaded",
+          actor,
+          target: null,
+          metadata: { mode }
+        });
+        return buildAdminSnapshot(database, mode);
+      });
+      return sendDownload(response, snapshot, `ritual-cue-${mode}-snapshot-${snapshotDate()}.json`);
+    }
+    const adminUserSnapshotMatch = pathname.match(/^\/api\/admin\/users\/([^/]+)\/snapshot$/);
+    if (request.method === "GET" && adminUserSnapshotMatch) {
+      const admin = await requireAdmin(request, response);
+      if (!admin) return;
+      if (await enforceRateLimit(request, response, "api-admin-user-snapshot", { limit: 10, windowMs: 60 * 60_000 })) return;
+      const userID = decodeURIComponent(adminUserSnapshotMatch[1]);
+      const snapshot = await store.update((database) => {
+        const target = database.users?.[userID];
+        if (!target) return null;
+        const actor = database.users?.[admin.user.id] || admin.user;
+        appendAuditEvent(database, {
+          action: "admin_user_snapshot_downloaded",
+          actor,
+          target,
+          metadata: { mode: "user" }
+        });
+        return buildAdminUserSnapshot(database, userID);
+      });
+      return snapshot
+        ? sendDownload(response, snapshot, `ritual-cue-user-snapshot-${snapshotDate()}.json`)
+        : send(response, 404, { error: "User not found" });
+    }
     const adminUserMatch = pathname.match(/^\/api\/admin\/users\/([^/]+)$/);
     if (request.method === "GET" && adminUserMatch) {
       const admin = await requireAdmin(request, response);
@@ -1398,7 +1691,7 @@ const server = http.createServer(async (request, response) => {
       return detail ? send(response, 200, detail) : send(response, 404, { error: "User not found" });
     }
     if (request.method === "POST" && pathname === "/api/monitor/sync") {
-      if (enforceRateLimit(request, response, "api-monitor-sync", { limit: 30, windowMs: 15 * 60_000 })) return;
+      if (await enforceRateLimit(request, response, "api-monitor-sync", { limit: 30, windowMs: 15 * 60_000 })) return;
       if (!hasMonitorToken(request)) return send(response, 404, { error: "Not found" });
       await readJSON(request);
       const result = await store.update((database) => runMonitorSyncProbe(database));
@@ -1406,7 +1699,7 @@ const server = http.createServer(async (request, response) => {
     }
     const disableMatch = pathname.match(/^\/api\/admin\/users\/([^/]+)\/disable$/);
     if (request.method === "POST" && disableMatch) {
-      if (enforceRateLimit(request, response, "api-admin-disable", { limit: 20, windowMs: 15 * 60_000 })) return;
+      if (await enforceRateLimit(request, response, "api-admin-disable", { limit: 20, windowMs: 15 * 60_000 })) return;
       const admin = await requireAdmin(request, response);
       if (!admin) return;
       const userID = decodeURIComponent(disableMatch[1]);
@@ -1423,13 +1716,19 @@ const server = http.createServer(async (request, response) => {
         for (const [tokenHash, session] of Object.entries(database.sessions || {})) {
           if (session.userId === userID) delete database.sessions[tokenHash];
         }
+        appendAuditEvent(database, {
+          action: "account_disabled",
+          actor: database.users?.[admin.user.id] || admin.user,
+          target: user,
+          reason: user.disabledReason
+        });
         return adminUserDetail(database, userID);
       });
       return result ? send(response, 200, { user: result }) : send(response, 404, { error: "User not found" });
     }
     const reenableMatch = pathname.match(/^\/api\/admin\/users\/([^/]+)\/reenable$/);
     if (request.method === "POST" && reenableMatch) {
-      if (enforceRateLimit(request, response, "api-admin-reenable", { limit: 20, windowMs: 15 * 60_000 })) return;
+      if (await enforceRateLimit(request, response, "api-admin-reenable", { limit: 20, windowMs: 15 * 60_000 })) return;
       const admin = await requireAdmin(request, response);
       if (!admin) return;
       const userID = decodeURIComponent(reenableMatch[1]);
@@ -1446,12 +1745,17 @@ const server = http.createServer(async (request, response) => {
         delete user.disabledReason;
         user.reenabledAt = new Date().toISOString();
         user.reenabledBy = admin.user.email;
+        appendAuditEvent(database, {
+          action: "account_reenabled",
+          actor: database.users?.[admin.user.id] || admin.user,
+          target: user
+        });
         return adminUserDetail(database, userID);
       });
       return result ? send(response, 200, { user: result }) : send(response, 404, { error: "User not found" });
     }
     if (request.method === "POST" && pathname === "/api/sync") {
-      if (enforceRateLimit(request, response, "api-sync", { limit: 240, windowMs: 15 * 60_000 })) return;
+      if (await enforceRateLimit(request, response, "api-sync", { limit: 240, windowMs: 15 * 60_000 })) return;
       const database = await store.read();
       const authCheck = requireActiveUser(database, request);
       if (authCheck.error) return sendAuthError(response, authCheck.error);
@@ -1465,26 +1769,28 @@ const server = http.createServer(async (request, response) => {
       return send(response, 200, result);
     }
     if (request.method === "GET" && pathname === "/api/export") {
-      if (enforceRateLimit(request, response, "api-export", { limit: 30, windowMs: 15 * 60_000 })) return;
-      const database = await store.read();
-      const auth = requireActiveUser(database, request);
-      if (auth.error) return sendAuthError(response, auth.error);
-      const account = database.accounts[auth.claims.userId] || {
-        items: {},
-        groups: {},
-        appliedMutations: {},
-        eveningReminder: null
-      };
-      return send(response, 200, {
-        exportedAt: new Date().toISOString(),
-        user: auth.user,
-        checklist: materializeAccount(account)
-      }, {
+      if (await enforceRateLimit(request, response, "api-export", { limit: 30, windowMs: 15 * 60_000 })) return;
+      const exported = await store.update((database) => {
+        const auth = requireActiveUser(database, request);
+        if (auth.error) throw Object.assign(new Error(auth.error.message), { status: auth.error.status, quiet: true });
+        const account = database.accounts[auth.claims.userId] || emptyAccount();
+        appendAuditEvent(database, {
+          action: "account_export_requested",
+          actor: auth.user,
+          target: auth.user
+        });
+        return {
+          exportedAt: new Date().toISOString(),
+          user: auth.user,
+          checklist: materializeAccount(account)
+        };
+      });
+      return send(response, 200, exported, {
         "content-disposition": "attachment; filename=\"ritual-cue-export.json\""
       });
     }
     if (request.method === "POST" && pathname === "/api/import") {
-      if (enforceRateLimit(request, response, "api-import", { limit: 10, windowMs: 60 * 60_000 })) return;
+      if (await enforceRateLimit(request, response, "api-import", { limit: 10, windowMs: 60 * 60_000 })) return;
       const database = await store.read();
       const authCheck = requireActiveUser(database, request);
       if (authCheck.error) return sendAuthError(response, authCheck.error);
@@ -1499,10 +1805,11 @@ const server = http.createServer(async (request, response) => {
       return send(response, 200, { ...result, acceptedMutationIDs: [] });
     }
     if (request.method === "DELETE" && pathname === "/api/account") {
-      if (enforceRateLimit(request, response, "api-delete-account", { limit: 5, windowMs: 60 * 60_000 })) return;
+      if (await enforceRateLimit(request, response, "api-delete-account", { limit: 5, windowMs: 60 * 60_000 })) return;
       await store.update((database) => {
         const auth = requireActiveUser(database, request);
         if (auth.error) throw Object.assign(new Error(auth.error.message), { status: auth.error.status, quiet: true });
+        const deletedUser = { ...auth.user };
         delete database.accounts[auth.claims.userId];
         delete database.users[auth.claims.userId];
         for (const [identity, userID] of Object.entries(database.identities || {})) {
@@ -1511,6 +1818,13 @@ const server = http.createServer(async (request, response) => {
         for (const [tokenHash, session] of Object.entries(database.sessions || {})) {
           if (session.userId === auth.claims.userId) delete database.sessions[tokenHash];
         }
+        appendAuditEvent(database, {
+          action: "account_deleted",
+          actor: deletedUser,
+          target: deletedUser,
+          reason: "User-requested account deletion"
+        });
+        redactDeletedUserAuditIdentity(database, auth.claims.userId);
         return null;
       });
       return noContent(response, { "set-cookie": clearRefreshCookie() });

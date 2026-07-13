@@ -53,6 +53,14 @@ Provider tokens are exchanged for Ritual Cue's own short-lived access token and 
 
 On the web, the rotating refresh token is stored in an `HttpOnly` cookie so the user stays signed in without exposing the refresh token to JavaScript. The iOS app stores refresh tokens in Keychain and is designed to keep users signed in across app launches.
 
+## Admin operations
+
+The admin dashboard at `/admin` shows the deployed server version and commit, deployment time, database health, OAuth configuration states, monitor configuration, admin-allowlist sources, and links to public health/support/privacy checks. It never returns configuration values or token material.
+
+Admins can download a sanitized operational snapshot, a full app-state snapshot, or a single user's support snapshot. Sanitized snapshots pseudonymize users and omit checklist content. Full and per-user snapshots can contain user/checklist data, but all snapshot modes exclude authentication sessions, refresh-token hashes, token values, and secret configuration. Downloads are rate-limited and audited.
+
+Audit events are stored with the app state in Postgres and retained across server restarts. The recent-event panel records admin disable/re-enable operations, account exports/deletions, sign-ins/provider links, authentication rate-limit spikes, and admin snapshot downloads without recording credentials or raw client IP addresses. When an account is deleted, its identifier remains on the deletion trail but email addresses are removed from all retained events for that user.
+
 ## Privacy and account management
 
 Ritual Cue stores checklist items, groups, completion history, reminder settings, sync metadata, and account identity fields returned by Google or Apple. The iOS app keeps an offline cache in app documents storage, and the web app keeps an offline cache in browser storage.

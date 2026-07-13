@@ -95,7 +95,7 @@ test("serves the public landing page, web app, and auth configuration", async ()
   const adminHTML = await admin.text();
   assert.match(adminHTML, /Ritual Cue Admin/);
   assert.match(adminHTML, /https:\/\/accounts\.google\.com\/gsi\/client/);
-  assert.match(adminHTML, /admin\.js\?v=20260705-admin-user-detail/);
+  assert.match(adminHTML, /admin\.js\?v=20260713-admin-operations/);
 
   const config = await fetch(`${baseURL}/auth/config`);
   assert.equal(config.status, 200);
@@ -561,7 +561,10 @@ test("admin users can view stats and disable viewer accounts", async () => {
     assert.equal(detailPayload.recentSessions.length, 1);
     assert.equal(Object.hasOwn(detailPayload.recentSessions[0], "id"), false);
     assert.equal(Object.hasOwn(detailPayload.recentSessions[0], "tokenHash"), false);
-    assert.deepEqual(detailPayload.auditEvents, []);
+    assert.equal(detailPayload.auditEvents[0].action, "auth_sign_in");
+    assert.equal(detailPayload.auditEvents[0].actor.email, viewerEmail);
+    assert.equal(detailPayload.auditEvents[0].target.userId, viewer.id);
+    assert.ok(detailPayload.auditEvents[0].timestamp);
 
     const disabled = await fetch(`${baseURL}/api/admin/users/${viewer.id}/disable`, {
       method: "POST",
@@ -575,7 +578,10 @@ test("admin users can view stats and disable viewer accounts", async () => {
     const disabledPayload = await disabled.json();
     assert.equal(disabledPayload.user.disabledReason, "test disable");
     assert.equal(disabledPayload.user.sessionCount, 0);
-    assert.equal(disabledPayload.user.auditEvents[0].type, "disabled");
+    assert.equal(disabledPayload.user.auditEvents[0].action, "account_disabled");
+    assert.equal(disabledPayload.user.auditEvents[0].actor.email, adminEmail);
+    assert.equal(disabledPayload.user.auditEvents[0].target.userId, viewer.id);
+    assert.equal(disabledPayload.user.auditEvents[0].reason, "test disable");
 
     const afterDisable = await fetch(`${baseURL}/auth/me`, {
       headers: { authorization: `Bearer ${viewerAuth.token}` }
@@ -609,8 +615,10 @@ test("admin users can view stats and disable viewer accounts", async () => {
     assert.equal(reenabledPayload.user.disabledReason, null);
     assert.equal(reenabledPayload.user.reenabledBy, adminEmail);
     assert.ok(reenabledPayload.user.reenabledAt);
-    assert.equal(reenabledPayload.user.auditEvents[0].type, "reenabled");
-    assert.equal(reenabledPayload.user.auditEvents[1].type, "disabled");
+    assert.equal(reenabledPayload.user.auditEvents[0].action, "account_reenabled");
+    assert.equal(reenabledPayload.user.auditEvents[0].actor.email, adminEmail);
+    assert.equal(reenabledPayload.user.auditEvents[0].target.userId, viewer.id);
+    assert.equal(reenabledPayload.user.auditEvents[1].action, "account_disabled");
 
     const afterReenableLogin = await fetch(`${baseURL}/auth/dev`, {
       method: "POST",
@@ -625,6 +633,141 @@ test("admin users can view stats and disable viewer accounts", async () => {
     assert.equal(afterReenableMe.status, 200);
   } finally {
     restoreEnv("ADMIN_EMAILS", previousAdminEmails);
+    resetRateLimits();
+  }
+});
+
+test("admin operations expose redacted runtime status and audited snapshots", async () => {
+  const suffix = crypto.randomUUID();
+  const adminEmail = `operations-admin-${suffix}@ritualcue.local`;
+  const viewerEmail = `operations-viewer-${suffix}@ritualcue.local`;
+  const previous = Object.fromEntries([
+    "ADMIN_EMAILS", "DEPLOYMENT_SHA", "DEPLOYED_AT", "GOOGLE_CLIENT_ID", "GOOGLE_WEB_CLIENT_ID",
+    "APPLE_BUNDLE_ID", "APPLE_WEB_CLIENT_ID", "APPLE_TEAM_ID", "APPLE_WEB_KEY_ID",
+    "APPLE_WEB_PRIVATE_KEY_BASE64", "DAILY_MONITOR_TOKEN"
+  ].map((name) => [name, process.env[name]]));
+  process.env.ADMIN_EMAILS = adminEmail;
+  process.env.DEPLOYMENT_SHA = "abc123deployment";
+  process.env.DEPLOYED_AT = "2026-07-13T18:00:00.000Z";
+  process.env.GOOGLE_CLIENT_ID = "google-native-client-secret-value";
+  process.env.GOOGLE_WEB_CLIENT_ID = "google-web-client-secret-value";
+  process.env.APPLE_BUNDLE_ID = "com.example.ritualcue";
+  process.env.APPLE_WEB_CLIENT_ID = "com.example.ritualcue.web";
+  process.env.APPLE_TEAM_ID = "SECRETTEAM";
+  process.env.APPLE_WEB_KEY_ID = "SECRETKEY";
+  process.env.APPLE_WEB_PRIVATE_KEY_BASE64 = Buffer.from("secret-private-key").toString("base64");
+  process.env.DAILY_MONITOR_TOKEN = "secret-monitor-token";
+
+  try {
+    const admin = await devLogin(adminEmail, "Operations Admin");
+    const viewer = await devLogin(viewerEmail, "Operations Viewer");
+    await syncDevice(viewer.token, `snapshot-${suffix}`, [{
+      id: `snapshot-create-${suffix}`,
+      itemID: `snapshot-item-${suffix}`,
+      kind: "upsert",
+      stamp: "2026-07-13T18:00:00.000Z",
+      changedFields: ["title", "createdAt"],
+      item: { title: "Snapshot checklist content", createdAt: "2026-07-13T18:00:00.000Z" }
+    }]);
+
+    const unauthorized = await fetch(`${baseURL}/api/admin/snapshot`);
+    assert.equal(unauthorized.status, 401);
+    const forbidden = await fetch(`${baseURL}/api/admin/snapshot`, {
+      headers: { authorization: `Bearer ${viewer.token}` }
+    });
+    assert.equal(forbidden.status, 403);
+
+    const status = await fetch(`${baseURL}/api/admin/status`, {
+      headers: { authorization: `Bearer ${admin.token}` }
+    });
+    assert.equal(status.status, 200);
+    const statusPayload = await status.json();
+    assert.equal(statusPayload.server.version, "1.0.0");
+    assert.equal(statusPayload.server.buildHash, "abc123deployment");
+    assert.equal(statusPayload.server.deployedAt, "2026-07-13T18:00:00.000Z");
+    assert.equal(statusPayload.database.ok, true);
+    assert.equal(statusPayload.oauth.google.nativeConfigured, true);
+    assert.equal(statusPayload.oauth.google.webConfigured, true);
+    assert.equal(statusPayload.oauth.apple.nativeConfigured, true);
+    assert.equal(statusPayload.oauth.apple.webConfigured, true);
+    assert.equal(statusPayload.monitor.configured, true);
+    assert.ok(statusPayload.adminAllowlist.sources.some((source) => source.name === "ADMIN_EMAILS" && source.configured));
+    const serializedStatus = JSON.stringify(statusPayload);
+    assert.doesNotMatch(serializedStatus, /google-native-client-secret-value|secret-private-key|secret-monitor-token|SECRETKEY/);
+
+    const sanitized = await fetch(`${baseURL}/api/admin/snapshot?mode=sanitized`, {
+      headers: { authorization: `Bearer ${admin.token}` }
+    });
+    assert.equal(sanitized.status, 200);
+    assert.match(sanitized.headers.get("content-disposition"), /ritual-cue-sanitized-snapshot-/);
+    const sanitizedPayload = await sanitized.json();
+    assert.equal(sanitizedPayload.metadata.mode, "sanitized");
+    assert.ok(sanitizedPayload.users.some((user) => user.id.startsWith("user-") && !user.email));
+    const serializedSanitized = JSON.stringify(sanitizedPayload);
+    assert.doesNotMatch(serializedSanitized, new RegExp(adminEmail.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    assert.doesNotMatch(serializedSanitized, new RegExp(viewerEmail.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    assert.doesNotMatch(serializedSanitized, /secret-monitor-token|secret-private-key/);
+    assert.equal(Object.hasOwn(sanitizedPayload, "sessions"), false);
+
+    const full = await fetch(`${baseURL}/api/admin/snapshot?mode=full`, {
+      headers: { authorization: `Bearer ${admin.token}` }
+    });
+    assert.equal(full.status, 200);
+    assert.match(full.headers.get("content-disposition"), /ritual-cue-full-snapshot-/);
+    const fullPayload = await full.json();
+    assert.equal(fullPayload.metadata.mode, "full");
+    assert.equal(fullPayload.state.users[viewer.user.id].email, viewerEmail);
+    assert.ok(fullPayload.state.accounts[viewer.user.id]);
+    assert.equal(Object.hasOwn(fullPayload.state, "sessions"), false);
+    assert.doesNotMatch(JSON.stringify(fullPayload), new RegExp(admin.refreshToken.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    assert.doesNotMatch(JSON.stringify(fullPayload), new RegExp(viewer.refreshToken.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+
+    const userSnapshot = await fetch(`${baseURL}/api/admin/users/${viewer.user.id}/snapshot`, {
+      headers: { authorization: `Bearer ${admin.token}` }
+    });
+    assert.equal(userSnapshot.status, 200);
+    assert.match(userSnapshot.headers.get("content-disposition"), /ritual-cue-user-snapshot-/);
+    const userPayload = await userSnapshot.json();
+    assert.equal(userPayload.user.email, viewerEmail);
+    assert.equal(userPayload.checklist.items[0].title, "Snapshot checklist content");
+    assert.equal(Object.hasOwn(userPayload, "sessions"), false);
+
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const withinLimit = await fetch(`${baseURL}/api/admin/snapshot?mode=sanitized`, {
+        headers: { authorization: `Bearer ${admin.token}` }
+      });
+      assert.equal(withinLimit.status, 200);
+    }
+    const snapshotRateLimited = await fetch(`${baseURL}/api/admin/snapshot?mode=sanitized`, {
+      headers: { authorization: `Bearer ${admin.token}` }
+    });
+    assert.equal(snapshotRateLimited.status, 429);
+    assert.ok(Number(snapshotRateLimited.headers.get("retry-after")) > 0);
+
+    let spikeResponse;
+    for (let attempt = 0; attempt < 21; attempt += 1) {
+      spikeResponse = await fetch(`${baseURL}/auth/google`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({})
+      });
+    }
+    assert.equal(spikeResponse.status, 429);
+
+    const overview = await fetch(`${baseURL}/api/admin/overview`, {
+      headers: { authorization: `Bearer ${admin.token}` }
+    });
+    const auditEvents = (await overview.json()).recentAuditEvents;
+    const fullAudit = auditEvents.find((event) => event.action === "admin_snapshot_downloaded" && event.metadata.mode === "full");
+    assert.equal(fullAudit.actor.email, adminEmail);
+    assert.equal(fullAudit.target, null);
+    const userAudit = auditEvents.find((event) => event.action === "admin_user_snapshot_downloaded" && event.target?.userId === viewer.user.id);
+    assert.equal(userAudit.actor.email, adminEmail);
+    const authSpike = auditEvents.find((event) => event.action === "auth_rate_limit_exceeded" && event.metadata.route === "auth-google");
+    assert.equal(authSpike.actor, null);
+    assert.match(authSpike.metadata.clientFingerprint, /^[a-f0-9]{16}$/);
+  } finally {
+    for (const [name, value] of Object.entries(previous)) restoreEnv(name, value);
     resetRateLimits();
   }
 });
@@ -674,6 +817,18 @@ test("authenticated users can export and delete account data", async () => {
     headers: { authorization: `Bearer ${auth.token}` }
   });
   assert.equal(afterDelete.status, 404);
+
+  const admin = await devLogin("jgreco@gmail.com", "Audit Admin");
+  const overview = await fetch(`${baseURL}/api/admin/overview`, {
+    headers: { authorization: `Bearer ${admin.token}` }
+  });
+  assert.equal(overview.status, 200);
+  const deletion = (await overview.json()).recentAuditEvents.find((event) => (
+    event.action === "account_deleted" && event.target?.userId === auth.user.id
+  ));
+  assert.equal(deletion.actor.email, null);
+  assert.equal(deletion.target.email, null);
+  assert.equal(deletion.reason, "User-requested account deletion");
 });
 
 test("authenticated users can import valid exports and reject malformed exports", async () => {

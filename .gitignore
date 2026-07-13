@@ -21,6 +21,7 @@ npm-debug.log*
 .env.*
 !.env.example
 server/data/
+server/src/deployment.json
 
 # Local tooling
 .idea/

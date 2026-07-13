@@ -6,6 +6,7 @@
     token: "",
     user: null,
     overview: null,
+    runtimeStatus: null,
     selectedUserID: "",
     userDetail: null,
     detailLoading: false,
@@ -131,7 +132,10 @@
     render();
     try {
       if (!state.token) await restoreSession();
-      state.overview = await request("/api/admin/overview");
+      [state.overview, state.runtimeStatus] = await Promise.all([
+        request("/api/admin/overview"),
+        request("/api/admin/status")
+      ]);
       if (state.selectedUserID) {
         try {
           state.userDetail = await request(`/api/admin/users/${encodeURIComponent(state.selectedUserID)}`);
@@ -169,11 +173,62 @@
   function renderAuditEvents(events = []) {
     if (!events.length) return `<li class="admin-muted">No audit events</li>`;
     return events.map((event) => {
-      const label = event.type === "reenabled" ? "Re-enabled" : "Disabled";
-      const actor = event.actor ? ` by ${escapeHTML(event.actor)}` : "";
+      const labels = {
+        account_disabled: "Account disabled",
+        account_reenabled: "Account re-enabled",
+        account_deleted: "Account deleted",
+        account_export_requested: "Export requested",
+        auth_sign_in: "Signed in",
+        auth_provider_linked: "Sign-in provider linked",
+        auth_rate_limit_exceeded: "Authentication rate limit exceeded",
+        admin_snapshot_downloaded: "Admin snapshot downloaded",
+        admin_user_snapshot_downloaded: "User snapshot downloaded"
+      };
+      const label = labels[event.action] || String(event.action || "Audit event").replaceAll("_", " ");
+      const actor = event.actor?.email ? ` by ${escapeHTML(event.actor.email)}` : "";
+      const target = event.target?.email ? `<small>Target: ${escapeHTML(event.target.email)}</small>` : "";
       const reason = event.reason ? `<small>${escapeHTML(event.reason)}</small>` : "";
-      return `<li><strong>${label}</strong><span>${formatDate(event.at)}${actor}</span>${reason}</li>`;
+      return `<li><strong>${escapeHTML(label)}</strong><span>${formatDate(event.timestamp)}${actor}</span>${target}${reason}</li>`;
     }).join("");
+  }
+
+  function configuredBadge(configured) {
+    return `<span class="admin-badge ${configured ? "ok" : "danger"}">${configured ? "Configured" : "Missing"}</span>`;
+  }
+
+  function renderRuntimeStatus() {
+    const status = state.runtimeStatus;
+    if (!status) return "";
+    const allowlistSources = (status.adminAllowlist?.sources || [])
+      .filter((source) => source.configured)
+      .map((source) => source.name)
+      .join(", ") || "None";
+    return `<section class="admin-operations" aria-label="Production status">
+      <div class="admin-section-head">
+        <div><p class="eyebrow">Production</p><h2>Deployment status</h2></div>
+        <div class="admin-snapshot-actions">
+          <button class="mini-button accent" data-action="snapshot" data-mode="sanitized">Download sanitized snapshot</button>
+          <button class="mini-button" data-action="snapshot" data-mode="full">Download full snapshot</button>
+        </div>
+      </div>
+      <div class="admin-config-grid">
+        ${renderDetailMetric("Server version", status.server?.version || "Unknown")}
+        ${renderDetailMetric("Build", status.server?.buildHash || "Unknown")}
+        ${renderDetailMetric("Deployed", formatDate(status.server?.deployedAt))}
+        ${renderDetailMetric("Database", `${status.database?.provider || "Unknown"} · ${status.database?.ok ? "Healthy" : "Unavailable"}`)}
+        <div class="admin-detail-metric"><span>Google native</span>${configuredBadge(status.oauth?.google?.nativeConfigured)}</div>
+        <div class="admin-detail-metric"><span>Google web</span>${configuredBadge(status.oauth?.google?.webConfigured)}</div>
+        <div class="admin-detail-metric"><span>Apple native</span>${configuredBadge(status.oauth?.apple?.nativeConfigured)}</div>
+        <div class="admin-detail-metric"><span>Apple web</span>${configuredBadge(status.oauth?.apple?.webConfigured)}</div>
+        <div class="admin-detail-metric"><span>Monitor</span>${configuredBadge(status.monitor?.configured)}</div>
+        ${renderDetailMetric("Admin allowlist", `${status.adminAllowlist?.entryCount || 0} via ${allowlistSources}`)}
+      </div>
+      <nav class="admin-status-links" aria-label="Production checks">
+        <a href="${escapeHTML(status.links?.health || "/health")}" target="_blank" rel="noreferrer">Health</a>
+        <a href="${escapeHTML(status.links?.support || "/support.html")}" target="_blank" rel="noreferrer">Support</a>
+        <a href="${escapeHTML(status.links?.privacy || "/privacy.html")}" target="_blank" rel="noreferrer">Privacy</a>
+      </nav>
+    </section>`;
   }
 
   function renderSessions(sessions = []) {
@@ -202,6 +257,7 @@
           <small>${escapeHTML(user.id)}</small>
         </div>
         <div class="admin-row-actions">
+          <button class="mini-button accent" data-action="user-snapshot" data-id="${escapeHTML(user.id)}">Download snapshot</button>
           ${renderActionButtons(user, { includeDetails: false })}
           <button class="mini-button" data-action="close-detail">Close</button>
         </div>
@@ -295,6 +351,8 @@
         ${renderStat("Mutations", overview.totals.mutationCount)}
       </section>
 
+      ${renderRuntimeStatus()}
+
       <div class="admin-toolbar">
         <label class="search-field">
           <input data-search value="${escapeHTML(state.search)}" placeholder="Search users">
@@ -319,6 +377,10 @@
         </table>
       </section>
       ${renderUserDetail()}
+      <section class="admin-audit-log" aria-label="Recent audit events">
+        <div class="admin-section-head"><div><p class="eyebrow">Operations</p><h2>Recent audit events</h2></div></div>
+        <ul>${renderAuditEvents(overview.recentAuditEvents)}</ul>
+      </section>
     </section>`;
   }
 
@@ -333,6 +395,38 @@
       return;
     }
     renderDashboard();
+  }
+
+  async function download(path) {
+    const response = await fetch(path, {
+      headers: state.token ? { Authorization: `Bearer ${state.token}` } : {}
+    });
+    if (!response.ok) {
+      let message = `HTTP ${response.status}`;
+      try { message = (await response.json()).error || message; } catch {}
+      throw new Error(message);
+    }
+    const disposition = response.headers.get("content-disposition") || "";
+    const filename = disposition.match(/filename="([^"]+)"/)?.[1] || "ritual-cue-snapshot.json";
+    const url = URL.createObjectURL(await response.blob());
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    await loadOverview();
+  }
+
+  async function downloadSnapshot(mode) {
+    if (mode === "full" && !confirm("Download a full app-state snapshot containing user account and checklist data?")) return;
+    await download(`/api/admin/snapshot?mode=${encodeURIComponent(mode)}`);
+  }
+
+  async function downloadUserSnapshot(id) {
+    if (!confirm("Download this user's account and checklist snapshot for support?")) return;
+    await download(`/api/admin/users/${encodeURIComponent(id)}/snapshot`);
   }
 
   async function disableUser(id) {
@@ -377,6 +471,18 @@
     }
     if (target.dataset.action === "view") {
       void viewUser(target.dataset.id);
+    }
+    if (target.dataset.action === "snapshot") {
+      void downloadSnapshot(target.dataset.mode || "sanitized").catch((error) => {
+        state.error = error.message;
+        render();
+      });
+    }
+    if (target.dataset.action === "user-snapshot") {
+      void downloadUserSnapshot(target.dataset.id).catch((error) => {
+        state.error = error.message;
+        render();
+      });
     }
     if (target.dataset.action === "apple") {
       void signInApple().catch((error) => {

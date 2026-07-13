@@ -216,6 +216,19 @@ h1 { margin: 0; font-size: clamp(48px, 14vw, 68px); line-height: .96; letter-spa
 .admin-detail-lists li { display: grid; gap: 3px; min-height: 52px; padding: 10px 12px; border-radius: 8px; background: #fbfaf8; }
 .admin-detail-lists li span, .admin-detail-lists li small { color: var(--muted); font-size: 13px; }
 .admin-muted { color: var(--muted); }
+.admin-operations, .admin-audit-log { display: grid; gap: 16px; margin: 18px 0; padding: 18px; border-radius: 8px; background: white; box-shadow: 0 8px 28px rgba(25,25,40,.025); }
+.admin-section-head { display: flex; align-items: start; justify-content: space-between; gap: 16px; }
+.admin-section-head h2 { margin: 0; font-size: 24px; letter-spacing: -.02em; }
+.admin-section-head .eyebrow { margin-bottom: 5px; font-size: 11px; }
+.admin-snapshot-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.admin-config-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; }
+.admin-config-grid .admin-detail-metric { min-height: 86px; }
+.admin-config-grid .admin-badge { justify-self: start; }
+.admin-status-links { display: flex; flex-wrap: wrap; gap: 14px; }
+.admin-status-links a { color: var(--accent); font-size: 13px; font-weight: 800; }
+.admin-audit-log ul { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 0; padding: 0; list-style: none; }
+.admin-audit-log li { display: grid; gap: 3px; min-height: 70px; padding: 12px; border-radius: 8px; background: #fbfaf8; }
+.admin-audit-log li span, .admin-audit-log li small { color: var(--muted); font-size: 13px; }
 
 @media (min-width: 760px) {
   .shell { padding-top: 56px; }
@@ -231,4 +244,11 @@ h1 { margin: 0; font-size: clamp(48px, 14vw, 68px); line-height: .96; letter-spa
   .admin-toolbar .search-field { width: 100%; }
   .admin-detail-head { display: grid; }
   .admin-detail-grid, .admin-detail-lists { grid-template-columns: 1fr; }
+  .admin-section-head { display: grid; }
+  .admin-snapshot-actions { justify-content: flex-start; }
+  .admin-config-grid, .admin-audit-log ul { grid-template-columns: 1fr; }
+}
+
+@media (min-width: 461px) and (max-width: 900px) {
+  .admin-config-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
