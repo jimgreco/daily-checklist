@@ -78,6 +78,60 @@ test("shows the sign-in gate and serves browser-compatible security headers", as
   await expect(page.getByRole("button", { name: "Local dev sign in" })).toBeVisible();
 });
 
+test("expired browser sessions preserve cached routines and pending changes for reauthentication", async ({ page }) => {
+  const cachedItem = {
+    id: "cached-session-item",
+    title: "Preserved routine",
+    schedule: "everyDay",
+    completedDates: [],
+    completionCounts: {},
+    skippedDates: [],
+    openDates: [],
+    createdAt: "2026-07-01T12:00:00.000Z",
+    startDate: "2026-07-01T12:00:00.000Z",
+    groupID: null,
+    sortOrder: 0,
+    pauseWindows: []
+  };
+  const pendingMutation = {
+    id: "cached-session-mutation",
+    kind: "completion",
+    stamp: "2026-07-13T12:00:00.000Z",
+    itemID: cachedItem.id,
+    completionDate: "2026-07-13",
+    completed: true,
+    completionCount: 1
+  };
+  await page.addInitScript(({ item, mutation }) => {
+    localStorage.setItem("dailyWeb.user", JSON.stringify({
+      id: "expired-session-user",
+      email: "expired@ritualcue.local",
+      name: "Expired Session"
+    }));
+    localStorage.setItem("dailyWeb.accountID", "expired-session-user");
+    localStorage.setItem("dailyWeb.cache", JSON.stringify({ items: [item], groups: [] }));
+    localStorage.setItem("dailyWeb.pending", JSON.stringify([mutation]));
+  }, { item: cachedItem, mutation: pendingMutation });
+  await page.route("**/auth/refresh", (route) => route.fulfill({
+    status: 401,
+    contentType: "application/json",
+    body: JSON.stringify({ error: "Invalid refresh token" })
+  }));
+
+  await page.goto("/app");
+
+  await expect(page.getByRole("heading", { name: "Keep your day in sync" })).toBeVisible();
+  await expect(page.getByText(/Your session expired.*still saved in this browser/)).toBeVisible();
+  const persisted = await page.evaluate(() => ({
+    accountID: localStorage.getItem("dailyWeb.accountID"),
+    cache: JSON.parse(localStorage.getItem("dailyWeb.cache")),
+    pending: JSON.parse(localStorage.getItem("dailyWeb.pending"))
+  }));
+  expect(persisted.accountID).toBe("expired-session-user");
+  expect(persisted.cache.items).toEqual([cachedItem]);
+  expect(persisted.pending).toEqual([pendingMutation]);
+});
+
 test("covers create, edit, complete, skip, export, and delete-account flows", async ({ page }) => {
   const suffix = Date.now();
   const originalTitle = `E2E vitamins ${suffix}`;

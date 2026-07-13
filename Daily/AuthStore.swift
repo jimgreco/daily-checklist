@@ -6,6 +6,7 @@ import Security
 final class AuthStore: ObservableObject {
     @Published private(set) var user: AppUser?
     @Published private(set) var isLoading = false
+    @Published private(set) var requiresReauthentication = false
     @Published var errorMessage: String?
 
     private let api = APIClient()
@@ -72,6 +73,12 @@ final class AuthStore: ObservableObject {
         KeychainStore.delete("refreshToken")
         UserDefaults.standard.removeObject(forKey: cachedUserKey)
         user = nil
+        requiresReauthentication = false
+        errorMessage = nil
+    }
+
+    func dismissReauthenticationPrompt() {
+        requiresReauthentication = false
     }
 
     func exportData() async -> String? {
@@ -166,7 +173,7 @@ final class AuthStore: ObservableObject {
             do {
                 complete(try await refreshTask.value)
             } catch {
-                KeychainStore.delete("accessToken")
+                handleRefreshFailure(error)
             }
             return
         }
@@ -176,8 +183,18 @@ final class AuthStore: ObservableObject {
         do {
             complete(try await task.value)
         } catch {
-            KeychainStore.delete("accessToken")
+            handleRefreshFailure(error)
         }
+    }
+
+    private func handleRefreshFailure(_ error: Error) {
+        KeychainStore.delete("accessToken")
+        guard case APIClient.APIError.badResponse(401) = error else { return }
+        KeychainStore.delete("refreshToken")
+        UserDefaults.standard.removeObject(forKey: cachedUserKey)
+        user = nil
+        requiresReauthentication = true
+        errorMessage = "Your session expired. Your routines are still saved on this device. Sign in again to resume backup and syncing."
     }
 
     private func complete(_ response: AuthResponse) {
@@ -185,6 +202,7 @@ final class AuthStore: ObservableObject {
         KeychainStore.write(response.refreshToken, key: "refreshToken")
         cache(response.user)
         user = response.user
+        requiresReauthentication = false
     }
 
     private var cachedUser: AppUser? {

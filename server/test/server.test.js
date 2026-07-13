@@ -5,10 +5,14 @@ const {
   applyMutation,
   clientIP,
   appleWebAuthConfigured,
+  cleanupStaleSessions,
+  createSession,
   rateLimit,
   materializeAccount,
   refreshCookieMaxAgeSeconds,
+  refreshSessionLifetimeSeconds,
   resetRateLimits,
+  rotateRefreshSession,
   trustedProxyHops,
   upsertUser,
   validSyncRequest,
@@ -245,6 +249,91 @@ test("dev sign-in sets an HttpOnly refresh cookie and logout clears it", async (
   });
   assert.equal(logout.status, 204);
   assert.match(logout.headers.get("set-cookie"), /Max-Age=0/);
+});
+
+test("refresh sessions rotate inside a bounded rolling 90-day window", () => {
+  const now = Date.parse("2026-07-13T12:00:00.000Z");
+  assert.equal(refreshSessionLifetimeSeconds, 90 * 86400);
+  const database = { users: {}, identities: {}, sessions: {}, accounts: {} };
+  const user = { id: "rolling-user", email: "rolling@ritualcue.local", name: "Rolling User" };
+  database.users[user.id] = user;
+
+  const created = createSession(database, user, now);
+  const originalHash = crypto.createHash("sha256").update(created.refreshToken).digest("hex");
+  assert.equal(
+    database.sessions[originalHash].expiresAt,
+    new Date(now + refreshSessionLifetimeSeconds * 1000).toISOString()
+  );
+
+  const refreshedAt = now + 30 * 86400 * 1000;
+  const rotated = rotateRefreshSession(database, created.refreshToken, refreshedAt);
+  assert.ok(rotated?.token);
+  assert.equal(database.sessions[originalHash], undefined);
+  const rotatedHash = crypto.createHash("sha256").update(rotated.refreshToken).digest("hex");
+  assert.equal(
+    database.sessions[rotatedHash].expiresAt,
+    new Date(refreshedAt + refreshSessionLifetimeSeconds * 1000).toISOString()
+  );
+});
+
+test("expired, disabled, deleted, and malformed refresh sessions are rejected and removed", () => {
+  const now = Date.parse("2026-07-13T12:00:00.000Z");
+  const cases = [
+    {
+      token: "expired-token",
+      user: { id: "expired-user", email: "expired@ritualcue.local" },
+      sessionUserID: "expired-user",
+      expiresAt: new Date(now - 1).toISOString()
+    },
+    {
+      token: "disabled-token",
+      user: { id: "disabled-user", email: "disabled@ritualcue.local", disabledAt: new Date(now).toISOString() },
+      sessionUserID: "disabled-user",
+      expiresAt: new Date(now + 1000).toISOString()
+    },
+    {
+      token: "deleted-token",
+      user: null,
+      sessionUserID: "deleted-user",
+      expiresAt: new Date(now + 1000).toISOString()
+    },
+    {
+      token: "malformed-token",
+      user: { id: "malformed-user", email: "malformed@ritualcue.local" },
+      sessionUserID: "malformed-user",
+      expiresAt: "not-a-date"
+    }
+  ];
+
+  for (const entry of cases) {
+    const tokenHash = crypto.createHash("sha256").update(entry.token).digest("hex");
+    const database = {
+      users: entry.user ? { [entry.user.id]: entry.user } : {},
+      identities: {},
+      sessions: {
+        [tokenHash]: { id: `${entry.sessionUserID}-session`, userId: entry.sessionUserID, expiresAt: entry.expiresAt }
+      },
+      accounts: {}
+    };
+    assert.equal(rotateRefreshSession(database, entry.token, now), null);
+    assert.deepEqual(database.sessions, {});
+  }
+});
+
+test("legacy non-expiring sessions gain a bounded expiry without forcing reauthentication", () => {
+  const now = Date.parse("2026-07-13T12:00:00.000Z");
+  const database = {
+    users: { legacy: { id: "legacy", email: "legacy@ritualcue.local" } },
+    identities: {},
+    sessions: { legacyToken: { id: "legacy-session", userId: "legacy", expiresAt: null } },
+    accounts: {}
+  };
+
+  assert.deepEqual(cleanupStaleSessions(database, now), { removed: 0, bounded: 1 });
+  assert.equal(
+    database.sessions.legacyToken.expiresAt,
+    new Date(now + refreshSessionLifetimeSeconds * 1000).toISOString()
+  );
 });
 
 test("cookie-backed refresh and logout reject cross-origin browser requests", async () => {

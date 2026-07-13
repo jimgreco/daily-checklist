@@ -234,6 +234,20 @@ struct ChecklistView: View {
             } message: {
                 Text(actionErrorMessage ?? "")
             }
+            .alert("Session expired", isPresented: Binding(
+                get: { authStore.requiresReauthentication },
+                set: { if !$0 { authStore.dismissReauthenticationPrompt() } }
+            )) {
+                Button("Sign in") {
+                    authStore.dismissReauthenticationPrompt()
+                    showingAccount = true
+                }
+                Button("Later", role: .cancel) {
+                    authStore.dismissReauthenticationPrompt()
+                }
+            } message: {
+                Text("Your routines are still saved on this device. Sign in again to resume backup and syncing.")
+            }
         }
         .tint(accent)
         .onAppear(perform: maybeShowTutorial)

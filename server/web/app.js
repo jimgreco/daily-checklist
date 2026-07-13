@@ -4,13 +4,16 @@
   const app = document.getElementById("app");
   const STORAGE = {
     user: "dailyWeb.user",
+    account: "dailyWeb.accountID",
     cache: "dailyWeb.cache",
     pending: "dailyWeb.pending",
     device: "dailyWeb.deviceID",
   };
+  const cachedUser = readJSON(STORAGE.user, null);
   const state = {
     token: "",
-    user: readJSON(STORAGE.user, null),
+    user: cachedUser,
+    accountID: localStorage.getItem(STORAGE.account) || cachedUser?.id || "",
     items: readJSON(STORAGE.cache, { items: [] }).items || [],
     groups: readJSON(STORAGE.cache, { groups: [] }).groups || [],
     pending: readJSON(STORAGE.pending, []),
@@ -26,6 +29,7 @@
     appleClientId: "",
     modal: null,
     toast: "",
+    sessionExpired: false,
   };
   let refreshPromise = null;
   let toastTimer = null;
@@ -176,6 +180,7 @@
 
   function persistSession() {
     state.user ? localStorage.setItem(STORAGE.user, JSON.stringify(state.user)) : localStorage.removeItem(STORAGE.user);
+    state.accountID ? localStorage.setItem(STORAGE.account, state.accountID) : localStorage.removeItem(STORAGE.account);
   }
 
   function persistData() {
@@ -185,19 +190,33 @@
 
   function hasSession() { return Boolean(state.token || state.user); }
 
-  function clearSession() {
+  function clearSession({ preserveData = false, expired = false } = {}) {
     state.token = "";
     state.user = null;
-    state.items = [];
-    state.groups = [];
-    state.pending = [];
+    state.sessionExpired = expired;
+    if (!preserveData) {
+      state.accountID = "";
+      state.items = [];
+      state.groups = [];
+      state.pending = [];
+    }
     persistSession();
     persistData();
   }
 
   function applyAuth(auth) {
+    const nextUser = auth.user || null;
+    const nextAccountID = nextUser?.id || "";
+    if (state.accountID && nextAccountID && state.accountID !== nextAccountID) {
+      state.items = [];
+      state.groups = [];
+      state.pending = [];
+      persistData();
+    }
     state.token = auth.token || "";
-    state.user = auth.user || null;
+    state.user = nextUser;
+    state.accountID = nextAccountID;
+    state.sessionExpired = false;
     persistSession();
   }
 
@@ -216,7 +235,9 @@
     if (!response.ok) {
       let message = `HTTP ${response.status}`;
       try { message = (await response.json()).error || message; } catch {}
-      throw new Error(message);
+      const error = new Error(message);
+      error.status = response.status;
+      throw error;
     }
     return response.status === 204 ? null : response.json();
   }
@@ -229,8 +250,12 @@
       }, false).then((auth) => {
         applyAuth(auth);
         return true;
-      }).catch(() => {
-        clearSession();
+      }).catch((error) => {
+        if (error.status === 401) {
+          const hadCachedAccount = Boolean(state.user || state.accountID);
+          clearSession({ preserveData: true, expired: hadCachedAccount });
+          state.modal = null;
+        }
         return false;
       }).finally(() => { refreshPromise = null; });
     }
@@ -574,7 +599,9 @@
         ${local ? `<button class="dev-button" data-action="dev">Local dev sign in</button>` : ""}
         <button class="diagnostic-button" data-action="copy-diagnostics">Copy diagnostics</button>
       </div>
-      <div class="auth-note">${state.authLoaded && !state.googleClientId && !state.appleClientId && !local ? "Web sign-in providers are not configured yet." : ""}</div>
+      <div class="auth-note">${state.sessionExpired
+        ? "Your session expired. Your routines are still saved in this browser. Sign in again to resume backup and syncing."
+        : (state.authLoaded && !state.googleClientId && !state.appleClientId && !local ? "Web sign-in providers are not configured yet." : "")}</div>
       ${state.toast ? `<div class="toast">${escapeHTML(state.toast)}</div>` : ""}
     </section>`;
     renderGoogleButton();

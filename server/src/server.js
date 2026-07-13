@@ -14,7 +14,8 @@ const webRoot = path.join(__dirname, "..", "web");
 const store = createStore();
 const isProduction = process.env.NODE_ENV === "production";
 const refreshCookieName = "daily_refresh";
-const refreshCookieMaxAgeSeconds = 10 * 365 * 86400;
+const refreshSessionLifetimeSeconds = 90 * 86400;
+const refreshCookieMaxAgeSeconds = refreshSessionLifetimeSeconds;
 const defaultAdminEmails = ["jgreco@gmail.com"];
 
 function securityHeaders() {
@@ -261,15 +262,51 @@ function issueAccessToken(user, sessionID) {
   );
 }
 
-function createSession(database, user) {
+function refreshSessionExpiry(now = Date.now()) {
+  return new Date(now + refreshSessionLifetimeSeconds * 1000).toISOString();
+}
+
+function cleanupStaleSessions(database, now = Date.now()) {
+  database.sessions ||= {};
+  let removed = 0;
+  let bounded = 0;
+  for (const [tokenHash, session] of Object.entries(database.sessions)) {
+    const user = session?.userId ? database.users?.[session.userId] : null;
+    const hasExpiry = session?.expiresAt != null;
+    const expiry = hasExpiry ? Date.parse(session.expiresAt) : null;
+    if (!session || !user || user.disabledAt || (expiry != null && (!Number.isFinite(expiry) || expiry <= now))) {
+      delete database.sessions[tokenHash];
+      removed += 1;
+      continue;
+    }
+    if (!hasExpiry) {
+      session.expiresAt = refreshSessionExpiry(now);
+      bounded += 1;
+    }
+  }
+  return { removed, bounded };
+}
+
+function createSession(database, user, now = Date.now()) {
+  cleanupStaleSessions(database, now);
   const sessionID = newID();
   const refreshToken = crypto.randomBytes(48).toString("base64url");
   database.sessions[hash(refreshToken)] = {
     id: sessionID,
     userId: user.id,
-    expiresAt: null
+    expiresAt: refreshSessionExpiry(now)
   };
   return { token: issueAccessToken(user, sessionID), refreshToken, user };
+}
+
+function rotateRefreshSession(database, refreshToken, now = Date.now()) {
+  cleanupStaleSessions(database, now);
+  const tokenHash = hash(refreshToken);
+  const session = database.sessions[tokenHash];
+  if (!session) return null;
+  delete database.sessions[tokenHash];
+  const user = database.users[session.userId];
+  return user && !user.disabledAt ? createSession(database, user, now) : null;
 }
 
 function adminEmails() {
@@ -1310,14 +1347,7 @@ async function handleAuth(request, response, pathname) {
     const cookieToken = parseCookies(request)[refreshCookieName];
     if (rejectCrossOriginCookieAuth(request, response, body, cookieToken)) return true;
     const refreshToken = refreshTokenFromBody(body) || cookieToken || "";
-    const tokenHash = hash(refreshToken);
-    const auth = await store.update((database) => {
-      const session = database.sessions[tokenHash];
-      if (!session) return null;
-      delete database.sessions[tokenHash];
-      const user = database.users[session.userId];
-      return user && !user.disabledAt ? createSession(database, user) : null;
-    });
+    const auth = await store.update((database) => rotateRefreshSession(database, refreshToken));
     return auth
       ? send(response, 200, auth, { "set-cookie": refreshCookie(auth.refreshToken) })
       : send(response, 401, { error: "Invalid refresh token" }, { "set-cookie": clearRefreshCookie() });
@@ -1517,6 +1547,10 @@ module.exports = {
   validSyncRequest,
   stampWins,
   refreshCookieMaxAgeSeconds,
+  refreshSessionLifetimeSeconds,
+  cleanupStaleSessions,
+  createSession,
+  rotateRefreshSession,
   appleWebAuthConfigured,
   upsertUser,
   adminOverview,
