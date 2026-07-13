@@ -72,7 +72,8 @@
       startTomorrow: '<path d="M7 17 17 7"/><path d="M9 7h8v8"/>',
       trash: '<path d="M4 7h16"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M6 7l1 14h10l1-14"/><path d="M9 7V4h6v3"/>',
       user: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
-      xCircle: '<circle cx="12" cy="12" r="9"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/>'
+      xCircle: '<circle cx="12" cy="12" r="9"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/>',
+      chart: '<path d="M4 19V9"/><path d="M10 19V5"/><path d="M16 19v-7"/><path d="M22 19V3"/>'
     };
     return `<svg class="icon ${className}" aria-hidden="true" focusable="false" viewBox="0 0 24 24">${paths[name] || ""}</svg>`;
   }
@@ -603,6 +604,7 @@
             <p>${escapeHTML(email)}</p>
           </div>
           <div class="account-panel">
+            <button data-action="insights"><span>Routine insights</span><small>Private patterns from your last 21 days</small></button>
             <button data-action="export-data"><span>Export data</span><small>Copy a JSON backup</small></button>
             <button data-action="import-data"><span>Restore from export</span><small>Replace synced data with a JSON backup</small></button>
             <button data-action="copy-diagnostics"><span>Copy diagnostics</span><small>Copy build and sync details for support</small></button>
@@ -617,6 +619,9 @@
         </div>
         <div class="modal-actions"><span></span><button class="secondary" data-action="close">Done</button></div>
       </section></div>`;
+    }
+    if (state.modal.type === "insights") {
+      return renderRoutineInsights(routineInsights());
     }
     if (state.modal.type === "history") {
       const item = state.modal.item;
@@ -1051,6 +1056,134 @@
     });
   }
 
+  function routineInsights(days = 21) {
+    const anchor = startOfDay(new Date());
+    const completedDays = Array.from({ length: Math.max(1, days) }, (_, index) => addDays(anchor, -(index + 1)));
+    let completedCheckIns = 0;
+    let expectedCheckIns = 0;
+    let recentCompleted = 0;
+    let recentExpected = 0;
+    let priorCompleted = 0;
+    let priorExpected = 0;
+    const missedWeekdays = new Map();
+
+    state.items.forEach((item) => {
+      completedDays.forEach((day, index) => {
+        const historyState = historyStateForDate(item, day);
+        const expected = ["Done", "Missed", "Open"].includes(historyState);
+        if (!expected) return;
+        expectedCheckIns += 1;
+        if (historyState === "Done") completedCheckIns += 1;
+        if (index < 7) {
+          recentExpected += 1;
+          if (historyState === "Done") recentCompleted += 1;
+        } else if (index < 14) {
+          priorExpected += 1;
+          if (historyState === "Done") priorCompleted += 1;
+        }
+        if (["Missed", "Open"].includes(historyState)) {
+          const weekday = day.getDay();
+          missedWeekdays.set(weekday, (missedWeekdays.get(weekday) || 0) + 1);
+        }
+      });
+    });
+
+    const rate = (done, expected) => Math.round(done / expected * 100);
+    const trend = recentExpected >= 3 && priorExpected >= 3
+      ? rate(recentCompleted, recentExpected) - rate(priorCompleted, priorExpected)
+      : null;
+    const activeItems = state.items.filter((item) => !item.endedAt);
+    const highlights = activeItems.map((item) => ({ title: item.title, count: insightStreak(item, anchor, days) }));
+    const currentStreak = highlights.filter((entry) => entry.count > 0).sort(insightHighlightSort)[0] || null;
+    const delays = activeItems.map((item) => ({
+      title: item.title,
+      count: Math.max(...Array.from({ length: days }, (_, offset) => {
+        const day = addDays(anchor, -offset);
+        return isPaused(item, day) ? 0 : delayedDaysOnDate(item, day);
+      }))
+    }));
+    const longestDelay = delays.filter((entry) => entry.count > 0).sort(insightHighlightSort)[0] || null;
+    const missedPattern = [...missedWeekdays.entries()]
+      .map(([weekday, count]) => ({ weekday, count }))
+      .sort((left, right) => right.count - left.count || left.weekday - right.weekday)[0] || null;
+
+    return {
+      completedCheckIns,
+      expectedCheckIns,
+      completionPercentage: expectedCheckIns ? rate(completedCheckIns, expectedCheckIns) : 0,
+      hasEnoughData: expectedCheckIns >= 3,
+      trend,
+      currentStreak,
+      missedWeekday: missedPattern?.count >= 2
+        ? addDays(anchor, -(anchor.getDay() - missedPattern.weekday + 7) % 7).toLocaleDateString([], { weekday: "long" })
+        : null,
+      missedWeekdayCount: missedPattern?.count >= 2 ? missedPattern.count : 0,
+      longestDelay
+    };
+  }
+
+  function insightStreak(item, anchor, days) {
+    let cursor = anchor;
+    let streak = 0;
+    if (historyStateForDate(item, cursor) !== "Done") cursor = addDays(cursor, -1);
+    for (let inspected = 0; inspected < days; inspected += 1) {
+      const historyState = historyStateForDate(item, cursor);
+      if (historyState === "Done") streak += 1;
+      else if (!["Off", "Paused"].includes(historyState)) return streak;
+      cursor = addDays(cursor, -1);
+    }
+    return streak;
+  }
+
+  function insightHighlightSort(left, right) {
+    return right.count - left.count || left.title.localeCompare(right.title);
+  }
+
+  function renderRoutineInsights(summary) {
+    if (!summary.hasEnoughData) {
+      return `<div class="scrim" data-action="close"><section class="modal" data-modal>
+        <h2>Routine insights</h2>
+        <p class="insights-privacy">Calculated in this browser from your last 21 days, excluding today. Nothing is sent to an analytics service.</p>
+        <div class="insights-empty">
+          <span class="insights-empty-icon">${icon("chart")}</span>
+          <strong>Your patterns will appear here</strong>
+          <p>Keep using your checklist normally. Insights begin after three scheduled check-ins have finished or passed.</p>
+        </div>
+        <div class="modal-actions"><span></span><button class="secondary" data-action="close">Done</button></div>
+      </section></div>`;
+    }
+
+    const trendValue = summary.trend == null ? "Building" : summary.trend === 0 ? "Steady" : `${summary.trend > 0 ? "+" : ""}${summary.trend} pts`;
+    const trendDetail = summary.trend == null ? "A little more history is needed." : "Last 7 days compared with the prior 7.";
+    const streakValue = summary.currentStreak ? `${summary.currentStreak.count} ${summary.currentStreak.count === 1 ? "day" : "days"}` : "None yet";
+    const missedValue = summary.missedWeekday || "No repeat";
+    const missedDetail = summary.missedWeekday ? `${summary.missedWeekdayCount} open or missed check-ins` : "No weekday stands out yet.";
+    const delayValue = summary.longestDelay?.title || "None";
+    const delayDetail = summary.longestDelay
+      ? `Moved forward ${summary.longestDelay.count} ${summary.longestDelay.count === 1 ? "day" : "days"}`
+      : "No delayed routine in this window.";
+
+    return `<div class="scrim" data-action="close"><section class="modal" data-modal>
+      <h2>Routine insights</h2>
+      <p class="insights-privacy">Calculated in this browser from your last 21 days, excluding today. Nothing is sent to an analytics service.</p>
+      <div class="insights-completion">
+        <strong>${summary.completionPercentage}%</strong>
+        <span><b>Completion</b>${summary.completedCheckIns} of ${summary.expectedCheckIns} scheduled check-ins finished</span>
+      </div>
+      <div class="insights-grid">
+        ${renderInsightCard("Current streak", streakValue, summary.currentStreak?.title || "A completed run will show here.")}
+        ${renderInsightCard("7-day trend", trendValue, trendDetail)}
+        ${renderInsightCard("Missed pattern", missedValue, missedDetail)}
+        ${renderInsightCard("Longest delay", delayValue, delayDetail)}
+      </div>
+      <div class="modal-actions"><span></span><button class="secondary" data-action="close">Done</button></div>
+    </section></div>`;
+  }
+
+  function renderInsightCard(title, value, detail) {
+    return `<div class="insight-card"><span>${escapeHTML(title)}</span><strong>${escapeHTML(value)}</strong><small>${escapeHTML(detail)}</small></div>`;
+  }
+
   function historyEntryForDate(item, date) {
     const day = startOfDay(date);
     return {
@@ -1397,6 +1530,7 @@
     if (action === "pause-group") pauseGroup(target.dataset.group);
     if (action === "resume-group") resumeGroup(target.dataset.group);
     if (action === "account") { state.modal = { type: "account" }; render(); }
+    if (action === "insights") { state.modal = { type: "insights" }; render(); }
     if (action === "sign-out") await signOut();
     if (action === "export-data") {
       try { await exportData(); } catch (error) { showToast(error.message); }

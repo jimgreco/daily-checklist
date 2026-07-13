@@ -169,6 +169,79 @@ final class ChecklistStateTests: XCTestCase {
         XCTAssertEqual(item.consecutiveMissedDays(asOf: today, calendar: calendar), 1)
     }
 
+    @MainActor
+    func testRoutineInsightsSummarizeCompletionTrendStreakMissesAndDelays() throws {
+        let accountID = "routine-insights-\(UUID().uuidString)"
+        let today = calendar.startOfDay(for: .now)
+        cleanCaches(for: [accountID])
+        defer {
+            cleanCaches(for: [accountID])
+            UserDefaults.standard.removeObject(forKey: "activeAccountID")
+        }
+        UserDefaults.standard.set(accountID, forKey: "activeAccountID")
+
+        let completedOffsets = Set([1, 2, 3, 4, 5, 6, 8, 9, 10])
+        let completedDates = Set(completedOffsets.compactMap { offset in
+            calendar.date(byAdding: .day, value: -offset, to: today).map(DateKey.string(from:))
+        })
+        let startDate = try XCTUnwrap(calendar.date(byAdding: .day, value: -14, to: today))
+        let tracked = ChecklistItem(
+            title: "Morning routine",
+            schedule: .everyDay,
+            completedDates: completedDates,
+            createdAt: startDate,
+            startDate: startDate
+        )
+
+        let firstSkipped = try XCTUnwrap(calendar.date(byAdding: .day, value: -2, to: today))
+        let secondSkipped = try XCTUnwrap(calendar.date(byAdding: .day, value: -1, to: today))
+        let delayedItem = ChecklistItem(
+            title: "Water plants",
+            schedule: .custom,
+            customWeekdays: [],
+            skippedDates: [DateKey.string(from: firstSkipped), DateKey.string(from: secondSkipped)],
+            openDates: [DateKey.string(from: today)],
+            createdAt: firstSkipped
+        )
+
+        let store = ChecklistStore()
+        store.save(tracked)
+        store.save(delayedItem)
+
+        let summary = store.routineInsights(asOf: today, calendar: calendar)
+
+        XCTAssertTrue(summary.hasEnoughData)
+        XCTAssertEqual(summary.completedCheckIns, 9)
+        XCTAssertEqual(summary.expectedCheckIns, 14)
+        XCTAssertEqual(summary.completionPercentage, 64)
+        XCTAssertEqual(summary.trendPercentagePoints, 43)
+        XCTAssertEqual(summary.currentStreak, RoutineInsightHighlight(title: "Morning routine", count: 6))
+        XCTAssertEqual(summary.longestDelay, RoutineInsightHighlight(title: "Water plants", count: 2))
+        XCTAssertEqual(summary.missedWeekdayCount, 2)
+        XCTAssertNotNil(summary.missedWeekday)
+    }
+
+    @MainActor
+    func testRoutineInsightsUseCalmLowDataState() {
+        let accountID = "routine-insights-empty-\(UUID().uuidString)"
+        let today = calendar.startOfDay(for: .now)
+        cleanCaches(for: [accountID])
+        defer {
+            cleanCaches(for: [accountID])
+            UserDefaults.standard.removeObject(forKey: "activeAccountID")
+        }
+        UserDefaults.standard.set(accountID, forKey: "activeAccountID")
+
+        let store = ChecklistStore()
+        store.save(ChecklistItem(title: "New routine", createdAt: today, startDate: today))
+
+        let summary = store.routineInsights(asOf: today, calendar: calendar)
+
+        XCTAssertFalse(summary.hasEnoughData)
+        XCTAssertEqual(summary.expectedCheckIns, 0)
+        XCTAssertEqual(summary.completionPercentage, 0)
+    }
+
     func testNotificationGroupFilterIncludesAndExcludesGroups() {
         let mustDoGroup = UUID()
         let nightGroup = UUID()

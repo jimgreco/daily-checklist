@@ -18,6 +18,7 @@ struct AccountView: View {
     @State private var showingImportPicker = false
     @State private var showingImportConfirmation = false
     @State private var pendingImportData: Data?
+    @State private var showingRoutineInsights = false
 
     var body: some View {
         NavigationStack {
@@ -27,9 +28,11 @@ struct AccountView: View {
                         signedInHeader(user)
                         notificationCard
                         syncCard
+                        insightsCard
                         accountActions
                     } else {
                         signedOutContent
+                        insightsCard
                         tutorialCard
                     }
 
@@ -79,6 +82,10 @@ struct AccountView: View {
                 allowsMultipleSelection: false,
                 onCompletion: handleImportSelection
             )
+            .sheet(isPresented: $showingRoutineInsights) {
+                RoutineInsightsView()
+                    .environmentObject(store)
+            }
             .confirmationDialog(
                 "Delete Account?",
                 isPresented: $showingDeleteConfirmation,
@@ -263,6 +270,19 @@ struct AccountView: View {
             Divider().padding(.leading, 48)
             AccountActionRow(title: "Delete account", subtitle: "Remove synced account data", systemImage: "trash", role: .destructive) {
                 showingDeleteConfirmation = true
+            }
+        }
+        .background(surface, in: RoundedRectangle(cornerRadius: 18))
+    }
+
+    private var insightsCard: some View {
+        VStack(spacing: 0) {
+            AccountActionRow(
+                title: "Routine insights",
+                subtitle: "Private patterns from your last 21 days",
+                systemImage: "chart.line.uptrend.xyaxis"
+            ) {
+                showingRoutineInsights = true
             }
         }
         .background(surface, in: RoundedRectangle(cornerRadius: 18))
@@ -479,6 +499,198 @@ struct AccountView: View {
         store.activateAuthenticatedAccount(userID)
         let didSync = await store.sync(using: authStore)
         if didSync { dismiss() }
+    }
+}
+
+private struct RoutineInsightsView: View {
+    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var store: ChecklistStore
+
+    private var summary: RoutineInsightSummary {
+        store.routineInsights()
+    }
+
+    private let columns = [
+        GridItem(.flexible(), spacing: 12),
+        GridItem(.flexible(), spacing: 12)
+    ]
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    Text("Calculated on this device from your last 21 days, excluding today. Nothing is sent to an analytics service.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+
+                    if summary.hasEnoughData {
+                        completionCard
+                        LazyVGrid(columns: columns, spacing: 12) {
+                            InsightCard(
+                                title: "Current streak",
+                                value: streakValue,
+                                detail: streakDetail,
+                                systemImage: "flame.fill",
+                                color: success
+                            )
+                            InsightCard(
+                                title: "7-day trend",
+                                value: trendValue,
+                                detail: trendDetail,
+                                systemImage: "chart.line.uptrend.xyaxis",
+                                color: accent
+                            )
+                            InsightCard(
+                                title: "Missed pattern",
+                                value: missedValue,
+                                detail: missedDetail,
+                                systemImage: "calendar.badge.exclamationmark",
+                                color: Color(red: 0.72, green: 0.22, blue: 0.20)
+                            )
+                            InsightCard(
+                                title: "Longest delay",
+                                value: delayValue,
+                                detail: delayDetail,
+                                systemImage: "arrow.right.circle.fill",
+                                color: delayed
+                            )
+                        }
+                    } else {
+                        lowDataCard
+                    }
+                }
+                .padding(20)
+            }
+            .background(canvas.ignoresSafeArea())
+            .navigationTitle("Routine insights")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
+    }
+
+    private var completionCard: some View {
+        HStack(spacing: 18) {
+            ZStack {
+                Circle()
+                    .stroke(accent.opacity(0.14), lineWidth: 10)
+                Circle()
+                    .trim(from: 0, to: Double(summary.completionPercentage) / 100)
+                    .stroke(accent, style: StrokeStyle(lineWidth: 10, lineCap: .round))
+                    .rotationEffect(.degrees(-90))
+                Text("\(summary.completionPercentage)%")
+                    .font(.system(size: 22, weight: .bold, design: .rounded))
+                    .foregroundStyle(ink)
+            }
+            .frame(width: 92, height: 92)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("\(summary.completionPercentage) percent completion")
+
+            VStack(alignment: .leading, spacing: 5) {
+                Text("Completion")
+                    .font(.headline)
+                    .foregroundStyle(ink)
+                Text("\(summary.completedCheckIns) of \(summary.expectedCheckIns) scheduled check-ins finished")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(18)
+        .background(surface, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+    }
+
+    private var lowDataCard: some View {
+        VStack(spacing: 14) {
+            Image(systemName: "chart.line.uptrend.xyaxis")
+                .font(.system(size: 38, weight: .semibold))
+                .foregroundStyle(accent)
+            Text("Your patterns will appear here")
+                .font(.title3.bold())
+                .foregroundStyle(ink)
+            Text("Keep using your checklist normally. Insights begin after three scheduled check-ins have finished or passed.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, 24)
+        .padding(.vertical, 42)
+        .background(surface, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+    }
+
+    private var streakValue: String {
+        guard let streak = summary.currentStreak else { return "None yet" }
+        return "\(streak.count) \(streak.count == 1 ? "day" : "days")"
+    }
+
+    private var streakDetail: String {
+        summary.currentStreak?.title ?? "A completed run will show here."
+    }
+
+    private var trendValue: String {
+        guard let trend = summary.trendPercentagePoints else { return "Building" }
+        if trend == 0 { return "Steady" }
+        return "\(trend > 0 ? "+" : "")\(trend) pts"
+    }
+
+    private var trendDetail: String {
+        summary.trendPercentagePoints == nil
+            ? "A little more history is needed."
+            : "Last 7 days compared with the prior 7."
+    }
+
+    private var missedValue: String {
+        summary.missedWeekday ?? "No repeat"
+    }
+
+    private var missedDetail: String {
+        guard summary.missedWeekday != nil else { return "No weekday stands out yet." }
+        return "\(summary.missedWeekdayCount) open or missed check-ins"
+    }
+
+    private var delayValue: String {
+        summary.longestDelay?.title ?? "None"
+    }
+
+    private var delayDetail: String {
+        guard let delay = summary.longestDelay else { return "No delayed routine in this window." }
+        return "Moved forward \(delay.count) \(delay.count == 1 ? "day" : "days")"
+    }
+}
+
+private struct InsightCard: View {
+    let title: String
+    let value: String
+    let detail: String
+    let systemImage: String
+    let color: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            Image(systemName: systemImage)
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundStyle(color)
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(.system(size: 19, weight: .bold, design: .rounded))
+                .foregroundStyle(ink)
+                .lineLimit(2)
+                .minimumScaleFactor(0.8)
+            Text(detail)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, minHeight: 148, alignment: .topLeading)
+        .padding(15)
+        .background(surface, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
 }
 

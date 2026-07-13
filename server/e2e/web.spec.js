@@ -31,6 +31,16 @@ async function signIn(page) {
   await expect(page.getByRole("heading", { name: "Ritual Cue" })).toBeVisible();
 }
 
+test("shows a calm, private low-data insights state", async ({ page }) => {
+  await signIn(page);
+  await page.getByRole("button", { name: "Account" }).click();
+  await page.getByRole("button", { name: /^Routine insights/ }).click();
+
+  await expect(page.getByRole("heading", { name: "Routine insights" })).toBeVisible();
+  await expect(page.getByText("Your patterns will appear here")).toBeVisible();
+  await expect(page.getByText(/Nothing is sent to an analytics service/)).toBeVisible();
+});
+
 async function saveEditor(page) {
   await Promise.all([
     waitForSync(page),

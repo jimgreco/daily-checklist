@@ -75,6 +75,28 @@ struct RoutineTemplate: Identifiable {
     ]
 }
 
+struct RoutineInsightHighlight: Equatable {
+    let title: String
+    let count: Int
+}
+
+struct RoutineInsightSummary: Equatable {
+    let completedCheckIns: Int
+    let expectedCheckIns: Int
+    let trendPercentagePoints: Int?
+    let currentStreak: RoutineInsightHighlight?
+    let missedWeekday: String?
+    let missedWeekdayCount: Int
+    let longestDelay: RoutineInsightHighlight?
+
+    var hasEnoughData: Bool { expectedCheckIns >= 3 }
+
+    var completionPercentage: Int {
+        guard expectedCheckIns > 0 else { return 0 }
+        return Int((Double(completedCheckIns) / Double(expectedCheckIns) * 100).rounded())
+    }
+}
+
 @MainActor
 final class ChecklistStore: ObservableObject {
     @Published private(set) var items: [ChecklistItem] = []
@@ -738,6 +760,143 @@ final class ChecklistStore: ObservableObject {
             }
             return (date, historyState(for: item, on: date))
         }
+    }
+
+    func routineInsights(
+        asOf date: Date = .now,
+        days: Int = 21,
+        calendar: Calendar = .current
+    ) -> RoutineInsightSummary {
+        let anchor = min(calendar.startOfDay(for: date), calendar.startOfDay(for: .now))
+        let windowLength = max(1, days)
+        let completedDays = (1...windowLength).compactMap {
+            calendar.date(byAdding: .day, value: -$0, to: anchor).map {
+                calendar.startOfDay(for: $0)
+            }
+        }
+        var completedCheckIns = 0
+        var expectedCheckIns = 0
+        var recentCompleted = 0
+        var recentExpected = 0
+        var priorCompleted = 0
+        var priorExpected = 0
+        var missedWeekdays: [Int: Int] = [:]
+
+        for item in items {
+            for (index, day) in completedDays.enumerated() {
+                let state = historyState(for: item, on: day)
+                let isExpected = state == .done || state == .missed || state == .open
+                guard isExpected else { continue }
+
+                expectedCheckIns += 1
+                if state == .done { completedCheckIns += 1 }
+
+                if index < 7 {
+                    recentExpected += 1
+                    if state == .done { recentCompleted += 1 }
+                } else if index < 14 {
+                    priorExpected += 1
+                    if state == .done { priorCompleted += 1 }
+                }
+
+                if state == .missed || state == .open {
+                    missedWeekdays[calendar.component(.weekday, from: day), default: 0] += 1
+                }
+            }
+        }
+
+        let trendPercentagePoints: Int?
+        if recentExpected >= 3, priorExpected >= 3 {
+            let recentRate = Int((Double(recentCompleted) / Double(recentExpected) * 100).rounded())
+            let priorRate = Int((Double(priorCompleted) / Double(priorExpected) * 100).rounded())
+            trendPercentagePoints = recentRate - priorRate
+        } else {
+            trendPercentagePoints = nil
+        }
+
+        let activeItems = items.filter { $0.endedAt == nil }
+        let currentStreak = activeItems
+            .map { RoutineInsightHighlight(
+                title: $0.title,
+                count: completionStreak(for: $0, asOf: anchor, days: windowLength, calendar: calendar)
+            ) }
+            .filter { $0.count > 0 }
+            .sorted(by: insightHighlightComesFirst)
+            .first
+
+        var longestDelays: [RoutineInsightHighlight] = []
+        for item in activeItems {
+            let longest = (0..<windowLength).compactMap { offset -> Int? in
+                guard let day = calendar.date(byAdding: .day, value: -offset, to: anchor),
+                      !isPaused(item, on: day) else { return nil }
+                return item.delayedDays(asOf: day, calendar: calendar)
+            }.max() ?? 0
+            if longest > 0 {
+                longestDelays.append(RoutineInsightHighlight(title: item.title, count: longest))
+            }
+        }
+
+        let missedPattern = missedWeekdays
+            .map { (weekday: $0.key, count: $0.value) }
+            .sorted {
+                if $0.count != $1.count { return $0.count > $1.count }
+                return $0.weekday < $1.weekday
+            }
+            .first
+        let missedWeekday = missedPattern.flatMap { pattern -> String? in
+            guard pattern.count >= 2,
+                  calendar.weekdaySymbols.indices.contains(pattern.weekday - 1) else { return nil }
+            return calendar.weekdaySymbols[pattern.weekday - 1]
+        }
+
+        return RoutineInsightSummary(
+            completedCheckIns: completedCheckIns,
+            expectedCheckIns: expectedCheckIns,
+            trendPercentagePoints: trendPercentagePoints,
+            currentStreak: currentStreak,
+            missedWeekday: missedWeekday,
+            missedWeekdayCount: missedWeekday == nil ? 0 : missedPattern?.count ?? 0,
+            longestDelay: longestDelays.sorted(by: insightHighlightComesFirst).first
+        )
+    }
+
+    private func completionStreak(
+        for item: ChecklistItem,
+        asOf date: Date,
+        days: Int,
+        calendar: Calendar
+    ) -> Int {
+        var cursor = calendar.startOfDay(for: date)
+        var streak = 0
+        var inspectedDays = 0
+
+        if historyState(for: item, on: cursor) != .done,
+           let previousDay = calendar.date(byAdding: .day, value: -1, to: cursor) {
+            cursor = previousDay
+        }
+
+        while inspectedDays < days {
+            switch historyState(for: item, on: cursor) {
+            case .done:
+                streak += 1
+            case .off, .paused:
+                break
+            case .skipped, .missed, .open:
+                return streak
+            }
+            inspectedDays += 1
+            guard let previousDay = calendar.date(byAdding: .day, value: -1, to: cursor) else { break }
+            cursor = previousDay
+        }
+        return streak
+    }
+
+    private func insightHighlightComesFirst(
+        _ left: RoutineInsightHighlight,
+        _ right: RoutineInsightHighlight
+    ) -> Bool {
+        if left.count != right.count { return left.count > right.count }
+        return left.title.localizedCaseInsensitiveCompare(right.title) == .orderedAscending
     }
 
     func updateEveningReminder(_ minutes: Int?) {
