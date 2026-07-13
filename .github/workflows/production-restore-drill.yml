@@ -1,0 +1,69 @@
+name: Production Database Restore Drill
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: production-database-restore-drill
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  restore-drill:
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 20
+    env:
+      BACKUP_BUCKET: ${{ vars.DAILY_DB_BACKUP_S3_BUCKET }}
+      EC2_HOST: ${{ secrets.EC2_HOST }}
+      EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+      EC2_SSH_KNOWN_HOSTS: ${{ secrets.EC2_SSH_KNOWN_HOSTS }}
+      EC2_USER: ${{ secrets.EC2_USER }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Validate restore-drill configuration
+        run: |
+          set -euo pipefail
+          for name in BACKUP_BUCKET EC2_HOST EC2_SSH_KEY EC2_SSH_KNOWN_HOSTS EC2_USER; do
+            test -n "${!name}" || { echo "::error title=Restore drill configuration missing::$name is required"; exit 1; }
+          done
+          [[ "$BACKUP_BUCKET" =~ ^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$ ]]
+
+      - name: Prepare SSH
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.ssh"
+          printf '%s' "$EC2_SSH_KEY" > "$HOME/.ssh/daily-backup"
+          printf '%s\n' "$EC2_SSH_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/daily-backup" "$HOME/.ssh/known_hosts"
+
+      - name: Restore the newest backup into a disposable database
+        run: |
+          set -euo pipefail
+          ssh -i "$HOME/.ssh/daily-backup" \
+            -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+            -o StrictHostKeyChecking=yes \
+            "$EC2_USER@$EC2_HOST" \
+            "bash -se -- '$BACKUP_BUCKET'" \
+            < server/scripts/restore-production-db-backup.sh
+
+  notify-failure:
+    if: ${{ always() && (needs.restore-drill.result == 'failure' || needs.restore-drill.result == 'cancelled') }}
+    needs: restore-drill
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v5
+      - name: Create an actionable operations alert
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OPERATIONS_ALERT_WEBHOOK_URL: ${{ secrets.DAILY_MONITOR_WEBHOOK_URL }}
+        run: |
+          .github/scripts/notify-operations.sh \
+            "[Ops] Ritual Cue database restore drill failed" \
+            "Production database restore drill result: ${{ needs.restore-drill.result }}."

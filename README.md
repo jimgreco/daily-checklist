@@ -109,6 +109,8 @@ Every push to `main` runs `.github/workflows/publish.yml`:
 
 Manual Publish runs can also upload source-controlled App Store listing metadata and deterministic screenshots to the editable App Store Connect version. See `docs/app-store-production.md`.
 
+Production database protection includes daily encrypted S3 logical dumps, a separate freshness monitor, disposable restore drills, and daily EBS snapshots. See [`docs/database-backups.md`](docs/database-backups.md) for schedules, alerts, inspection, and recovery steps.
+
 Repository secrets required:
 
 - EC2: `EC2_HOST`, `EC2_USER`, `EC2_SSH_KEY`, `EC2_SSH_KNOWN_HOSTS`, `DAILY_SESSION_SECRET`
@@ -118,6 +120,11 @@ Repository secrets required:
 Optional runtime secret:
 
 - `DAILY_DATABASE_URL` overrides the default shared Postgres URL `postgresql://admin:${DB_PASSWORD}@db:5432/daily_checklist`.
+
+Backup repository variables:
+
+- `DAILY_DB_BACKUP_S3_BUCKET` names the private S3 bucket used by the production backup and restore workflows.
+- `DAILY_DB_BACKUP_MAX_AGE_HOURS` controls the freshness check and defaults to 26 hours.
 
 Before the first upload, create the Ritual Cue app record in App Store Connect for bundle ID `com.jimgreco.dailychecklist`. The workflow can register the bundle ID and provisioning profile, but Apple does not expose app-record creation through the same provisioning API.
 

@@ -1,0 +1,73 @@
+name: Production Database Backup Check
+
+on:
+  schedule:
+    - cron: "13 11 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: production-database-backup-check
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  freshness:
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 10
+    env:
+      BACKUP_BUCKET: ${{ vars.DAILY_DB_BACKUP_S3_BUCKET }}
+      EC2_HOST: ${{ secrets.EC2_HOST }}
+      EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+      EC2_SSH_KNOWN_HOSTS: ${{ secrets.EC2_SSH_KNOWN_HOSTS }}
+      EC2_USER: ${{ secrets.EC2_USER }}
+      MAX_AGE_HOURS: ${{ vars.DAILY_DB_BACKUP_MAX_AGE_HOURS || '26' }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Validate freshness-check configuration
+        run: |
+          set -euo pipefail
+          for name in BACKUP_BUCKET EC2_HOST EC2_SSH_KEY EC2_SSH_KNOWN_HOSTS EC2_USER MAX_AGE_HOURS; do
+            test -n "${!name}" || { echo "::error title=Backup check configuration missing::$name is required"; exit 1; }
+          done
+          [[ "$BACKUP_BUCKET" =~ ^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$ ]]
+          [[ "$MAX_AGE_HOURS" =~ ^[1-9][0-9]*$ ]]
+
+      - name: Prepare SSH
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.ssh"
+          printf '%s' "$EC2_SSH_KEY" > "$HOME/.ssh/daily-backup"
+          printf '%s\n' "$EC2_SSH_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/daily-backup" "$HOME/.ssh/known_hosts"
+
+      - name: Check the newest S3 backup
+        run: |
+          set -euo pipefail
+          ssh -i "$HOME/.ssh/daily-backup" \
+            -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+            -o StrictHostKeyChecking=yes \
+            "$EC2_USER@$EC2_HOST" \
+            "bash -se -- '$BACKUP_BUCKET' '$MAX_AGE_HOURS'" \
+            < server/scripts/check-production-db-backup.sh
+
+  notify-failure:
+    if: ${{ always() && (needs.freshness.result == 'failure' || needs.freshness.result == 'cancelled') }}
+    needs: freshness
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v5
+      - name: Create an actionable operations alert
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OPERATIONS_ALERT_WEBHOOK_URL: ${{ secrets.DAILY_MONITOR_WEBHOOK_URL }}
+        run: |
+          .github/scripts/notify-operations.sh \
+            "[Ops] Ritual Cue database backup is stale" \
+            "Production database backup freshness result: ${{ needs.freshness.result }}."
