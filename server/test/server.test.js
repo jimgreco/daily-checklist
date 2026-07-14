@@ -2,6 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const crypto = require("node:crypto");
 const {
+  accountFromImportedChecklist,
   applyMutation,
   clientIP,
   appleWebAuthConfigured,
@@ -878,6 +879,24 @@ test("authenticated users can import valid exports and reject malformed exports"
           customWeekdays: [],
           reminderMinutes: 540,
           quantity: 2,
+          scheduleRevision: 3,
+          missedBehavior: "keepUntilDone",
+          carryoverStartDate: "2026-07-05",
+          carryoverResolvedThroughDate: "2026-07-04",
+          occurrences: {
+            "2026-07-05": {
+              outcome: "open",
+              completionCount: 1,
+              resolvedDate: null,
+              hiddenUntil: "2026-07-07"
+            },
+            "2026-07-06": {
+              outcome: "done",
+              completionCount: 2,
+              resolvedDate: "2026-07-07",
+              hiddenUntil: null
+            }
+          },
           completedDates: [],
           completionCounts: { "2026-07-06": 1 },
           skippedDates: [],
@@ -902,7 +921,31 @@ test("authenticated users can import valid exports and reject malformed exports"
   assert.deepEqual(imported.acceptedMutationIDs, []);
   assert.equal(imported.items.length, 1);
   assert.equal(imported.items[0].title, "Restore me");
-  assert.equal(imported.items[0].completionCounts["2026-07-06"], 1);
+  assert.equal(imported.items[0].completionCounts["2026-07-06"], 2);
+  assert.deepEqual(imported.items[0].completedDates, ["2026-07-06"]);
+  assert.deepEqual(imported.items[0].openDates, ["2026-07-05"]);
+  assert.equal(imported.items[0].scheduleRevision, 3);
+  assert.equal(imported.items[0].missedBehavior, "keepUntilDone");
+  assert.equal(imported.items[0].carryoverStartDate, "2026-07-05");
+  assert.equal(imported.items[0].carryoverResolvedThroughDate, "2026-07-04");
+  assert.deepEqual(imported.items[0].occurrences, {
+    "33333333-3333-4333-8333-333333333333:3:2026-07-05": {
+      outcome: "open",
+      completionCount: 1,
+      resolvedDate: null,
+      hiddenUntil: "2026-07-07",
+      scheduleRevision: 3,
+      scheduledDate: "2026-07-05"
+    },
+    "33333333-3333-4333-8333-333333333333:3:2026-07-06": {
+      outcome: "done",
+      completionCount: 2,
+      resolvedDate: "2026-07-07",
+      hiddenUntil: null,
+      scheduleRevision: 3,
+      scheduledDate: "2026-07-06"
+    }
+  });
   assert.equal(imported.groups[0].name, "Restored Group");
   assert.equal(imported.eveningReminderMinutes, 1170);
   assert.deepEqual(imported.notificationGroupFilter, {
@@ -913,8 +956,20 @@ test("authenticated users can import valid exports and reject malformed exports"
   const synced = await syncDevice(auth.token, "import-viewer");
   assert.equal(synced.items.length, 1);
   assert.equal(synced.items[0].title, "Restore me");
+  assert.deepEqual(synced.items[0].occurrences, imported.items[0].occurrences);
   assert.deepEqual(synced.notificationGroupFilter, imported.notificationGroupFilter);
   assert.equal(synced.items.some((item) => item.title === "Replace me"), false);
+
+  const exported = await fetch(`${baseURL}/api/export`, {
+    headers: { authorization: `Bearer ${auth.token}` }
+  });
+  assert.equal(exported.status, 200);
+  const exportedItem = (await exported.json()).checklist.items[0];
+  assert.equal(exportedItem.missedBehavior, "keepUntilDone");
+  assert.equal(exportedItem.scheduleRevision, 3);
+  assert.equal(exportedItem.carryoverStartDate, "2026-07-05");
+  assert.equal(exportedItem.carryoverResolvedThroughDate, "2026-07-04");
+  assert.deepEqual(exportedItem.occurrences, imported.items[0].occurrences);
 });
 
 test("two-client sync merges offline conflicts and preserves deletion tombstones", async () => {
@@ -942,7 +997,8 @@ test("two-client sync merges offline conflicts and preserves deletion tombstones
       changedFields: [
         "title", "notes", "schedule", "customWeekdays", "reminderMinutes",
         "quantity", "createdAt", "groupID", "sortOrder", "skippedDates",
-        "openDates", "pauseWindows"
+        "openDates", "pauseWindows", "scheduleRevision", "missedBehavior", "carryoverStartDate",
+        "carryoverResolvedThroughDate"
       ],
       item: {
         title: "Water plants",
@@ -956,7 +1012,11 @@ test("two-client sync merges offline conflicts and preserves deletion tombstones
         sortOrder: 0,
         skippedDates: [],
         openDates: [],
-        pauseWindows: []
+        pauseWindows: [],
+        scheduleRevision: 2,
+        missedBehavior: "keepUntilDone",
+        carryoverStartDate: "2026-07-09",
+        carryoverResolvedThroughDate: "2026-07-08"
       }
     }
   ]);
@@ -964,6 +1024,11 @@ test("two-client sync merges offline conflicts and preserves deletion tombstones
 
   const initialDeviceB = await syncDevice(auth.token, "sync-device-b");
   assert.equal(initialDeviceB.items[0].title, "Water plants");
+  assert.equal(initialDeviceB.items[0].missedBehavior, "keepUntilDone");
+  assert.equal(initialDeviceB.items[0].carryoverStartDate, "2026-07-09");
+  assert.equal(initialDeviceB.items[0].carryoverResolvedThroughDate, "2026-07-08");
+  assert.equal(initialDeviceB.items[0].scheduleRevision, 2);
+  assert.deepEqual(initialDeviceB.items[0].occurrences, {});
   assert.equal(initialDeviceB.groups[0].name, "Home");
 
   await syncDevice(auth.token, "sync-device-a", [
@@ -991,6 +1056,19 @@ test("two-client sync merges offline conflicts and preserves deletion tombstones
       completionDate,
       completed: false,
       completionCount: 2
+    },
+    {
+      id: `device-a-occurrence-${suffix}`,
+      itemID,
+      kind: "occurrence",
+      stamp: "2026-07-10T10:05:30.000Z",
+      occurrenceDate: "2026-07-09",
+      occurrence: {
+        outcome: "done",
+        completionCount: 3,
+        resolvedDate: "2026-07-10",
+        hiddenUntil: null
+      }
     }
   ]);
 
@@ -1019,13 +1097,36 @@ test("two-client sync merges offline conflicts and preserves deletion tombstones
       completionDate,
       completed: false,
       completionCount: 1
+    },
+    {
+      id: `device-b-stale-occurrence-${suffix}`,
+      itemID,
+      kind: "occurrence",
+      stamp: "2026-07-10T10:04:45.000Z",
+      occurrenceDate: "2026-07-09",
+      occurrence: {
+        outcome: "open",
+        completionCount: 1,
+        resolvedDate: null,
+        hiddenUntil: "2026-07-11"
+      }
     }
   ]);
 
   assert.equal(mergedDeviceB.items.length, 1);
   assert.equal(mergedDeviceB.items[0].title, "Water balcony plants");
-  assert.deepEqual(mergedDeviceB.items[0].completionCounts, { [completionDate]: 2 });
-  assert.deepEqual(mergedDeviceB.items[0].completedDates, []);
+  assert.deepEqual(mergedDeviceB.items[0].completionCounts, { "2026-07-09": 3, [completionDate]: 2 });
+  assert.deepEqual(mergedDeviceB.items[0].completedDates, ["2026-07-09"]);
+  assert.deepEqual(mergedDeviceB.items[0].occurrences, {
+    [`${itemID}:2:2026-07-09`]: {
+      outcome: "done",
+      completionCount: 3,
+      resolvedDate: "2026-07-10",
+      hiddenUntil: null,
+      scheduleRevision: 2,
+      scheduledDate: "2026-07-09"
+    }
+  });
   assert.equal(mergedDeviceB.groups[0].name, "Plant care");
   assert.equal(mergedDeviceB.groups[0].isCollapsed, true);
 
@@ -1261,6 +1362,246 @@ test("validates a sync request", () => {
   }), false);
 });
 
+test("validates carryover fields and atomic occurrence mutations", () => {
+  const validOccurrence = {
+    outcome: "open",
+    completionCount: 0,
+    resolvedDate: null,
+    hiddenUntil: "2026-07-14",
+    scheduleRevision: 4,
+    scheduledDate: "2026-07-12"
+  };
+  const requestFor = (mutation) => ({ deviceID: "device-1234", mutations: [mutation] });
+  const occurrenceMutation = {
+    id: "occurrence-valid",
+    itemID: "item-1",
+    kind: "occurrence",
+    stamp: "2026-07-13T10:00:00.000Z",
+    occurrenceID: "item-1:4:2026-07-12",
+    occurrenceDate: "2026-07-12",
+    occurrence: validOccurrence
+  };
+
+  assert.equal(validSyncRequest(requestFor(occurrenceMutation)), true);
+  assert.equal(validSyncRequest(requestFor({
+    ...occurrenceMutation,
+    id: "occurrence-valid-uppercase-item-id",
+    itemID: "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA",
+    occurrenceID: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa:4:2026-07-12"
+  })), true);
+  assert.equal(validSyncRequest(requestFor({
+    ...occurrenceMutation,
+    id: "occurrence-valid-legacy",
+    occurrenceID: undefined,
+    occurrence: { outcome: "open", completionCount: 0 }
+  })), true);
+  assert.equal(validSyncRequest(requestFor({
+    ...occurrenceMutation,
+    id: "occurrence-valid-missed",
+    occurrence: { ...validOccurrence, outcome: "missed", hiddenUntil: null }
+  })), true);
+  assert.equal(validSyncRequest(requestFor({
+    id: "carryover-valid",
+    itemID: "item-1",
+    kind: "upsert",
+    stamp: "2026-07-13T10:00:00.000Z",
+    changedFields: ["scheduleRevision", "missedBehavior", "carryoverStartDate", "carryoverResolvedThroughDate"],
+    item: {
+      scheduleRevision: 4,
+      missedBehavior: "keepUntilDone",
+      carryoverStartDate: "2026-07-12",
+      carryoverResolvedThroughDate: null
+    }
+  })), true);
+
+  const invalidOccurrences = [
+    { ...validOccurrence, outcome: "autoDelayed" },
+    { ...validOccurrence, completionCount: -1 },
+    { ...validOccurrence, completionCount: 100 },
+    { ...validOccurrence, completionCount: 0.5 },
+    { ...validOccurrence, resolvedDate: "07/13/2026" },
+    { ...validOccurrence, hiddenUntil: "tomorrow" },
+    { completionCount: 0, resolvedDate: null, hiddenUntil: null, scheduleRevision: 4, scheduledDate: "2026-07-12" },
+    { outcome: "open", resolvedDate: null, hiddenUntil: null, scheduleRevision: 4, scheduledDate: "2026-07-12" },
+    { ...validOccurrence, scheduleRevision: -1 },
+    { ...validOccurrence, scheduleRevision: 1.5 },
+    { ...validOccurrence, scheduledDate: "07/12/2026" },
+    { ...validOccurrence, originalScheduledDate: "2026-07-11" },
+    []
+  ];
+  for (const [index, occurrence] of invalidOccurrences.entries()) {
+    assert.equal(validSyncRequest(requestFor({
+      ...occurrenceMutation,
+      id: `occurrence-invalid-${index}`,
+      occurrence
+    })), false);
+  }
+  assert.equal(validSyncRequest(requestFor({
+    ...occurrenceMutation,
+    id: "occurrence-bad-date",
+    occurrenceDate: "07/12/2026"
+  })), false);
+  assert.equal(validSyncRequest(requestFor({
+    ...occurrenceMutation,
+    id: "occurrence-id-revision-mismatch",
+    occurrenceID: "item-1:3:2026-07-12"
+  })), false);
+  assert.equal(validSyncRequest(requestFor({
+    ...occurrenceMutation,
+    id: "occurrence-id-date-mismatch",
+    occurrenceID: "item-1:4:2026-07-11"
+  })), false);
+  assert.equal(validSyncRequest(requestFor({
+    ...occurrenceMutation,
+    id: "occurrence-payload-date-mismatch",
+    occurrenceDate: "2026-07-11"
+  })), false);
+  assert.equal(validSyncRequest(requestFor({
+    id: "carryover-bad-mode",
+    itemID: "item-1",
+    kind: "upsert",
+    stamp: "2026-07-13T10:00:00.000Z",
+    changedFields: ["missedBehavior"],
+    item: { missedBehavior: "autoDelay" }
+  })), false);
+  assert.equal(validSyncRequest(requestFor({
+    id: "carryover-bad-date",
+    itemID: "item-1",
+    kind: "upsert",
+    stamp: "2026-07-13T10:00:00.000Z",
+    changedFields: ["carryoverStartDate"],
+    item: { carryoverStartDate: "07/12/2026" }
+  })), false);
+  assert.equal(validSyncRequest(requestFor({
+    id: "schedule-revision-bad",
+    itemID: "item-1",
+    kind: "upsert",
+    stamp: "2026-07-13T10:00:00.000Z",
+    changedFields: ["scheduleRevision"],
+    item: { scheduleRevision: -1 }
+  })), false);
+});
+
+test("imports legacy carryover defaults and enforces occurrence entry limits", () => {
+  const legacyAccount = accountFromImportedChecklist({
+    items: [{ id: "legacy-item", title: "Legacy item" }]
+  });
+  const legacyItem = materializeAccount(legacyAccount).items[0];
+  assert.equal(legacyItem.missedBehavior, "markMissed");
+  assert.equal(legacyItem.carryoverStartDate, null);
+  assert.equal(legacyItem.carryoverResolvedThroughDate, null);
+  assert.deepEqual(legacyItem.occurrences, {});
+
+  const storedLegacyAccount = account();
+  storedLegacyAccount.items["stored-item"] = {
+    id: "stored-item",
+    fields: {
+      title: { value: "Stored legacy item", stamp: "2026-07-13T09:00:00.000Z", deviceID: "old-client" },
+      scheduleRevision: { value: 4, stamp: "2026-07-13T09:00:00.000Z", deviceID: "old-client" }
+    },
+    completions: {},
+    occurrences: {
+      "2026-07-12": {
+        value: {
+          outcome: "open",
+          completionCount: 1,
+          resolvedDate: null,
+          hiddenUntil: null
+        },
+        stamp: "2026-07-13T10:00:00.000Z",
+        deviceID: "old-client"
+      }
+    }
+  };
+  const migratedStoredItem = materializeAccount(storedLegacyAccount).items[0];
+  assert.deepEqual(migratedStoredItem.occurrences, {
+    "stored-item:4:2026-07-12": {
+      outcome: "open",
+      completionCount: 1,
+      resolvedDate: null,
+      hiddenUntil: null,
+      scheduleRevision: 4,
+      scheduledDate: "2026-07-12"
+    }
+  });
+  assert.deepEqual(Object.keys(storedLegacyAccount.items["stored-item"].occurrences), [
+    "stored-item:4:2026-07-12"
+  ]);
+
+  const canonicalAccount = accountFromImportedChecklist({
+    items: [{
+      id: "canonical-item",
+      title: "Canonical item",
+      scheduleRevision: 8,
+      occurrences: {
+        "canonical-item:8:2026-07-12": {
+          outcome: "missed",
+          completionCount: 0,
+          resolvedDate: "2026-07-13",
+          hiddenUntil: null,
+          scheduleRevision: 8,
+          scheduledDate: "2026-07-12"
+        }
+      }
+    }]
+  });
+  assert.equal(materializeAccount(canonicalAccount).items[0].scheduleRevision, 8);
+  assert.equal(
+    materializeAccount(canonicalAccount).items[0].occurrences["canonical-item:8:2026-07-12"].outcome,
+    "missed"
+  );
+
+  const occurrenceEntries = Array.from({ length: 5001 }, (_, index) => {
+    const date = new Date(Date.UTC(2020, 0, index + 1)).toISOString().slice(0, 10);
+    return [date, {
+      outcome: "open",
+      completionCount: 0,
+      resolvedDate: null,
+      hiddenUntil: null
+    }];
+  });
+  const firstFiveThousand = Object.fromEntries(occurrenceEntries.slice(0, 5000));
+  const atLimit = accountFromImportedChecklist({
+    items: [{ id: "at-limit-item", title: "At limit", occurrences: firstFiveThousand }]
+  });
+  assert.equal(Object.keys(materializeAccount(atLimit).items[0].occurrences).length, 5000);
+
+  assert.throws(() => accountFromImportedChecklist({
+    items: [{ id: "over-limit-item", title: "Over limit", occurrences: Object.fromEntries(occurrenceEntries) }]
+  }), (error) => error.status === 422 && /Invalid Ritual Cue export/.test(error.message));
+  assert.throws(() => accountFromImportedChecklist({
+    items: [{
+      id: "bad-occurrence-item",
+      title: "Bad occurrence",
+      occurrences: {
+        "not-a-date": {
+          outcome: "open",
+          completionCount: 0,
+          resolvedDate: null,
+          hiddenUntil: null
+        }
+      }
+    }]
+  }), (error) => error.status === 422);
+  assert.throws(() => accountFromImportedChecklist({
+    items: [{
+      id: "mismatched-canonical-item",
+      title: "Mismatched canonical item",
+      scheduleRevision: 8,
+      occurrences: {
+        "mismatched-canonical-item:7:2026-07-12": {
+          outcome: "open",
+          completionCount: 0,
+          resolvedDate: null,
+          hiddenUntil: null,
+          scheduleRevision: 8,
+          scheduledDate: "2026-07-12"
+        }
+      }
+    }]
+  }), (error) => error.status === 422);
+});
+
 test("field-level merging preserves unrelated offline edits", () => {
   const state = account();
   applyMutation(state, {
@@ -1328,6 +1669,168 @@ test("completion conflicts resolve per date", () => {
   }, "device-b");
 
   assert.deepEqual(materializeAccount(state).items[0].completedDates, ["2026-06-24"]);
+});
+
+test("occurrence identities preserve schedule revisions and reconcile legacy day state atomically", () => {
+  const state = account();
+  applyMutation(state, {
+    id: "create-occurrence-item",
+    itemID: "item-1",
+    kind: "upsert",
+    stamp: "2026-07-12T09:00:00.000Z",
+    changedFields: ["title", "quantity", "scheduleRevision", "missedBehavior", "skippedDates", "openDates"],
+    item: {
+      title: "Water plants",
+      quantity: 3,
+      scheduleRevision: 2,
+      missedBehavior: "keepUntilDone",
+      skippedDates: ["2026-07-14"],
+      openDates: ["2026-07-12"]
+    }
+  }, "device-a");
+  applyMutation(state, {
+    id: "legacy-partial-before-occurrence",
+    itemID: "item-1",
+    kind: "completion",
+    stamp: "2026-07-13T09:30:00.000Z",
+    completionDate: "2026-07-12",
+    completed: false,
+    completionCount: 2
+  }, "device-a");
+  applyMutation(state, {
+    id: "occurrence-open",
+    itemID: "item-1",
+    kind: "occurrence",
+    stamp: "2026-07-13T10:00:00.000Z",
+    occurrenceDate: "2026-07-12",
+    occurrence: {
+      outcome: "open",
+      completionCount: 1,
+      resolvedDate: null,
+      hiddenUntil: "2026-07-14"
+    }
+  }, "device-a");
+  applyMutation(state, {
+    id: "occurrence-stale-skip",
+    itemID: "item-1",
+    kind: "occurrence",
+    stamp: "2026-07-13T09:59:00.000Z",
+    occurrenceDate: "2026-07-12",
+    occurrence: {
+      outcome: "skipped",
+      completionCount: 0,
+      resolvedDate: "2026-07-13",
+      hiddenUntil: null
+    }
+  }, "device-b");
+  applyMutation(state, {
+    id: "newer-legacy-undone-must-not-split-occurrence",
+    itemID: "item-1",
+    kind: "completion",
+    stamp: "2026-07-13T12:00:00.000Z",
+    completionDate: "2026-07-12",
+    completed: false,
+    completionCount: 1
+  }, "legacy-device");
+  applyMutation(state, {
+    id: "older-revision-late-open",
+    itemID: "item-1",
+    kind: "occurrence",
+    stamp: "2026-07-13T13:00:00.000Z",
+    occurrenceID: "item-1:1:2026-07-12",
+    occurrenceDate: "2026-07-12",
+    occurrence: {
+      outcome: "open",
+      completionCount: 1,
+      resolvedDate: null,
+      hiddenUntil: null,
+      scheduleRevision: 1,
+      scheduledDate: "2026-07-12"
+    }
+  }, "device-c");
+  applyMutation(state, {
+    id: "occurrence-done",
+    itemID: "item-1",
+    kind: "occurrence",
+    stamp: "2026-07-13T11:00:00.000Z",
+    occurrenceDate: "2026-07-12",
+    occurrence: {
+      outcome: "done",
+      completionCount: 3,
+      resolvedDate: "2026-07-13",
+      hiddenUntil: null
+    }
+  }, "device-b");
+  applyMutation(state, {
+    id: "occurrence-next-date",
+    itemID: "item-1",
+    kind: "occurrence",
+    stamp: "2026-07-13T11:01:00.000Z",
+    occurrenceDate: "2026-07-13",
+    occurrence: {
+      outcome: "open",
+      completionCount: 0,
+      resolvedDate: null,
+      hiddenUntil: null
+    }
+  }, "device-a");
+  applyMutation(state, {
+    id: "occurrence-missed",
+    itemID: "item-1",
+    kind: "occurrence",
+    stamp: "2026-07-13T11:02:00.000Z",
+    occurrenceID: "item-1:2:2026-07-14",
+    occurrenceDate: "2026-07-14",
+    occurrence: {
+      outcome: "missed",
+      completionCount: 1,
+      resolvedDate: "2026-07-13",
+      hiddenUntil: null,
+      scheduleRevision: 2,
+      scheduledDate: "2026-07-14"
+    }
+  }, "device-a");
+
+  const item = materializeAccount(state).items[0];
+  assert.equal(item.scheduleRevision, 2);
+  assert.deepEqual(item.completedDates, ["2026-07-12"]);
+  assert.deepEqual(item.completionCounts, { "2026-07-12": 3 });
+  assert.deepEqual(item.openDates, ["2026-07-13"]);
+  assert.deepEqual(item.skippedDates, []);
+  assert.deepEqual(item.occurrences, {
+    "item-1:1:2026-07-12": {
+      outcome: "open",
+      completionCount: 1,
+      resolvedDate: null,
+      hiddenUntil: null,
+      scheduleRevision: 1,
+      scheduledDate: "2026-07-12"
+    },
+    "item-1:2:2026-07-12": {
+      outcome: "done",
+      completionCount: 3,
+      resolvedDate: "2026-07-13",
+      hiddenUntil: null,
+      scheduleRevision: 2,
+      scheduledDate: "2026-07-12"
+    },
+    "item-1:2:2026-07-13": {
+      outcome: "open",
+      completionCount: 0,
+      resolvedDate: null,
+      hiddenUntil: null,
+      scheduleRevision: 2,
+      scheduledDate: "2026-07-13"
+    },
+    "item-1:2:2026-07-14": {
+      outcome: "missed",
+      completionCount: 1,
+      resolvedDate: "2026-07-13",
+      hiddenUntil: null,
+      scheduleRevision: 2,
+      scheduledDate: "2026-07-14"
+    }
+  });
 });
 
 test("completion counts materialize partial quantity progress", () => {

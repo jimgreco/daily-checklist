@@ -48,15 +48,44 @@ struct RitualCueApp: App {
                     guard let rawID = notification.userInfo?["itemID"] as? String,
                           let itemID = UUID(uuidString: rawID),
                           let action = notification.userInfo?["action"] as? String else { return }
-                    let date = (notification.userInfo?["date"] as? String)
-                        .flatMap(DateKey.date(from:)) ?? Date()
+                    let occurrenceID = notification.userInfo?["occurrenceID"] as? String
+                    let occurrenceKey = occurrenceID
+                        .flatMap { ChecklistOccurrenceIdentifier.scheduledDateKey(from: $0, itemID: itemID) }
+                        ?? (notification.userInfo?["occurrenceDate"] as? String)
+                    let date = occurrenceKey.flatMap(DateKey.date(from:)) ?? Date()
+                    let isCarryover = notification.userInfo?["isCarryover"] as? Bool ?? false
                     switch action {
                     case RitualNotificationAction.complete:
-                        store.complete(itemID: itemID, on: date)
+                        if let occurrenceID {
+                            store.completeCarryover(
+                                itemID: itemID,
+                                occurrenceID: occurrenceID,
+                                occurrenceDate: date
+                            )
+                        } else if isCarryover {
+                            store.completeCarryover(itemID: itemID, occurrenceDate: date)
+                        } else {
+                            store.complete(itemID: itemID, on: date)
+                        }
                     case RitualNotificationAction.skip:
-                        store.skip(itemID: itemID, on: date)
+                        if let occurrenceID {
+                            store.skipCarryover(
+                                itemID: itemID,
+                                occurrenceID: occurrenceID,
+                                occurrenceDate: date
+                            )
+                        } else if isCarryover {
+                            store.skipCarryover(itemID: itemID, occurrenceDate: date)
+                        } else {
+                            store.skip(itemID: itemID, on: date)
+                        }
                     case RitualNotificationAction.snooze:
-                        store.snooze(itemID: itemID)
+                        store.snooze(
+                            itemID: itemID,
+                            occurrenceDate: date,
+                            occurrenceID: occurrenceID,
+                            isCarryover: isCarryover
+                        )
                     default:
                         break
                     }

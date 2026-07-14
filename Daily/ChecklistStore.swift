@@ -83,6 +83,7 @@ struct RoutineInsightHighlight: Equatable {
 struct RoutineInsightSummary: Equatable {
     let completedCheckIns: Int
     let expectedCheckIns: Int
+    let lateCompletedCheckIns: Int
     let trendPercentagePoints: Int?
     let currentStreak: RoutineInsightHighlight?
     let missedWeekday: String?
@@ -94,6 +95,179 @@ struct RoutineInsightSummary: Equatable {
     var completionPercentage: Int {
         guard expectedCheckIns > 0 else { return 0 }
         return Int((Double(completedCheckIns) / Double(expectedCheckIns) * 100).rounded())
+    }
+}
+
+struct CarryoverOccurrence: Identifiable, Equatable {
+    let id: String
+    let scheduledDateKey: String
+    let scheduleRevision: Int
+    let state: ChecklistOccurrence?
+}
+
+struct CarryoverEntry: Identifiable, Equatable {
+    var id: UUID { item.id }
+    let item: ChecklistItem
+    let occurrences: [CarryoverOccurrence]
+
+    var scheduledDateKeys: [String] { occurrences.map(\.scheduledDateKey) }
+    var oldestScheduledDateKey: String { scheduledDateKeys[0] }
+    var latestScheduledDateKey: String { scheduledDateKeys[scheduledDateKeys.count - 1] }
+    var latestOccurrenceID: String { occurrences[occurrences.count - 1].id }
+    var latestScheduleRevision: Int { occurrences[occurrences.count - 1].scheduleRevision }
+    var outstandingOccurrenceCount: Int { occurrences.count }
+    var latestCompletionCount: Int {
+        if let count = occurrences.last?.state?.completionCount {
+            return min(max(0, count), item.quantity)
+        }
+        guard let date = DateKey.date(from: latestScheduledDateKey) else { return 0 }
+        return item.completionCount(on: date)
+    }
+}
+
+enum CarryoverResolver {
+    static func entries(
+        items: [ChecklistItem],
+        groups: [ChecklistGroup],
+        asOf date: Date = .now,
+        includeHidden: Bool = false,
+        calendar: Calendar = .current
+    ) -> [CarryoverEntry] {
+        let day = calendar.startOfDay(for: date)
+        guard let yesterday = calendar.date(byAdding: .day, value: -1, to: day) else { return [] }
+        let todayKey = DateKey.string(from: day)
+        let groupsByID = Dictionary(uniqueKeysWithValues: groups.map { ($0.id, $0) })
+
+        func isPaused(_ item: ChecklistItem, on targetDate: Date) -> Bool {
+            if item.isPaused(on: targetDate) { return true }
+            guard let groupID = item.groupID else { return false }
+            return groupsByID[groupID]?.isPaused(on: targetDate) == true
+        }
+
+        return items.compactMap { item -> CarryoverEntry? in
+            guard item.missedBehavior == .keepUntilDone,
+                  item.schedule != .everyDay,
+                  let startKey = item.carryoverStartDate,
+                  let rawStartDate = DateKey.date(from: startKey),
+                  (includeHidden || !isPaused(item, on: day)) else { return nil }
+
+            let firstActiveDate = calendar.startOfDay(for: item.startDate ?? item.createdAt)
+            var cursor = max(calendar.startOfDay(for: rawStartDate), firstActiveDate)
+            var unresolved: [String: CarryoverOccurrence] = [:]
+
+            func addOccurrence(
+                scheduledDateKey: String,
+                revision: Int,
+                state: ChecklistOccurrence?
+            ) {
+                let identifier = ChecklistOccurrenceIdentifier.string(
+                    itemID: item.id,
+                    scheduleRevision: revision,
+                    scheduledDateKey: scheduledDateKey
+                )
+                unresolved[identifier] = CarryoverOccurrence(
+                    id: identifier,
+                    scheduledDateKey: scheduledDateKey,
+                    scheduleRevision: revision,
+                    state: state
+                )
+            }
+
+            while cursor <= yesterday {
+                let key = DateKey.string(from: cursor)
+                let occurrence = item.occurrence(scheduledDate: key)
+                let explicitlyReopened = occurrence?.outcome == .open && item.openDates.contains(key)
+                let pastResolutionBoundary = item.carryoverResolvedThroughDate.map { key > $0 } ?? true
+                if (pastResolutionBoundary || explicitlyReopened),
+                   item.isScheduled(on: cursor, calendar: calendar),
+                   !isPaused(item, on: cursor),
+                   (occurrence?.completionCount ?? item.completionCount(on: cursor)) < item.quantity,
+                   (occurrence != nil || !item.isSkipped(on: cursor)),
+                   occurrence?.outcome != .done,
+                   occurrence?.outcome != .skipped,
+                   occurrence?.outcome != .missed {
+                    addOccurrence(
+                        scheduledDateKey: key,
+                        revision: item.scheduleRevision,
+                        state: occurrence
+                    )
+                }
+                guard let next = calendar.date(byAdding: .day, value: 1, to: cursor) else { break }
+                cursor = next
+            }
+
+            // Persisted open occurrences survive later schedule edits. A quantity
+            // reduction can make previously partial progress complete, so do not
+            // keep that occurrence open solely because its stored outcome is stale.
+            var todayPersistedOccurrences: [CarryoverOccurrence] = []
+            for (identifier, occurrence) in item.occurrences where occurrence.outcome == .open {
+                let key = occurrence.scheduledDate
+                let appliesAcrossScheduleEdit = occurrence.scheduleRevision < item.scheduleRevision
+                let explicitlyReopened = item.openDates.contains(key)
+                guard key <= todayKey,
+                      (key >= startKey || appliesAcrossScheduleEdit || explicitlyReopened),
+                      DateKey.date(from: key) != nil,
+                      occurrence.completionCount < item.quantity else { continue }
+                let reference = CarryoverOccurrence(
+                    id: identifier,
+                    scheduledDateKey: key,
+                    scheduleRevision: occurrence.scheduleRevision,
+                    state: occurrence
+                )
+                if key == todayKey {
+                    todayPersistedOccurrences.append(reference)
+                } else {
+                    unresolved[identifier] = reference
+                }
+            }
+
+            // When today's recurrence arrives while an older obligation is still
+            // open, it belongs to the same row. The newest occurrence is the one a
+            // real-world completion resolves; older dates remain recorded as missed.
+            if !unresolved.isEmpty,
+               item.isScheduled(on: day, calendar: calendar),
+               !isPaused(item, on: day),
+               (item.occurrence(scheduledDate: todayKey)?.completionCount
+                    ?? item.completionCount(on: day)) < item.quantity,
+               (item.occurrence(scheduledDate: todayKey) != nil || !item.isSkipped(on: day)),
+               item.occurrence(scheduledDate: todayKey)?.outcome != .done,
+               item.occurrence(scheduledDate: todayKey)?.outcome != .skipped,
+               item.occurrence(scheduledDate: todayKey)?.outcome != .missed {
+                addOccurrence(
+                    scheduledDateKey: todayKey,
+                    revision: item.scheduleRevision,
+                    state: item.occurrence(scheduledDate: todayKey)
+                )
+            }
+            if !unresolved.isEmpty {
+                for reference in todayPersistedOccurrences {
+                    unresolved[reference.id] = reference
+                }
+            }
+
+            let sortedOccurrences = unresolved.values.sorted {
+                if $0.scheduledDateKey != $1.scheduledDateKey {
+                    return $0.scheduledDateKey < $1.scheduledDateKey
+                }
+                if $0.scheduleRevision != $1.scheduleRevision {
+                    return $0.scheduleRevision < $1.scheduleRevision
+                }
+                return $0.id < $1.id
+            }
+            guard let latest = sortedOccurrences.last else { return nil }
+            if !includeHidden,
+               let hiddenUntil = latest.state?.hiddenUntil,
+               hiddenUntil > todayKey {
+                return nil
+            }
+            return CarryoverEntry(item: item, occurrences: sortedOccurrences)
+        }
+        .sorted {
+            if $0.oldestScheduledDateKey != $1.oldestScheduledDateKey {
+                return $0.oldestScheduledDateKey < $1.oldestScheduledDateKey
+            }
+            return $0.item.title.localizedCaseInsensitiveCompare($1.item.title) == .orderedAscending
+        }
     }
 }
 
@@ -174,7 +348,15 @@ final class ChecklistStore: ObservableObject {
     }
 
     var todoItems: [ChecklistItem] {
-        visibleItems.filter { !$0.isComplete(on: selectedDate) && !$0.isSkipped(on: selectedDate) && !isPaused($0, on: selectedDate) }
+        let groupedCarryoverIDs = isSelectedDateToday && scope == .today
+            ? carryoverItemIDsIncludingHidden
+            : []
+        return visibleItems.filter {
+            !groupedCarryoverIDs.contains($0.id)
+                && !$0.isComplete(on: selectedDate)
+                && !$0.isSkipped(on: selectedDate)
+                && !isPaused($0, on: selectedDate)
+        }
     }
 
     var completedItems: [ChecklistItem] {
@@ -183,6 +365,34 @@ final class ChecklistStore: ObservableObject {
 
     var skippedItems: [ChecklistItem] {
         visibleItems.filter { $0.isSkipped(on: selectedDate) && !$0.isComplete(on: selectedDate) }
+    }
+
+    var carryoverEntries: [CarryoverEntry] {
+        CarryoverResolver.entries(items: items, groups: groups)
+    }
+
+    var carryoverItemIDsIncludingHidden: Set<UUID> {
+        Set(CarryoverResolver.entries(
+            items: items,
+            groups: groups,
+            includeHidden: true
+        ).map(\.item.id))
+    }
+
+    func unresolvedCarryoverEntry(for itemID: UUID) -> CarryoverEntry? {
+        CarryoverResolver.entries(
+            items: items,
+            groups: groups,
+            includeHidden: true
+        ).first { $0.item.id == itemID }
+    }
+
+    func unresolvedCarryoverEntries(inGroup groupID: UUID) -> [CarryoverEntry] {
+        CarryoverResolver.entries(
+            items: items,
+            groups: groups,
+            includeHidden: true
+        ).filter { $0.item.groupID == groupID }
     }
 
     var isSelectedDateToday: Bool {
@@ -213,6 +423,15 @@ final class ChecklistStore: ObservableObject {
 
     func historyState(for item: ChecklistItem, on date: Date) -> ChecklistHistoryState {
         let day = Calendar.current.startOfDay(for: date)
+        let key = DateKey.string(from: day)
+        if let occurrence = Self.latestOccurrence(in: item, scheduledDateKey: key)?.occurrence {
+            switch occurrence.outcome {
+            case .done: return .done
+            case .skipped: return .skipped
+            case .missed: return .missed
+            case .open: return .open
+            }
+        }
         if item.isComplete(on: day) { return .done }
         if item.isSkipped(on: day) { return .skipped }
         if item.isExplicitlyOpen(on: day) { return .open }
@@ -295,6 +514,7 @@ final class ChecklistStore: ObservableObject {
             count: items[index].completionCount(on: selectedDate)
         ))
         queueDaySetMutationIfNeeded(for: items[index], wasSkipped: wasSkipped, wasOpen: wasOpen, key: key)
+        queueOccurrenceState(for: index, key: key)
         persistAndSchedule()
     }
 
@@ -319,6 +539,7 @@ final class ChecklistStore: ObservableObject {
         if skipped && wasCompletionCount > 0 {
             pendingMutations.append(.completion(itemID: items[index].id, date: key, completed: false, count: 0))
         }
+        queueOccurrenceState(for: index, key: key)
         persistAndSchedule()
     }
 
@@ -332,12 +553,347 @@ final class ChecklistStore: ObservableObject {
         items[index].openDates.remove(key)
         pendingMutations.append(.completion(itemID: itemID, date: key, completed: true, count: items[index].quantity))
         queueDaySetMutationIfNeeded(for: items[index], wasSkipped: wasSkipped, wasOpen: wasOpen, key: key)
+        queueOccurrenceState(for: index, key: key)
         persistAndSchedule()
     }
 
     func skip(itemID: UUID, on date: Date) {
         guard let item = items.first(where: { $0.id == itemID }) else { return }
         setSkipped(item, skipped: true, on: date)
+    }
+
+    func advanceCarryover(_ entry: CarryoverEntry) {
+        resolveCarryover(entry, completedCount: min(entry.latestCompletionCount + 1, entry.item.quantity))
+    }
+
+    func completeCarryover(itemID: UUID, occurrenceDate: Date) {
+        let key = DateKey.string(from: occurrenceDate)
+        guard let entry = CarryoverResolver.entries(
+            items: items,
+            groups: groups,
+            includeHidden: true
+        ).first(where: {
+            $0.item.id == itemID && $0.scheduledDateKeys.contains(key)
+        }) else {
+            complete(itemID: itemID, on: occurrenceDate)
+            return
+        }
+        resolveCarryover(entry, completedCount: entry.item.quantity)
+    }
+
+    func skipCarryover(_ entry: CarryoverEntry) {
+        skipCarryover(entry, targetOccurrenceID: nil)
+    }
+
+    func completeCarryover(
+        itemID: UUID,
+        occurrenceID: String,
+        occurrenceDate: Date
+    ) {
+        guard let entry = CarryoverResolver.entries(
+            items: items,
+            groups: groups,
+            includeHidden: true
+        ).first(where: {
+            $0.item.id == itemID && $0.occurrences.contains(where: { $0.id == occurrenceID })
+        }) else {
+            guard canActOnCurrentOccurrence(
+                itemID: itemID,
+                occurrenceID: occurrenceID,
+                occurrenceDate: occurrenceDate
+            ) else { return }
+            complete(itemID: itemID, on: occurrenceDate)
+            return
+        }
+        resolveCarryover(
+            entry,
+            targetOccurrenceID: occurrenceID,
+            completedCount: entry.item.quantity
+        )
+    }
+
+    func skipCarryover(
+        itemID: UUID,
+        occurrenceID: String,
+        occurrenceDate: Date
+    ) {
+        guard let entry = CarryoverResolver.entries(
+            items: items,
+            groups: groups,
+            includeHidden: true
+        ).first(where: {
+            $0.item.id == itemID && $0.occurrences.contains(where: { $0.id == occurrenceID })
+        }) else {
+            guard canActOnCurrentOccurrence(
+                itemID: itemID,
+                occurrenceID: occurrenceID,
+                occurrenceDate: occurrenceDate
+            ) else { return }
+            skip(itemID: itemID, on: occurrenceDate)
+            return
+        }
+        skipCarryover(entry, targetOccurrenceID: occurrenceID)
+    }
+
+    private func canActOnCurrentOccurrence(
+        itemID: UUID,
+        occurrenceID: String,
+        occurrenceDate: Date
+    ) -> Bool {
+        guard let parsed = ChecklistOccurrenceIdentifier.parse(occurrenceID),
+              parsed.itemID == itemID,
+              parsed.scheduledDateKey == DateKey.string(from: occurrenceDate),
+              let item = items.first(where: { $0.id == itemID }),
+              (parsed.scheduleRevision ?? 0) == item.scheduleRevision,
+              item.occurrence(
+                scheduledDate: parsed.scheduledDateKey,
+                scheduleRevision: item.scheduleRevision
+              )?.outcome != .done,
+              item.occurrence(
+                scheduledDate: parsed.scheduledDateKey,
+                scheduleRevision: item.scheduleRevision
+              )?.outcome != .skipped,
+              item.occurrence(
+                scheduledDate: parsed.scheduledDateKey,
+                scheduleRevision: item.scheduleRevision
+              )?.outcome != .missed,
+              !item.isComplete(on: occurrenceDate),
+              !item.isSkipped(on: occurrenceDate),
+              !isPaused(item, on: occurrenceDate),
+              item.occurs(on: occurrenceDate) || item.isExplicitlyOpen(on: occurrenceDate) else {
+            return false
+        }
+        return true
+    }
+
+    private func skipCarryover(
+        _ entry: CarryoverEntry,
+        targetOccurrenceID: String?
+    ) {
+        guard let index = items.firstIndex(where: { $0.id == entry.item.id }),
+              !entry.occurrences.isEmpty else { return }
+        let targetIndex = targetOccurrenceID.flatMap { identifier in
+            entry.occurrences.firstIndex(where: { $0.id == identifier })
+        } ?? (entry.occurrences.count - 1)
+        let latest = entry.occurrences[targetIndex]
+        let key = latest.scheduledDateKey
+        preserveFollowingSameDateOccurrences(
+            in: entry,
+            after: targetIndex,
+            itemIndex: index
+        )
+        let previousCount = latest.state?.completionCount ?? items[index].completionCounts[key] ?? 0
+        let wasSkipped = items[index].skippedDates.contains(key)
+        let wasOpen = items[index].openDates.contains(key)
+
+        items[index].setCompletionCount(0, forKey: key)
+        items[index].skippedDates.insert(key)
+        items[index].openDates.remove(key)
+        items[index].carryoverResolvedThroughDate = max(
+            items[index].carryoverResolvedThroughDate ?? key,
+            key
+        )
+        let occurrence = ChecklistOccurrence(
+            outcome: .skipped,
+            resolvedDate: DateKey.string(from: .now),
+            scheduleRevision: latest.scheduleRevision,
+            scheduledDate: key
+        )
+        items[index].setOccurrence(
+            occurrence,
+            scheduledDate: key,
+            scheduleRevision: latest.scheduleRevision
+        )
+
+        // Schedule edits may have materialized older open records. Close those
+        // internal records without adding them to skippedDates: they remain Missed
+        // in history, but can no longer resurrect the grouped carryover.
+        for older in entry.occurrences.prefix(targetIndex) {
+            guard older.state?.outcome == .open || older.state == nil else { continue }
+            let olderOccurrence = ChecklistOccurrence(
+                outcome: .missed,
+                completionCount: older.state?.completionCount ?? 0,
+                resolvedDate: DateKey.string(from: .now),
+                scheduleRevision: older.scheduleRevision,
+                scheduledDate: older.scheduledDateKey
+            )
+            items[index].setOccurrence(
+                olderOccurrence,
+                scheduledDate: older.scheduledDateKey,
+                scheduleRevision: older.scheduleRevision
+            )
+            pendingMutations.append(.occurrence(
+                itemID: items[index].id,
+                occurrenceID: older.id,
+                occurrence: olderOccurrence
+            ))
+        }
+
+        if previousCount > 0 {
+            pendingMutations.append(.completion(itemID: items[index].id, date: key, completed: false, count: 0))
+        }
+        queueDaySetMutationIfNeeded(for: items[index], wasSkipped: wasSkipped, wasOpen: wasOpen, key: key)
+        pendingMutations.append(.upsert(item: items[index], changedFields: ["carryoverResolvedThroughDate"]))
+        pendingMutations.append(.occurrence(
+            itemID: items[index].id,
+            occurrenceID: latest.id,
+            occurrence: occurrence
+        ))
+        persistAndSchedule()
+    }
+
+    func skipCarryover(itemID: UUID, occurrenceDate: Date) {
+        let key = DateKey.string(from: occurrenceDate)
+        guard let entry = CarryoverResolver.entries(
+            items: items,
+            groups: groups,
+            includeHidden: true
+        ).first(where: {
+            $0.item.id == itemID && $0.scheduledDateKeys.contains(key)
+        }) else {
+            skip(itemID: itemID, on: occurrenceDate)
+            return
+        }
+        skipCarryover(entry)
+    }
+
+    func deferCarryoverUntilTomorrow(_ entry: CarryoverEntry) {
+        guard let index = items.firstIndex(where: { $0.id == entry.item.id }),
+              let tomorrow = Calendar.current.date(byAdding: .day, value: 1, to: Calendar.current.startOfDay(for: .now)),
+              let latest = entry.occurrences.last else { return }
+        let key = latest.scheduledDateKey
+        var occurrence = latest.state ?? ChecklistOccurrence(
+            completionCount: entry.latestCompletionCount,
+            scheduleRevision: latest.scheduleRevision,
+            scheduledDate: key
+        )
+        occurrence.outcome = .open
+        occurrence.resolvedDate = nil
+        occurrence.hiddenUntil = DateKey.string(from: tomorrow)
+        items[index].setOccurrence(
+            occurrence,
+            scheduledDate: key,
+            scheduleRevision: latest.scheduleRevision
+        )
+        pendingMutations.append(.occurrence(
+            itemID: items[index].id,
+            occurrenceID: latest.id,
+            occurrence: occurrence
+        ))
+        persistAndSchedule()
+    }
+
+    private func resolveCarryover(
+        _ entry: CarryoverEntry,
+        targetOccurrenceID: String? = nil,
+        completedCount: Int
+    ) {
+        guard let index = items.firstIndex(where: { $0.id == entry.item.id }),
+              !entry.occurrences.isEmpty else { return }
+        let targetIndex = targetOccurrenceID.flatMap { identifier in
+            entry.occurrences.firstIndex(where: { $0.id == identifier })
+        } ?? (entry.occurrences.count - 1)
+        let latest = entry.occurrences[targetIndex]
+        let key = latest.scheduledDateKey
+        preserveFollowingSameDateOccurrences(
+            in: entry,
+            after: targetIndex,
+            itemIndex: index
+        )
+        let date = DateKey.date(from: key) ?? .now
+        let wasSkipped = items[index].skippedDates.contains(key)
+        let wasOpen = items[index].openDates.contains(key)
+        let count = min(max(0, completedCount), items[index].quantity)
+        let completed = count >= items[index].quantity
+
+        items[index].setCompletionCount(count, forKey: key)
+        items[index].skippedDates.remove(key)
+        items[index].openDates.remove(key)
+        var occurrence = ChecklistOccurrence(
+            outcome: completed ? .done : .open,
+            completionCount: count,
+            resolvedDate: completed ? DateKey.string(from: .now) : nil,
+            scheduleRevision: latest.scheduleRevision,
+            scheduledDate: key
+        )
+        occurrence.hiddenUntil = nil
+        items[index].setOccurrence(
+            occurrence,
+            scheduledDate: key,
+            scheduleRevision: latest.scheduleRevision
+        )
+        if completed {
+            items[index].carryoverResolvedThroughDate = max(
+                items[index].carryoverResolvedThroughDate ?? key,
+                key
+            )
+            for older in entry.occurrences.prefix(targetIndex) {
+                guard older.state?.outcome == .open || older.state == nil else { continue }
+                let olderOccurrence = ChecklistOccurrence(
+                    outcome: .missed,
+                    completionCount: older.state?.completionCount ?? 0,
+                    resolvedDate: DateKey.string(from: .now),
+                    scheduleRevision: older.scheduleRevision,
+                    scheduledDate: older.scheduledDateKey
+                )
+                items[index].setOccurrence(
+                    olderOccurrence,
+                    scheduledDate: older.scheduledDateKey,
+                    scheduleRevision: older.scheduleRevision
+                )
+                pendingMutations.append(.occurrence(
+                    itemID: items[index].id,
+                    occurrenceID: older.id,
+                    occurrence: olderOccurrence
+                ))
+            }
+        }
+
+        pendingMutations.append(.completion(
+            itemID: items[index].id,
+            date: DateKey.string(from: date),
+            completed: completed,
+            count: count
+        ))
+        queueDaySetMutationIfNeeded(for: items[index], wasSkipped: wasSkipped, wasOpen: wasOpen, key: key)
+        if completed {
+            pendingMutations.append(.upsert(item: items[index], changedFields: ["carryoverResolvedThroughDate"]))
+        }
+        pendingMutations.append(.occurrence(
+            itemID: items[index].id,
+            occurrenceID: latest.id,
+            occurrence: occurrence
+        ))
+        persistAndSchedule()
+    }
+
+    private func preserveFollowingSameDateOccurrences(
+        in entry: CarryoverEntry,
+        after targetIndex: Int,
+        itemIndex: Int
+    ) {
+        guard entry.occurrences.indices.contains(targetIndex),
+              items.indices.contains(itemIndex),
+              targetIndex + 1 < entry.occurrences.count else { return }
+        let targetDateKey = entry.occurrences[targetIndex].scheduledDateKey
+        for reference in entry.occurrences[(targetIndex + 1)...]
+            where reference.scheduledDateKey == targetDateKey && reference.state == nil {
+            let occurrence = ChecklistOccurrence(
+                completionCount: 0,
+                scheduleRevision: reference.scheduleRevision,
+                scheduledDate: reference.scheduledDateKey
+            )
+            items[itemIndex].setOccurrence(
+                occurrence,
+                scheduledDate: reference.scheduledDateKey,
+                scheduleRevision: reference.scheduleRevision
+            )
+            pendingMutations.append(.occurrence(
+                itemID: items[itemIndex].id,
+                occurrenceID: reference.id,
+                occurrence: occurrence
+            ))
+        }
     }
 
     func delay(_ item: ChecklistItem, from date: Date? = nil) throws {
@@ -374,6 +930,8 @@ final class ChecklistStore: ObservableObject {
             wasOpen: change.wasTargetOpen,
             key: change.targetKey
         )
+        queueOccurrenceState(for: index, key: change.sourceKey)
+        queueOccurrenceState(for: index, key: change.targetKey)
     }
 
     func setHistoryState(_ state: ChecklistHistoryState, for itemID: UUID, on date: Date) {
@@ -385,6 +943,10 @@ final class ChecklistStore: ObservableObject {
         let wasSkipped = items[index].skippedDates.contains(key)
         let wasOpen = items[index].openDates.contains(key)
         let wasPauseWindows = items[index].pauseWindows
+        let existingOccurrence = Self.latestOccurrence(in: items[index], scheduledDateKey: key)
+        let targetRevision = existingOccurrence?.occurrence.scheduleRevision ?? items[index].scheduleRevision
+        let wasOccurrence = existingOccurrence?.occurrence
+        let wasResolvedThroughDate = items[index].carryoverResolvedThroughDate
 
         switch state {
         case .done:
@@ -392,16 +954,43 @@ final class ChecklistStore: ObservableObject {
             items[index].skippedDates.remove(key)
             items[index].openDates.remove(key)
             items[index].clearPause(on: date)
+            if items[index].schedule != .everyDay {
+                items[index].setOccurrence(ChecklistOccurrence(
+                    outcome: .done,
+                    completionCount: items[index].quantity,
+                    resolvedDate: DateKey.string(from: .now),
+                    scheduleRevision: targetRevision,
+                    scheduledDate: key
+                ), scheduledDate: key, scheduleRevision: targetRevision)
+            }
         case .skipped:
             items[index].setCompletionCount(0, forKey: key)
             items[index].skippedDates.insert(key)
             items[index].openDates.remove(key)
             items[index].clearPause(on: date)
+            if items[index].schedule != .everyDay {
+                items[index].setOccurrence(ChecklistOccurrence(
+                    outcome: .skipped,
+                    resolvedDate: DateKey.string(from: .now),
+                    scheduleRevision: targetRevision,
+                    scheduledDate: key
+                ), scheduledDate: key, scheduleRevision: targetRevision)
+            }
         case .open:
             items[index].setCompletionCount(0, forKey: key)
             items[index].skippedDates.remove(key)
             items[index].openDates.insert(key)
             items[index].clearPause(on: date)
+            if items[index].schedule != .everyDay {
+                items[index].setOccurrence(
+                    ChecklistOccurrence(
+                        scheduleRevision: targetRevision,
+                        scheduledDate: key
+                    ),
+                    scheduledDate: key,
+                    scheduleRevision: targetRevision
+                )
+            }
         case .paused:
             items[index].setCompletionCount(0, forKey: key)
             items[index].skippedDates.remove(key)
@@ -412,6 +1001,18 @@ final class ChecklistStore: ObservableObject {
             items[index].skippedDates.remove(key)
             items[index].openDates.remove(key)
             items[index].clearPause(on: date)
+            if items[index].missedBehavior == .keepUntilDone {
+                items[index].setOccurrence(ChecklistOccurrence(
+                    outcome: .missed,
+                    resolvedDate: DateKey.string(from: .now),
+                    scheduleRevision: targetRevision,
+                    scheduledDate: key
+                ), scheduledDate: key, scheduleRevision: targetRevision)
+                items[index].carryoverResolvedThroughDate = max(
+                    items[index].carryoverResolvedThroughDate ?? key,
+                    key
+                )
+            }
         }
 
         let isCompleted = items[index].completedDates.contains(key)
@@ -419,7 +1020,13 @@ final class ChecklistStore: ObservableObject {
         let isSkipped = items[index].skippedDates.contains(key)
         let isOpen = items[index].openDates.contains(key)
         let pauseChanged = items[index].pauseWindows != wasPauseWindows
-        guard wasCompleted != isCompleted || wasCompletionCount != completionCount || wasSkipped != isSkipped || wasOpen != isOpen || pauseChanged else { return }
+        let updatedOccurrence = items[index].occurrence(
+            scheduledDate: key,
+            scheduleRevision: targetRevision
+        )
+        let occurrenceChanged = wasOccurrence != updatedOccurrence
+        let resolutionBoundaryChanged = wasResolvedThroughDate != items[index].carryoverResolvedThroughDate
+        guard wasCompleted != isCompleted || wasCompletionCount != completionCount || wasSkipped != isSkipped || wasOpen != isOpen || pauseChanged || occurrenceChanged || resolutionBoundaryChanged else { return }
 
         if wasCompleted != isCompleted || wasCompletionCount != completionCount || (!isCompleted && (isSkipped || wasSkipped)) {
             pendingMutations.append(.completion(itemID: itemID, date: key, completed: isCompleted, count: completionCount))
@@ -428,13 +1035,40 @@ final class ChecklistStore: ObservableObject {
         if pauseChanged {
             pendingMutations.append(.upsert(item: items[index], changedFields: ["pauseWindows"]))
         }
+        if occurrenceChanged, let occurrence = updatedOccurrence {
+            pendingMutations.append(.occurrence(
+                itemID: itemID,
+                occurrenceID: items[index].occurrenceID(
+                    scheduledDate: key,
+                    scheduleRevision: targetRevision
+                ),
+                occurrence: occurrence
+            ))
+        }
+        if resolutionBoundaryChanged {
+            pendingMutations.append(.upsert(item: items[index], changedFields: ["carryoverResolvedThroughDate"]))
+        }
 
         persistAndSchedule()
     }
 
-    func snooze(itemID: UUID, minutes: Int = 60) {
+    func snooze(
+        itemID: UUID,
+        occurrenceDate: Date = .now,
+        occurrenceID: String? = nil,
+        isCarryover: Bool = false,
+        minutes: Int = 60
+    ) {
         guard let item = items.first(where: { $0.id == itemID }) else { return }
-        Task { await notifications.snooze(item: item, minutes: minutes) }
+        Task {
+            await notifications.snooze(
+                item: item,
+                occurrenceDate: occurrenceDate,
+                occurrenceID: occurrenceID,
+                isCarryover: isCarryover,
+                minutes: minutes
+            )
+        }
     }
 
     func completeAllForSelectedDate() {
@@ -462,20 +1096,106 @@ final class ChecklistStore: ObservableObject {
         pendingMutations.append(contentsOf: items.filter { completedItemIDs.contains($0.id) }.map {
             .upsert(item: $0, changedFields: ["skippedDates", "openDates"])
         })
+        for itemID in completedItemIDs {
+            guard let index = items.firstIndex(where: { $0.id == itemID }) else { continue }
+            queueOccurrenceState(for: index, key: key)
+        }
         persistAndSchedule()
     }
 
     func save(_ item: ChecklistItem) {
         var item = item
+        if item.schedule == .everyDay {
+            item.missedBehavior = .markMissed
+        } else if item.missedBehavior == .keepUntilDone,
+                  item.carryoverStartDate == nil {
+            item.carryoverStartDate = DateKey.string(from: .now)
+        }
         if let index = items.firstIndex(where: { $0.id == item.id }) {
+            let previous = items[index]
+            if previous.missedBehavior == .markMissed,
+               item.missedBehavior == .keepUntilDone {
+                item.carryoverStartDate = DateKey.string(from: .now)
+            }
+            var occurrenceMutations: [SyncMutation] = []
+            let scheduleChanged = previous.schedule != item.schedule
+                || previous.customWeekdays != item.customWeekdays
+                || previous.startDate != item.startDate
+                || previous.endedAt != item.endedAt
+            let disablingCarryover = previous.missedBehavior == .keepUntilDone
+                && item.missedBehavior != .keepUntilDone
+            if (scheduleChanged || disablingCarryover),
+               previous.missedBehavior == .keepUntilDone {
+                let today = Calendar.current.startOfDay(for: .now)
+                let todayKey = DateKey.string(from: today)
+                var outstanding = CarryoverResolver.entries(
+                    items: [previous],
+                    groups: groups,
+                    includeHidden: true
+                ).first?.occurrences ?? []
+
+                // A schedule revision is forward-only, but today's old-revision
+                // occurrence has already arrived and must keep its identity.
+                if previous.isScheduled(on: today),
+                   !previous.isComplete(on: today),
+                   !previous.isSkipped(on: today) {
+                    let identifier = previous.occurrenceID(scheduledDate: todayKey)
+                    if !outstanding.contains(where: { $0.id == identifier }) {
+                        outstanding.append(CarryoverOccurrence(
+                            id: identifier,
+                            scheduledDateKey: todayKey,
+                            scheduleRevision: previous.scheduleRevision,
+                            state: previous.occurrence(scheduledDate: todayKey)
+                        ))
+                    }
+                }
+
+                for reference in outstanding {
+                    let existingOccurrence = item.occurrences[reference.id] ?? reference.state
+                    let count = reference.state?.completionCount
+                        ?? DateKey.date(from: reference.scheduledDateKey).map(previous.completionCount(on:))
+                        ?? 0
+                    var occurrence = existingOccurrence ?? ChecklistOccurrence(
+                        completionCount: count,
+                        scheduleRevision: reference.scheduleRevision,
+                        scheduledDate: reference.scheduledDateKey
+                    )
+                    let shouldTerminalize = disablingCarryover
+                        && occurrence.outcome == .open
+                    if shouldTerminalize {
+                        occurrence.outcome = .missed
+                        occurrence.resolvedDate = DateKey.string(from: .now)
+                        occurrence.hiddenUntil = nil
+                        item.openDates.remove(reference.scheduledDateKey)
+                    }
+                    guard existingOccurrence == nil || shouldTerminalize else { continue }
+                    item.setOccurrence(
+                        occurrence,
+                        scheduledDate: reference.scheduledDateKey,
+                        scheduleRevision: reference.scheduleRevision
+                    )
+                    occurrenceMutations.append(.occurrence(
+                        itemID: item.id,
+                        occurrenceID: reference.id,
+                        occurrence: occurrence
+                    ))
+                }
+            }
+            if scheduleChanged {
+                item.scheduleRevision = min(previous.scheduleRevision + 1, 1_000_000)
+                if item.missedBehavior == .keepUntilDone {
+                    item.carryoverStartDate = DateKey.string(from: .now)
+                }
+            }
             if items[index].groupID != item.groupID {
                 item.sortOrder = nextItemSortOrder(in: item.groupID)
             }
-            let changedFields = Self.changedFields(from: items[index], to: item)
+            let changedFields = Self.changedFields(from: previous, to: item)
             items[index] = item
             if !changedFields.isEmpty {
                 pendingMutations.append(.upsert(item: item, changedFields: changedFields))
             }
+            pendingMutations.append(contentsOf: occurrenceMutations)
         } else {
             item.sortOrder = nextItemSortOrder(in: item.groupID)
             items.append(item)
@@ -625,7 +1345,11 @@ final class ChecklistStore: ObservableObject {
     func delete(_ item: ChecklistItem) {
         guard let index = items.firstIndex(where: { $0.id == item.id }) else { return }
         items[index].endedAt = Calendar.current.startOfDay(for: .now)
-        pendingMutations.append(.upsert(item: items[index], changedFields: ["endedAt"]))
+        items[index].scheduleRevision = min(items[index].scheduleRevision + 1, 1_000_000)
+        pendingMutations.append(.upsert(
+            item: items[index],
+            changedFields: ["endedAt", "scheduleRevision"]
+        ))
         persistAndSchedule()
     }
 
@@ -710,22 +1434,57 @@ final class ChecklistStore: ObservableObject {
         var changed: [ChecklistItem] = []
         for index in items.indices where items[index].groupID == groupID && items[index].endedAt == nil {
             items[index].endedAt = end
+            items[index].scheduleRevision = min(items[index].scheduleRevision + 1, 1_000_000)
             changed.append(items[index])
         }
         guard !changed.isEmpty else { return }
-        pendingMutations.append(contentsOf: changed.map { .upsert(item: $0, changedFields: ["endedAt"]) })
+        pendingMutations.append(contentsOf: changed.map {
+            .upsert(item: $0, changedFields: ["endedAt", "scheduleRevision"])
+        })
         persistAndSchedule()
     }
 
     func startGroupTomorrow(_ groupID: UUID) {
         guard let tomorrow = Calendar.current.date(byAdding: .day, value: 1, to: Calendar.current.startOfDay(for: .now)) else { return }
+        for carryover in unresolvedCarryoverEntries(inGroup: groupID) {
+            guard let index = items.firstIndex(where: { $0.id == carryover.item.id }) else { continue }
+            for reference in carryover.occurrences where items[index].occurrences[reference.id] == nil {
+                let count = reference.state?.completionCount
+                    ?? DateKey.date(from: reference.scheduledDateKey).map(items[index].completionCount(on:))
+                    ?? 0
+                let occurrence = reference.state ?? ChecklistOccurrence(
+                    completionCount: count,
+                    scheduleRevision: reference.scheduleRevision,
+                    scheduledDate: reference.scheduledDateKey
+                )
+                items[index].setOccurrence(
+                    occurrence,
+                    scheduledDate: reference.scheduledDateKey,
+                    scheduleRevision: reference.scheduleRevision
+                )
+                pendingMutations.append(.occurrence(
+                    itemID: items[index].id,
+                    occurrenceID: reference.id,
+                    occurrence: occurrence
+                ))
+            }
+        }
         var changed: [ChecklistItem] = []
         for index in items.indices where items[index].groupID == groupID && items[index].endedAt == nil {
             items[index].startDate = tomorrow
+            items[index].scheduleRevision = min(items[index].scheduleRevision + 1, 1_000_000)
+            if items[index].missedBehavior == .keepUntilDone {
+                items[index].carryoverStartDate = DateKey.string(from: tomorrow)
+            }
             changed.append(items[index])
         }
         guard !changed.isEmpty else { return }
-        pendingMutations.append(contentsOf: changed.map { .upsert(item: $0, changedFields: ["startDate"]) })
+        pendingMutations.append(contentsOf: changed.map {
+            .upsert(
+                item: $0,
+                changedFields: ["startDate", "scheduleRevision", "carryoverStartDate"]
+            )
+        })
         persistAndSchedule()
     }
 
@@ -745,7 +1504,11 @@ final class ChecklistStore: ObservableObject {
                 createdAt: .now,
                 startDate: item.startDate,
                 groupID: group.id,
-                sortOrder: Double(offset)
+                sortOrder: Double(offset),
+                missedBehavior: item.missedBehavior,
+                carryoverStartDate: item.missedBehavior == .keepUntilDone
+                    ? DateKey.string(from: .now)
+                    : nil
             )
         }
         items.append(contentsOf: copied)
@@ -776,6 +1539,7 @@ final class ChecklistStore: ObservableObject {
         }
         var completedCheckIns = 0
         var expectedCheckIns = 0
+        var lateCompletedCheckIns = 0
         var recentCompleted = 0
         var recentExpected = 0
         var priorCompleted = 0
@@ -789,7 +1553,17 @@ final class ChecklistStore: ObservableObject {
                 guard isExpected else { continue }
 
                 expectedCheckIns += 1
-                if state == .done { completedCheckIns += 1 }
+                if state == .done {
+                    completedCheckIns += 1
+                    let key = DateKey.string(from: day)
+                    if let resolvedDate = Self.latestOccurrence(
+                        in: item,
+                        scheduledDateKey: key
+                    )?.occurrence.resolvedDate,
+                       resolvedDate > key {
+                        lateCompletedCheckIns += 1
+                    }
+                }
 
                 if index < 7 {
                     recentExpected += 1
@@ -852,6 +1626,7 @@ final class ChecklistStore: ObservableObject {
         return RoutineInsightSummary(
             completedCheckIns: completedCheckIns,
             expectedCheckIns: expectedCheckIns,
+            lateCompletedCheckIns: lateCompletedCheckIns,
             trendPercentagePoints: trendPercentagePoints,
             currentStreak: currentStreak,
             missedWeekday: missedWeekday,
@@ -971,22 +1746,35 @@ final class ChecklistStore: ObservableObject {
 
     private func widgetSnapshot(for date: Date, now: Date) -> RitualWidgetSnapshot {
         let today = Calendar.current.startOfDay(for: date)
+        let carryovers = CarryoverResolver.entries(items: items, groups: groups, asOf: today)
+        let carryoverItemIDs = Set(CarryoverResolver.entries(
+            items: items,
+            groups: groups,
+            asOf: today,
+            includeHidden: true
+        ).map(\.item.id))
         let visibleTodayItems = items.filter { item in
             let paused = isPaused(item, on: today)
-            return isTracked(item, on: today) && (!paused || item.hasRecordedState(on: today))
+            return !carryoverItemIDs.contains(item.id)
+                && isTracked(item, on: today)
+                && (!paused || item.hasRecordedState(on: today))
         }
         let remainingItems = visibleTodayItems.filter {
             !$0.isComplete(on: today) && !$0.isSkipped(on: today) && !isPaused($0, on: today)
         }
         let completedCount = visibleTodayItems.filter { $0.isComplete(on: today) }.count
         let skippedCount = visibleTodayItems.filter { $0.isSkipped(on: today) && !$0.isComplete(on: today) }.count
-        let reminderMinutes = widgetReminderMinutes(remainingItems: remainingItems)
+        let reminderMinutes = widgetReminderMinutes(
+            remainingItems: remainingItems,
+            carryoverItems: carryovers.map(\.item)
+        )
 
         return RitualWidgetSnapshot(
-            remainingCount: remainingItems.count,
-            scheduledCount: visibleTodayItems.count,
+            remainingCount: remainingItems.count + carryovers.count,
+            scheduledCount: visibleTodayItems.count + carryovers.count,
             completedCount: completedCount,
             skippedCount: skippedCount,
+            carryoverCount: carryovers.count,
             reminderMinutes: reminderMinutes,
             nextReminderMinutes: nextWidgetReminderMinutes(on: today, now: now, reminderMinutes: reminderMinutes),
             dateKey: DateKey.string(from: today),
@@ -1087,10 +1875,15 @@ final class ChecklistStore: ObservableObject {
         try? data.write(to: url, options: .atomic)
     }
 
-    private func widgetReminderMinutes(remainingItems: [ChecklistItem]) -> [Int] {
+    private func widgetReminderMinutes(
+        remainingItems: [ChecklistItem],
+        carryoverItems: [ChecklistItem]
+    ) -> [Int] {
         var candidates = remainingItems.compactMap(\.reminderMinutes)
         if let eveningReminderMinutes {
-            let eveningRemainingCount = remainingItems.filter { notificationFilterForScheduling.includes(item: $0) }.count
+            let eveningRemainingCount = (remainingItems + carryoverItems)
+                .filter { notificationFilterForScheduling.includes(item: $0) }
+                .count
             if eveningRemainingCount > 0 {
                 candidates.append(eveningReminderMinutes)
             }
@@ -1120,7 +1913,7 @@ final class ChecklistStore: ObservableObject {
     }
 
     static let allFields: Set<String> = [
-        "title", "notes", "schedule", "customWeekdays", "reminderMinutes", "quantity", "skippedDates", "openDates", "createdAt", "startDate", "endedAt", "groupID", "sortOrder", "pauseWindows"
+        "title", "notes", "schedule", "customWeekdays", "reminderMinutes", "quantity", "skippedDates", "openDates", "createdAt", "startDate", "endedAt", "groupID", "sortOrder", "pauseWindows", "scheduleRevision", "missedBehavior", "carryoverStartDate", "carryoverResolvedThroughDate"
     ]
     static let allGroupFields: Set<String> = ["name", "sortOrder", "isCollapsed", "pauseWindows"]
 
@@ -1139,6 +1932,10 @@ final class ChecklistStore: ObservableObject {
         if old.groupID != new.groupID { changed.insert("groupID") }
         if old.sortOrder != new.sortOrder { changed.insert("sortOrder") }
         if old.pauseWindows != new.pauseWindows { changed.insert("pauseWindows") }
+        if old.scheduleRevision != new.scheduleRevision { changed.insert("scheduleRevision") }
+        if old.missedBehavior != new.missedBehavior { changed.insert("missedBehavior") }
+        if old.carryoverStartDate != new.carryoverStartDate { changed.insert("carryoverStartDate") }
+        if old.carryoverResolvedThroughDate != new.carryoverResolvedThroughDate { changed.insert("carryoverResolvedThroughDate") }
         return changed
     }
 
@@ -1154,6 +1951,50 @@ final class ChecklistStore: ObservableObject {
         ].compactMap { $0 }
         guard !changedFields.isEmpty else { return }
         pendingMutations.append(.upsert(item: item, changedFields: Set(changedFields)))
+    }
+
+    private func queueOccurrenceState(for index: Int, key: String) {
+        guard items.indices.contains(index),
+              items[index].schedule != .everyDay,
+              let date = DateKey.date(from: key) else { return }
+        let count = items[index].completionCount(on: date)
+        let outcome: ChecklistOccurrence.Outcome
+        if items[index].isComplete(on: date) {
+            outcome = .done
+        } else if items[index].isSkipped(on: date) {
+            outcome = .skipped
+        } else {
+            outcome = .open
+        }
+        let occurrence = ChecklistOccurrence(
+            outcome: outcome,
+            completionCount: count,
+            resolvedDate: outcome == .open ? nil : DateKey.string(from: .now),
+            scheduleRevision: items[index].scheduleRevision,
+            scheduledDate: key
+        )
+        guard items[index].occurrence(scheduledDate: key) != occurrence else { return }
+        let occurrenceID = items[index].setOccurrence(occurrence, scheduledDate: key)
+        pendingMutations.append(.occurrence(
+            itemID: items[index].id,
+            occurrenceID: occurrenceID,
+            occurrence: occurrence
+        ))
+    }
+
+    private static func latestOccurrence(
+        in item: ChecklistItem,
+        scheduledDateKey: String
+    ) -> (id: String, occurrence: ChecklistOccurrence)? {
+        item.occurrences
+            .filter { $0.value.scheduledDate == scheduledDateKey }
+            .max {
+                if $0.value.scheduleRevision != $1.value.scheduleRevision {
+                    return $0.value.scheduleRevision < $1.value.scheduleRevision
+                }
+                return $0.key < $1.key
+            }
+            .map { (id: $0.key, occurrence: $0.value) }
     }
 
     private static func isOrderedBefore(_ lhs: ChecklistItem, _ rhs: ChecklistItem) -> Bool {

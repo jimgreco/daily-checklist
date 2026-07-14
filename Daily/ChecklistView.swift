@@ -37,6 +37,9 @@ struct ChecklistView: View {
     @State private var renameGroupName = ""
     @State private var deletingGroup: ChecklistGroup?
     @State private var permanentlyDeletingItem: ChecklistItem?
+    @State private var endingItemWithCarryover: ChecklistItem?
+    @State private var editedItemEndingWithCarryover: ChecklistItem?
+    @State private var endingGroupWithCarryovers: UUID?
     @State private var actionErrorMessage: String?
     @State private var isSearchPresented = false
     @State private var showingTutorial = false
@@ -65,6 +68,10 @@ struct ChecklistView: View {
                                 )
                                     .padding(.top, 28)
                             } else {
+                                if showsStillOpenSection {
+                                    stillOpenSection
+                                        .padding(.top, 28)
+                                }
                                 section(
                                     title: "TO DO",
                                     items: filtered(todoSectionItems),
@@ -75,7 +82,7 @@ struct ChecklistView: View {
                                         ? filtered(store.todoItems).count
                                         : filtered(todoSectionItems).count
                                 )
-                                    .padding(.top, 28)
+                                    .padding(.top, showsStillOpenSection ? 24 : 28)
                                 if store.scope == .today {
                                     section(
                                         title: "SKIPPED",
@@ -146,9 +153,18 @@ struct ChecklistView: View {
                 ItemEditor(
                     item: item,
                     groups: store.orderedGroups,
-                    onSave: { store.save($0) },
+                    onSave: { updatedItem in
+                        let endDateChanged = updatedItem.endedAt != item.endedAt
+                        if endDateChanged,
+                           updatedItem.endedAt != nil,
+                           store.unresolvedCarryoverEntry(for: item.id) != nil {
+                            editedItemEndingWithCarryover = updatedItem
+                        } else {
+                            store.save(updatedItem)
+                        }
+                    },
                     onCreateGroup: { store.createGroup(named: $0) },
-                    onDelete: { store.delete($0) }
+                    onDelete: requestEnd
                 )
             }
             .sheet(item: $historyItem) { item in
@@ -225,6 +241,107 @@ struct ChecklistView: View {
                 }
             } message: {
                 Text("This removes the archived item from every synced device.")
+            }
+            .confirmationDialog(
+                "Handle Still Open Task?",
+                isPresented: Binding(
+                    get: { endingItemWithCarryover != nil },
+                    set: { if !$0 { endingItemWithCarryover = nil } }
+                ),
+                titleVisibility: .visible
+            ) {
+                Button("Complete Latest and End") {
+                    guard let item = endingItemWithCarryover,
+                          let entry = store.unresolvedCarryoverEntry(for: item.id),
+                          let date = DateKey.date(from: entry.latestScheduledDateKey) else {
+                        endingItemWithCarryover = nil
+                        return
+                    }
+                    store.completeCarryover(itemID: item.id, occurrenceDate: date)
+                    store.delete(item)
+                    endingItemWithCarryover = nil
+                }
+                Button("Skip Overdue and End", role: .destructive) {
+                    guard let item = endingItemWithCarryover,
+                          let entry = store.unresolvedCarryoverEntry(for: item.id) else {
+                        endingItemWithCarryover = nil
+                        return
+                    }
+                    store.skipCarryover(entry)
+                    store.delete(item)
+                    endingItemWithCarryover = nil
+                }
+                Button("Cancel", role: .cancel) {
+                    endingItemWithCarryover = nil
+                }
+            } message: {
+                Text("This task has unfinished occurrences. Choose how to resolve the latest one before ending it; older occurrences remain recorded as missed.")
+            }
+            .confirmationDialog(
+                "Handle Still Open Before Saving?",
+                isPresented: Binding(
+                    get: { editedItemEndingWithCarryover != nil },
+                    set: { if !$0 { editedItemEndingWithCarryover = nil } }
+                ),
+                titleVisibility: .visible
+            ) {
+                Button("Complete Latest and Save") {
+                    guard let updatedItem = editedItemEndingWithCarryover,
+                          let entry = store.unresolvedCarryoverEntry(for: updatedItem.id),
+                          let date = DateKey.date(from: entry.latestScheduledDateKey) else {
+                        editedItemEndingWithCarryover = nil
+                        return
+                    }
+                    store.completeCarryover(itemID: updatedItem.id, occurrenceDate: date)
+                    store.save(mergingCurrentOccurrenceState(into: updatedItem))
+                    editedItemEndingWithCarryover = nil
+                }
+                Button("Skip Overdue and Save", role: .destructive) {
+                    guard let updatedItem = editedItemEndingWithCarryover,
+                          let entry = store.unresolvedCarryoverEntry(for: updatedItem.id) else {
+                        editedItemEndingWithCarryover = nil
+                        return
+                    }
+                    store.skipCarryover(entry)
+                    store.save(mergingCurrentOccurrenceState(into: updatedItem))
+                    editedItemEndingWithCarryover = nil
+                }
+                Button("Cancel", role: .cancel) {
+                    editedItemEndingWithCarryover = nil
+                }
+            } message: {
+                Text("This task has unfinished occurrences. Resolve or skip the latest one before adding an end date; older occurrences remain recorded as missed.")
+            }
+            .confirmationDialog(
+                "Handle Still Open Group?",
+                isPresented: Binding(
+                    get: { endingGroupWithCarryovers != nil },
+                    set: { if !$0 { endingGroupWithCarryovers = nil } }
+                ),
+                titleVisibility: .visible
+            ) {
+                Button("Complete Latest and End All") {
+                    guard let groupID = endingGroupWithCarryovers else { return }
+                    for entry in store.unresolvedCarryoverEntries(inGroup: groupID) {
+                        guard let date = DateKey.date(from: entry.latestScheduledDateKey) else { continue }
+                        store.completeCarryover(itemID: entry.item.id, occurrenceDate: date)
+                    }
+                    store.endGroupToday(groupID)
+                    endingGroupWithCarryovers = nil
+                }
+                Button("Skip Overdue and End All", role: .destructive) {
+                    guard let groupID = endingGroupWithCarryovers else { return }
+                    for entry in store.unresolvedCarryoverEntries(inGroup: groupID) {
+                        store.skipCarryover(entry)
+                    }
+                    store.endGroupToday(groupID)
+                    endingGroupWithCarryovers = nil
+                }
+                Button("Cancel", role: .cancel) {
+                    endingGroupWithCarryovers = nil
+                }
+            } message: {
+                Text("Some tasks in this group are still open. Resolve each latest occurrence before ending the group.")
             }
             .alert("Action unavailable", isPresented: Binding(
                 get: { actionErrorMessage != nil },
@@ -337,9 +454,31 @@ struct ChecklistView: View {
             return count == 1 ? "One archived item." : "\(count) archived items."
         }
         let count = store.todoItems.count
+        let stillOpenCount = store.scope == .today && store.isSelectedDateToday
+            ? store.carryoverEntries.count
+            : 0
+        if stillOpenCount > 0 {
+            let todayText = count == 1 ? "1 today" : "\(count) today"
+            let openText = stillOpenCount == 1 ? "1 still open" : "\(stillOpenCount) still open"
+            return "\(todayText) · \(openText)."
+        }
         if count == 0 { return "Everything is checked off." }
         let day = store.isSelectedDateToday ? "today" : "this day"
         return count == 1 ? "One thing left \(day)." : "\(count) things left \(day)."
+    }
+
+    private func mergingCurrentOccurrenceState(into editedItem: ChecklistItem) -> ChecklistItem {
+        guard let current = store.items.first(where: { $0.id == editedItem.id }) else {
+            return editedItem
+        }
+        var merged = editedItem
+        merged.completedDates = current.completedDates
+        merged.completionCounts = current.completionCounts
+        merged.skippedDates = current.skippedDates
+        merged.openDates = current.openDates
+        merged.occurrences = current.occurrences
+        merged.carryoverResolvedThroughDate = current.carryoverResolvedThroughDate
+        return merged
     }
 
     private var knownGroupIDs: Set<UUID> {
@@ -347,8 +486,14 @@ struct ChecklistView: View {
     }
 
     private var activeVisibleItems: [ChecklistItem] {
-        store.visibleItems.filter {
-            store.scope == .all || (!$0.isSkipped(on: store.selectedDate) && !store.isPaused($0, on: store.selectedDate))
+        let groupedCarryoverIDs = store.scope == .today && store.isSelectedDateToday
+            ? store.carryoverItemIDsIncludingHidden
+            : []
+        return store.visibleItems.filter {
+            !groupedCarryoverIDs.contains($0.id)
+                && (store.scope == .all
+                    || (!$0.isSkipped(on: store.selectedDate)
+                        && !store.isPaused($0, on: store.selectedDate)))
         }
     }
 
@@ -478,6 +623,14 @@ struct ChecklistView: View {
         }
     }
 
+    private func requestEnd(_ item: ChecklistItem) {
+        if store.unresolvedCarryoverEntry(for: item.id) != nil {
+            endingItemWithCarryover = item
+        } else {
+            store.delete(item)
+        }
+    }
+
     private var newItemTemplate: ChecklistItem {
         var item = ChecklistItem(title: "")
         #if DEBUG
@@ -498,6 +651,15 @@ struct ChecklistView: View {
             $0.title.localizedCaseInsensitiveContains(query)
                 || $0.notes.localizedCaseInsensitiveContains(query)
         }
+    }
+
+    private var filteredCarryoverEntries: [CarryoverEntry] {
+        let matchingIDs = Set(filtered(store.carryoverEntries.map(\.item)).map(\.id))
+        return store.carryoverEntries.filter { matchingIDs.contains($0.item.id) }
+    }
+
+    private var showsStillOpenSection: Bool {
+        store.scope == .today && store.isSelectedDateToday && !filteredCarryoverEntries.isEmpty
     }
 
     private var sortControl: some View {
@@ -607,6 +769,44 @@ struct ChecklistView: View {
                     allowsGroupActions: showsCompleteAll,
                     allowsPermanentDelete: allowsPermanentDelete
                 )
+            }
+        }
+    }
+
+    private var stillOpenSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("STILL OPEN")
+                    .font(.system(size: 12, weight: .bold))
+                    .tracking(1.4)
+                    .foregroundStyle(delayed)
+                Spacer()
+                Text("\(filteredCarryoverEntries.count)")
+                    .font(.system(size: 12, weight: .bold, design: .rounded))
+                    .foregroundStyle(.secondary)
+            }
+
+            VStack(spacing: 10) {
+                ForEach(filteredCarryoverEntries) { entry in
+                    CarryoverRow(
+                        entry: entry,
+                        showsEditButton: isEditingChecklist,
+                        onAdvance: {
+                            withAnimation(.snappy) { store.advanceCarryover(entry) }
+                        },
+                        onTomorrow: {
+                            withAnimation(.snappy) { store.deferCarryoverUntilTomorrow(entry) }
+                        },
+                        onSkip: {
+                            withAnimation(.snappy) { store.skipCarryover(entry) }
+                        },
+                        onPause: {
+                            withAnimation(.snappy) { store.pause(entry.item) }
+                        },
+                        onEdit: { editingItem = entry.item },
+                        onHistory: { historyItem = entry.item }
+                    )
+                }
             }
         }
     }
@@ -736,7 +936,11 @@ struct ChecklistView: View {
                 endAll: {
                     guard let groupID else { return }
                     withAnimation(.snappy) {
-                        store.endGroupToday(groupID)
+                        if store.unresolvedCarryoverEntries(inGroup: groupID).isEmpty {
+                            store.endGroupToday(groupID)
+                        } else {
+                            endingGroupWithCarryovers = groupID
+                        }
                     }
                 }
             )
@@ -1144,6 +1348,136 @@ private struct AccountToolbarImage: View {
     }
 }
 
+private struct CarryoverRow: View {
+    let entry: CarryoverEntry
+    let showsEditButton: Bool
+    let onAdvance: () -> Void
+    let onTomorrow: () -> Void
+    let onSkip: () -> Void
+    let onPause: () -> Void
+    let onEdit: () -> Void
+    let onHistory: () -> Void
+
+    private var oldestDate: Date {
+        DateKey.date(from: entry.oldestScheduledDateKey) ?? .now
+    }
+
+    private var lateDays: Int {
+        max(1, Calendar.current.dateComponents(
+            [.day],
+            from: Calendar.current.startOfDay(for: oldestDate),
+            to: Calendar.current.startOfDay(for: .now)
+        ).day ?? 1)
+    }
+
+    private var dueText: String {
+        if entry.outstandingOccurrenceCount > 1 {
+            let age = lateDays == 1 ? "1 day late" : "\(lateDays) days late"
+            return "\(entry.outstandingOccurrenceCount) open occurrences · oldest \(oldestDate.formatted(.dateTime.month(.abbreviated).day())) · \(age)"
+        }
+        if lateDays == 1 { return "Due yesterday" }
+        return "Due \(oldestDate.formatted(.dateTime.month(.abbreviated).day())) · \(lateDays) days late"
+    }
+
+    var body: some View {
+        HStack(spacing: 14) {
+            Button {
+                onAdvance()
+            } label: {
+                ZStack {
+                    Circle()
+                        .stroke(delayed, lineWidth: 2)
+                        .frame(width: 28, height: 28)
+                    if entry.latestCompletionCount > 0 {
+                        Text("\(entry.latestCompletionCount)")
+                            .font(.system(size: 11, weight: .bold, design: .rounded))
+                            .foregroundStyle(delayed)
+                    }
+                }
+            }
+            .accessibilityLabel(entry.item.quantity > 1 ? "Advance overdue quantity" : "Complete overdue occurrence")
+            .accessibilityValue(entry.item.quantity > 1 ? "\(entry.latestCompletionCount) of \(entry.item.quantity)" : "")
+
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 8) {
+                    Text(entry.item.title)
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(ink)
+                        .lineLimit(1)
+                    if entry.item.quantity > 1 {
+                        Text("\(entry.latestCompletionCount)/\(entry.item.quantity)")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundStyle(delayed)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(delayed.opacity(0.12), in: Capsule())
+                    }
+                }
+                Label(dueText, systemImage: "clock.badge.exclamationmark")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(delayed)
+                if !entry.item.notes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Text(entry.item.notes)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            Spacer()
+
+            if showsEditButton {
+                Button(action: onEdit) {
+                    Image(systemName: "pencil")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 36, height: 36)
+                        .background(subtleFill, in: Circle())
+                }
+                .accessibilityLabel("Edit \(entry.item.title)")
+            }
+
+            Menu {
+                Button(action: onTomorrow) {
+                    Label("Tomorrow", systemImage: "sunrise")
+                }
+                Button(action: onSkip) {
+                    Label("Skip overdue occurrence", systemImage: "forward.end")
+                }
+                Button(action: onPause) {
+                    Label("Pause 1 week", systemImage: "pause.circle")
+                }
+                Divider()
+                Button(action: onEdit) {
+                    Label("Edit", systemImage: "pencil")
+                }
+                Button(action: onHistory) {
+                    Label("History", systemImage: "calendar")
+                }
+            } label: {
+                Image(systemName: "ellipsis.circle")
+                    .font(.system(size: 19, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 34, height: 36)
+            }
+            .accessibilityLabel("More actions for \(entry.item.title)")
+        }
+        .padding(16)
+        .background(surface, in: RoundedRectangle(cornerRadius: 20))
+        .overlay {
+            RoundedRectangle(cornerRadius: 20)
+                .stroke(delayed.opacity(0.24), lineWidth: 1)
+        }
+        .contextMenu {
+            Button(action: onTomorrow) { Label("Tomorrow", systemImage: "sunrise") }
+            Button(action: onSkip) { Label("Skip overdue occurrence", systemImage: "forward.end") }
+            Button(action: onPause) { Label("Pause 1 week", systemImage: "pause.circle") }
+            Button(action: onEdit) { Label("Edit", systemImage: "pencil") }
+            Button(action: onHistory) { Label("History", systemImage: "calendar") }
+        }
+    }
+}
+
 private struct ItemRow: View {
     let item: ChecklistItem
     let date: Date
@@ -1418,7 +1752,14 @@ private struct ItemHistoryView: View {
 
                 List(history, id: \.date) { entry in
                     HStack {
-                        Text(entry.date.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day()))
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(entry.date.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day()))
+                            if let resolution = resolutionText(for: entry.date) {
+                                Text(resolution)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
                         Spacer()
                         if canDelay(entry.state) {
                             Button {
@@ -1552,6 +1893,23 @@ private struct ItemHistoryView: View {
 
     private func canBringForward(_ date: Date, state: ChecklistHistoryState) -> Bool {
         state == .open && Calendar.current.startOfDay(for: date) > Calendar.current.startOfDay(for: .now)
+    }
+
+    private func resolutionText(for date: Date) -> String? {
+        let key = DateKey.string(from: date)
+        guard let occurrence = currentItem.occurrences.values
+            .filter({ $0.scheduledDate == key })
+            .max(by: { $0.scheduleRevision < $1.scheduleRevision }),
+              let resolvedKey = occurrence.resolvedDate,
+              resolvedKey != key,
+              let resolvedDate = DateKey.date(from: resolvedKey) else { return nil }
+        let verb = occurrence.outcome == .done ? "Completed" : "Handled"
+        let daysLate = max(1, Calendar.current.dateComponents(
+            [.day],
+            from: Calendar.current.startOfDay(for: date),
+            to: Calendar.current.startOfDay(for: resolvedDate)
+        ).day ?? 1)
+        return "\(verb) \(daysLate) \(daysLate == 1 ? "day" : "days") late"
     }
 
     private func delay(_ date: Date) {

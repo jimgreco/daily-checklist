@@ -96,6 +96,14 @@ private struct RitualCueWidgetView: View {
         snapshot.completedCount + snapshot.skippedCount
     }
 
+    private var todayRemainingCount: Int {
+        max(0, snapshot.remainingCount - snapshot.carryoverCount)
+    }
+
+    private var remainingBreakdown: String {
+        "\(todayRemainingCount) today · \(snapshot.carryoverCount) still open"
+    }
+
     private var progress: Double {
         guard snapshot.scheduledCount > 0 else { return 1 }
         return Double(completedTotal) / Double(snapshot.scheduledCount)
@@ -124,6 +132,13 @@ private struct RitualCueWidgetView: View {
             }
 
             progressBar
+            if snapshot.carryoverCount > 0 {
+                Text(remainingBreakdown)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.orange)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+            }
             Text(nextReminderText)
                 .font(.caption2.weight(.medium))
                 .foregroundStyle(.secondary)
@@ -163,6 +178,13 @@ private struct RitualCueWidgetView: View {
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.primary)
                     .lineLimit(1)
+                if snapshot.carryoverCount > 0 {
+                    Text(remainingBreakdown)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.orange)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                }
                 Text(nextReminderText)
                     .font(.caption.weight(.medium))
                     .foregroundStyle(.secondary)
@@ -176,7 +198,11 @@ private struct RitualCueWidgetView: View {
     }
 
     private var accessoryInline: some View {
-        Text("\(snapshot.remainingCount) \(taskLabel)")
+        if snapshot.carryoverCount > 0 {
+            Text(remainingBreakdown)
+        } else {
+            Text("\(snapshot.remainingCount) \(taskLabel)")
+        }
     }
 
     private var accessoryCircular: some View {
@@ -206,7 +232,7 @@ private struct RitualCueWidgetView: View {
                 .font(.headline.weight(.bold))
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
-            Text(nextReminderText)
+            Text(snapshot.carryoverCount > 0 ? remainingBreakdown : nextReminderText)
                 .font(.caption2)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)

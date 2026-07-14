@@ -31,7 +31,11 @@ final class RitualNotificationDelegate: NSObject, UNUserNotificationCenterDelega
             userInfo: [
                 "action": response.actionIdentifier,
                 "itemID": response.notification.request.content.userInfo["itemID"] as? String ?? "",
-                "date": response.notification.request.content.userInfo["date"] as? String ?? ""
+                "occurrenceID": response.notification.request.content.userInfo["occurrenceID"] as? String ?? "",
+                "occurrenceDate": response.notification.request.content.userInfo["occurrenceDate"] as? String
+                    ?? response.notification.request.content.userInfo["date"] as? String
+                    ?? "",
+                "isCarryover": response.notification.request.content.userInfo["isCarryover"] as? Bool ?? false
             ]
         )
     }
@@ -56,7 +60,7 @@ struct NotificationManager {
         )
         let skip = UNNotificationAction(
             identifier: RitualNotificationAction.skip,
-            title: "Skip today",
+            title: "Skip occurrence",
             options: []
         )
         let snooze = UNNotificationAction(
@@ -96,30 +100,69 @@ struct NotificationManager {
             guard let groupID = item.groupID else { return false }
             return groupsByID[groupID]?.isPaused(on: date) == true
         }
-        var itemReminders: [(date: Date, item: ChecklistItem)] = []
+        var itemReminders: [(
+            date: Date,
+            item: ChecklistItem,
+            occurrenceDateKey: String,
+            occurrenceID: String,
+            isCarryover: Bool
+        )] = []
         for dayOffset in 0..<60 {
             guard let date = calendar.date(byAdding: .day, value: dayOffset, to: .now) else { continue }
+            let carryoversByItemID = Dictionary(uniqueKeysWithValues: CarryoverResolver.entries(
+                items: items,
+                groups: groups,
+                asOf: date
+            ).map { ($0.item.id, $0) })
+            let allCarryoverItemIDs = Set(CarryoverResolver.entries(
+                items: items,
+                groups: groups,
+                asOf: date,
+                includeHidden: true
+            ).map(\.item.id))
             for item in items {
+                if allCarryoverItemIDs.contains(item.id), carryoversByItemID[item.id] == nil {
+                    continue
+                }
                 guard let minutes = item.reminderMinutes,
                       !isPaused(item, on: date),
-                      item.occurs(on: date) || item.isExplicitlyOpen(on: date) else { continue }
+                      carryoversByItemID[item.id] != nil
+                        || item.occurs(on: date)
+                        || item.isExplicitlyOpen(on: date) else { continue }
                 var fireDate = calendar.dateComponents([.year, .month, .day], from: date)
                 fireDate.hour = minutes / 60
                 fireDate.minute = minutes % 60
                 guard let scheduledDate = calendar.date(from: fireDate), scheduledDate > .now else { continue }
-                itemReminders.append((scheduledDate, item))
+                let carryover = carryoversByItemID[item.id]
+                let occurrenceDateKey = carryover?.latestScheduledDateKey ?? DateKey.string(from: date)
+                itemReminders.append((
+                    scheduledDate,
+                    item,
+                    occurrenceDateKey,
+                    carryover?.latestOccurrenceID ?? ChecklistOccurrenceIdentifier.string(
+                        itemID: item.id,
+                        scheduleRevision: item.scheduleRevision,
+                        scheduledDateKey: occurrenceDateKey
+                    ),
+                    carryover != nil
+                ))
             }
         }
 
         for reminder in itemReminders.sorted(by: { $0.date < $1.date }).prefix(50) {
             let content = UNMutableNotificationContent()
             content.title = reminder.item.title
-            content.body = reminder.item.notes.isEmpty ? "Time for this task." : reminder.item.notes
+            content.body = reminder.isCarryover
+                ? "This task is still open from an earlier scheduled date."
+                : (reminder.item.notes.isEmpty ? "Time for this task." : reminder.item.notes)
             content.sound = .default
             content.categoryIdentifier = RitualNotificationAction.itemCategory
             content.userInfo = [
                 "itemID": reminder.item.id.uuidString,
-                "date": DateKey.string(from: reminder.date)
+                "date": DateKey.string(from: reminder.date),
+                "occurrenceDate": reminder.occurrenceDateKey,
+                "occurrenceID": reminder.occurrenceID,
+                "isCarryover": reminder.isCarryover
             ]
             let trigger = UNCalendarNotificationTrigger(
                 dateMatching: calendar.dateComponents([.year, .month, .day, .hour, .minute], from: reminder.date),
@@ -135,14 +178,24 @@ struct NotificationManager {
         guard let eveningMinutes else { return }
         for dayOffset in 0..<7 {
             guard let date = calendar.date(byAdding: .day, value: dayOffset, to: .now) else { continue }
-            let remaining = items.filter {
+            let carryovers = CarryoverResolver.entries(items: items, groups: groups, asOf: date)
+                .filter { groupFilter.includes(item: $0.item) }
+            let carryoverItemIDs = Set(CarryoverResolver.entries(
+                items: items,
+                groups: groups,
+                asOf: date,
+                includeHidden: true
+            ).map(\.item.id))
+            let remainingToday = items.filter {
                 !isPaused($0, on: date)
                     && groupFilter.includes(item: $0)
+                    && !carryoverItemIDs.contains($0.id)
                     && ($0.occurs(on: date) || $0.isExplicitlyOpen(on: date))
                     && !$0.isComplete(on: date)
                     && !$0.isSkipped(on: date)
             }.count
-            guard remaining > 0 else { continue }
+            let stillOpen = carryovers.count
+            guard remainingToday + stillOpen > 0 else { continue }
 
             var fireDate = calendar.dateComponents([.year, .month, .day], from: date)
             fireDate.hour = eveningMinutes / 60
@@ -150,8 +203,16 @@ struct NotificationManager {
             guard let scheduledDate = calendar.date(from: fireDate), scheduledDate > .now else { continue }
 
             let content = UNMutableNotificationContent()
-            content.title = remaining == 1 ? "1 task left today" : "\(remaining) tasks left today"
-            content.body = "A quick check-in before the day wraps up."
+            if stillOpen == 0 {
+                content.title = remainingToday == 1 ? "1 task left today" : "\(remainingToday) tasks left today"
+            } else if remainingToday == 0 {
+                content.title = stillOpen == 1 ? "1 task still open" : "\(stillOpen) tasks still open"
+            } else {
+                content.title = "\(remainingToday) today · \(stillOpen) still open"
+            }
+            content.body = stillOpen > 0
+                ? "Your scheduled tasks and missed routines are ready for a quick check-in."
+                : "A quick check-in before the day wraps up."
             content.sound = .default
             let trigger = UNCalendarNotificationTrigger(dateMatching: fireDate, repeats: false)
             try? await center.add(UNNotificationRequest(
@@ -162,7 +223,13 @@ struct NotificationManager {
         }
     }
 
-    func snooze(item: ChecklistItem, minutes: Int) async {
+    func snooze(
+        item: ChecklistItem,
+        occurrenceDate: Date,
+        occurrenceID: String? = nil,
+        isCarryover: Bool = false,
+        minutes: Int
+    ) async {
         let content = UNMutableNotificationContent()
         content.title = item.title
         content.body = item.notes.isEmpty ? "Snoozed reminder." : item.notes
@@ -170,8 +237,18 @@ struct NotificationManager {
         content.categoryIdentifier = RitualNotificationAction.itemCategory
         content.userInfo = [
             "itemID": item.id.uuidString,
-            "date": DateKey.string(from: .now)
+            "date": DateKey.string(from: occurrenceDate),
+            "occurrenceDate": DateKey.string(from: occurrenceDate),
+            "occurrenceID": ChecklistOccurrenceIdentifier.string(
+                itemID: item.id,
+                scheduleRevision: item.scheduleRevision,
+                scheduledDateKey: DateKey.string(from: occurrenceDate)
+            ),
+            "isCarryover": isCarryover
         ]
+        if let occurrenceID {
+            content.userInfo["occurrenceID"] = occurrenceID
+        }
         let trigger = UNTimeIntervalNotificationTrigger(timeInterval: TimeInterval(max(1, minutes) * 60), repeats: false)
         try? await center.add(UNNotificationRequest(
             identifier: "ritual.snooze.\(item.id).\(Date().timeIntervalSince1970)",

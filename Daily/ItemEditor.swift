@@ -12,6 +12,8 @@ struct ItemEditor: View {
     @State private var showingNewGroup = false
     @State private var newGroupName = ""
     @State private var availableGroups: [ChecklistGroup]
+    @State private var didManuallyChooseMissedBehavior = false
+    private let isNewItem: Bool
     let onSave: (ChecklistItem) -> Void
     let onCreateGroup: (String) -> ChecklistGroup?
     var onDelete: ((ChecklistItem) -> Void)?
@@ -39,6 +41,7 @@ struct ItemEditor: View {
             } ?? calendar.startOfDay(for: .now)
         )
         _availableGroups = State(initialValue: groups)
+        isNewItem = onDelete == nil
         self.onSave = onSave
         self.onCreateGroup = onCreateGroup
         self.onDelete = onDelete
@@ -91,6 +94,25 @@ struct ItemEditor: View {
                     }
                     if item.schedule == .custom {
                         weekdayPicker
+                    }
+                }
+
+                if item.schedule != .everyDay {
+                    Section {
+                        Toggle("Keep visible until handled", isOn: Binding(
+                            get: { item.missedBehavior == .keepUntilDone },
+                            set: { enabled in
+                                didManuallyChooseMissedBehavior = true
+                                item.missedBehavior = enabled ? .keepUntilDone : .markMissed
+                                if enabled {
+                                    item.carryoverStartDate = DateKey.string(from: .now)
+                                }
+                            }
+                        ))
+                    } header: {
+                        Text("If missed")
+                    } footer: {
+                        Text("Missed occurrences stay in Still Open until completed, skipped, or deferred. Turn this off to count them as missed normally.")
                     }
                 }
 
@@ -149,6 +171,12 @@ struct ItemEditor: View {
                         if item.schedule == .custom, item.customWeekdays.isEmpty {
                             item.customWeekdays = [Calendar.current.component(.weekday, from: .now)]
                         }
+                        if item.schedule == .everyDay {
+                            item.missedBehavior = .markMissed
+                        } else if item.missedBehavior == .keepUntilDone,
+                                  item.carryoverStartDate == nil {
+                            item.carryoverStartDate = DateKey.string(from: .now)
+                        }
                         let calendar = Calendar.current
                         item.startDate = startDateEnabled ? calendar.startOfDay(for: startDate) : nil
                         if endDateEnabled {
@@ -173,6 +201,25 @@ struct ItemEditor: View {
             .onChange(of: startDateEnabled) { _, enabled in
                 if enabled, endDateEnabled, endDate < startDate {
                     endDate = startDate
+                }
+            }
+            .onChange(of: item.schedule) { _, newValue in
+                if newValue == .everyDay {
+                    item.missedBehavior = .markMissed
+                } else if isNewItem, !didManuallyChooseMissedBehavior {
+                    item.missedBehavior = newValue == .custom ? .keepUntilDone : .markMissed
+                    if item.missedBehavior == .keepUntilDone {
+                        item.carryoverStartDate = item.carryoverStartDate ?? DateKey.string(from: .now)
+                    }
+                }
+            }
+            .onChange(of: item.customWeekdays) { _, weekdays in
+                guard isNewItem,
+                      item.schedule == .custom,
+                      !didManuallyChooseMissedBehavior else { return }
+                item.missedBehavior = weekdays.count <= 1 ? .keepUntilDone : .markMissed
+                if item.missedBehavior == .keepUntilDone {
+                    item.carryoverStartDate = item.carryoverStartDate ?? DateKey.string(from: .now)
                 }
             }
             .alert("New Group", isPresented: $showingNewGroup) {

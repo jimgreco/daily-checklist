@@ -1,15 +1,67 @@
 import Foundation
 
 struct RitualWidgetSnapshot: Codable, Equatable {
+    private enum CodingKeys: String, CodingKey {
+        case remainingCount
+        case scheduledCount
+        case completedCount
+        case skippedCount
+        case carryoverCount
+        case reminderMinutes
+        case nextReminderMinutes
+        case dateKey
+        case updatedAt
+        case hasChecklist
+    }
+
     var remainingCount: Int
     var scheduledCount: Int
     var completedCount: Int
     var skippedCount: Int
+    var carryoverCount: Int
     var reminderMinutes: [Int]
     var nextReminderMinutes: Int?
     var dateKey: String
     var updatedAt: Date
     var hasChecklist: Bool
+
+    init(
+        remainingCount: Int,
+        scheduledCount: Int,
+        completedCount: Int,
+        skippedCount: Int,
+        carryoverCount: Int = 0,
+        reminderMinutes: [Int],
+        nextReminderMinutes: Int?,
+        dateKey: String,
+        updatedAt: Date,
+        hasChecklist: Bool
+    ) {
+        self.remainingCount = remainingCount
+        self.scheduledCount = scheduledCount
+        self.completedCount = completedCount
+        self.skippedCount = skippedCount
+        self.carryoverCount = max(0, carryoverCount)
+        self.reminderMinutes = reminderMinutes
+        self.nextReminderMinutes = nextReminderMinutes
+        self.dateKey = dateKey
+        self.updatedAt = updatedAt
+        self.hasChecklist = hasChecklist
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        remainingCount = try container.decode(Int.self, forKey: .remainingCount)
+        scheduledCount = try container.decode(Int.self, forKey: .scheduledCount)
+        completedCount = try container.decode(Int.self, forKey: .completedCount)
+        skippedCount = try container.decode(Int.self, forKey: .skippedCount)
+        carryoverCount = max(0, try container.decodeIfPresent(Int.self, forKey: .carryoverCount) ?? 0)
+        reminderMinutes = try container.decode([Int].self, forKey: .reminderMinutes)
+        nextReminderMinutes = try container.decodeIfPresent(Int.self, forKey: .nextReminderMinutes)
+        dateKey = try container.decode(String.self, forKey: .dateKey)
+        updatedAt = try container.decode(Date.self, forKey: .updatedAt)
+        hasChecklist = try container.decode(Bool.self, forKey: .hasChecklist)
+    }
 
     static func empty(for date: Date = .now) -> RitualWidgetSnapshot {
         RitualWidgetSnapshot(
@@ -17,6 +69,7 @@ struct RitualWidgetSnapshot: Codable, Equatable {
             scheduledCount: 0,
             completedCount: 0,
             skippedCount: 0,
+            carryoverCount: 0,
             reminderMinutes: [],
             nextReminderMinutes: nil,
             dateKey: RitualWidgetDateKey.string(from: date),

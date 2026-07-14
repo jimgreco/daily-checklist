@@ -446,8 +446,11 @@ function mergeStateMap(target = {}, source = {}) {
 }
 
 function mergeChecklistRecords(target, source) {
+  migrateRecordOccurrences(target);
+  migrateRecordOccurrences(source);
   target.fields = mergeStateMap(target.fields, source.fields);
   target.completions = mergeStateMap(target.completions, source.completions);
+  target.occurrences = mergeStateMap(target.occurrences, source.occurrences);
   if (source.deleted && stampWins(source.deleted, target.deleted)) target.deleted = source.deleted;
   return target;
 }
@@ -947,9 +950,11 @@ function stampWins(incoming, current) {
   return incoming.deviceID > current.deviceID;
 }
 
-const itemFields = ["title", "notes", "schedule", "customWeekdays", "reminderMinutes", "quantity", "skippedDates", "openDates", "createdAt", "startDate", "endedAt", "groupID", "sortOrder", "pauseWindows"];
+const itemFields = ["title", "notes", "schedule", "customWeekdays", "reminderMinutes", "quantity", "skippedDates", "openDates", "createdAt", "startDate", "endedAt", "groupID", "sortOrder", "pauseWindows", "scheduleRevision", "missedBehavior", "carryoverStartDate", "carryoverResolvedThroughDate"];
 const groupFields = ["name", "sortOrder", "isCollapsed", "pauseWindows"];
 const notificationGroupFilterModes = ["all", "include", "exclude"];
+const missedBehaviors = ["markMissed", "keepUntilDone"];
+const occurrenceOutcomes = ["open", "done", "skipped", "missed"];
 
 function validID(value) {
   return typeof value === "string" && /^[a-z0-9._:-]{1,120}$/i.test(value);
@@ -979,6 +984,41 @@ function validISODate(value, { nullable = true } = {}) {
 
 function validDateKey(value) {
   return typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value);
+}
+
+function validNullableDateKey(value) {
+  return value == null || validDateKey(value);
+}
+
+function validScheduleRevision(value, { nullable = true } = {}) {
+  if (value == null) return nullable;
+  return Number.isSafeInteger(value) && value >= 0 && value <= 1_000_000;
+}
+
+function normalizedScheduleRevision(value) {
+  return validScheduleRevision(value, { nullable: false }) ? value : 0;
+}
+
+function deterministicOccurrenceID(itemID, scheduleRevision, scheduledDate) {
+  return `${String(itemID).toLowerCase()}:${normalizedScheduleRevision(scheduleRevision)}:${scheduledDate}`;
+}
+
+function parsedOccurrenceID(value, itemID) {
+  if (typeof value !== "string" || typeof itemID !== "string") return null;
+  const prefix = `${itemID.toLowerCase()}:`;
+  if (!value.toLowerCase().startsWith(prefix)) return null;
+  const remainder = value.slice(prefix.length);
+  if (validDateKey(remainder)) {
+    return { scheduleRevision: null, scheduledDate: remainder, legacy: true };
+  }
+  const separator = remainder.indexOf(":");
+  if (separator <= 0 || remainder.indexOf(":", separator + 1) !== -1) return null;
+  const revisionText = remainder.slice(0, separator);
+  const scheduledDate = remainder.slice(separator + 1);
+  if (!/^\d+$/.test(revisionText) || !validDateKey(scheduledDate)) return null;
+  const scheduleRevision = Number(revisionText);
+  if (!validScheduleRevision(scheduleRevision, { nullable: false })) return null;
+  return { scheduleRevision, scheduledDate, legacy: false };
 }
 
 function validFiniteNumber(value, { nullable = true, min = -1_000_000, max = 1_000_000 } = {}) {
@@ -1015,6 +1055,79 @@ function validChangedFields(value, allowed) {
   );
 }
 
+function validOccurrencePayload(occurrence) {
+  return occurrence && typeof occurrence === "object" && !Array.isArray(occurrence)
+    && occurrenceOutcomes.includes(occurrence.outcome)
+    && Number.isInteger(occurrence.completionCount)
+    && occurrence.completionCount >= 0
+    && occurrence.completionCount <= 99
+    && validNullableDateKey(occurrence.resolvedDate)
+    && validNullableDateKey(occurrence.hiddenUntil)
+    && validScheduleRevision(occurrence.scheduleRevision)
+    && validNullableDateKey(occurrence.scheduledDate)
+    && validNullableDateKey(occurrence.originalScheduledDate)
+    && (occurrence.scheduledDate == null
+      || occurrence.originalScheduledDate == null
+      || occurrence.scheduledDate === occurrence.originalScheduledDate);
+}
+
+function normalizedOccurrence(occurrence, scheduleRevision, scheduledDate) {
+  return {
+    outcome: occurrence.outcome,
+    completionCount: occurrence.completionCount,
+    resolvedDate: occurrence.resolvedDate ?? null,
+    hiddenUntil: occurrence.hiddenUntil ?? null,
+    scheduleRevision: normalizedScheduleRevision(scheduleRevision ?? occurrence.scheduleRevision),
+    scheduledDate: scheduledDate ?? occurrence.scheduledDate ?? occurrence.originalScheduledDate
+  };
+}
+
+function occurrenceCoordinates(key, occurrence, itemID, itemScheduleRevision = 0) {
+  const parsedID = itemID ? parsedOccurrenceID(key, itemID) : null;
+  const keyedDate = validDateKey(key) ? key : parsedID?.scheduledDate;
+  const scheduledDate = occurrence?.scheduledDate ?? occurrence?.originalScheduledDate ?? keyedDate;
+  const scheduleRevision = occurrence?.scheduleRevision ?? parsedID?.scheduleRevision ?? itemScheduleRevision;
+  if (!validDateKey(scheduledDate) || !validScheduleRevision(scheduleRevision, { nullable: false })) return null;
+  if (parsedID && !parsedID.legacy
+      && key.toLowerCase() !== deterministicOccurrenceID(itemID, scheduleRevision, scheduledDate)) return null;
+  if (!validDateKey(key) && !parsedID) {
+    const canonicalSuffix = `:${scheduleRevision}:${scheduledDate}`;
+    if (itemID || typeof key !== "string" || !key.endsWith(canonicalSuffix) || key.length > 180) return null;
+  }
+  return { scheduleRevision, scheduledDate };
+}
+
+function migrateRecordOccurrences(record) {
+  if (!record || typeof record !== "object") return;
+  const currentRevision = normalizedScheduleRevision(record.fields?.scheduleRevision?.value);
+  const migrated = {};
+  const entries = Object.entries(record.occurrences || {}).sort(([left], [right]) => left.localeCompare(right));
+
+  for (const [key, state] of entries) {
+    if (!validOccurrencePayload(state?.value)) continue;
+    const coordinates = occurrenceCoordinates(key, state.value, record.id, currentRevision);
+    if (!coordinates) continue;
+    const id = deterministicOccurrenceID(record.id, coordinates.scheduleRevision, coordinates.scheduledDate);
+    const incoming = {
+      ...state,
+      value: normalizedOccurrence(state.value, coordinates.scheduleRevision, coordinates.scheduledDate)
+    };
+    if (stampWins(incoming, migrated[id])) migrated[id] = incoming;
+  }
+  record.occurrences = migrated;
+}
+
+function validOccurrences(value, itemID = null, itemScheduleRevision = 0) {
+  if (value == null) return true;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const entries = Object.entries(value);
+  return entries.length <= 5000
+    && entries.every(([key, occurrence]) => (
+      validOccurrencePayload(occurrence)
+      && occurrenceCoordinates(key, occurrence, itemID, itemScheduleRevision) != null
+    ));
+}
+
 function validItemPayload(item = {}) {
   return item && typeof item === "object"
     && (item.title == null || (typeof item.title === "string" && item.title.length <= 120))
@@ -1038,7 +1151,12 @@ function validItemPayload(item = {}) {
     && validISODate(item.endedAt)
     && (item.groupID == null || validID(item.groupID))
     && validFiniteNumber(item.sortOrder)
-    && validPauseWindows(item.pauseWindows);
+    && validPauseWindows(item.pauseWindows)
+    && validScheduleRevision(item.scheduleRevision)
+    && (item.missedBehavior == null || missedBehaviors.includes(item.missedBehavior))
+    && validNullableDateKey(item.carryoverStartDate)
+    && validNullableDateKey(item.carryoverResolvedThroughDate)
+    && validOccurrences(item.occurrences);
 }
 
 function validGroupPayload(group = {}) {
@@ -1074,7 +1192,8 @@ function validImportedItem(item) {
     && validID(item.id)
     && validItemPayload(item)
     && validDateKeyArray(item.completedDates)
-    && validCompletionCounts(item.completionCounts);
+    && validCompletionCounts(item.completionCounts)
+    && validOccurrences(item.occurrences, item.id, normalizedScheduleRevision(item.scheduleRevision));
 }
 
 function validImportedGroup(group) {
@@ -1157,6 +1276,7 @@ function accountFromImportedChecklist(checklist, previousAccount = emptyAccount(
 
   for (const item of checklist.items) {
     const quantity = Number.isInteger(item.quantity) ? Math.min(Math.max(item.quantity, 1), 99) : 1;
+    const scheduleRevision = normalizedScheduleRevision(item.scheduleRevision);
     const completedDates = new Set(uniqueDateKeys(item.completedDates || []));
     const completionCounts = normalizedCompletionCounts(item.completionCounts || {});
     const completionDates = new Set([...completedDates, ...Object.keys(completionCounts)]);
@@ -1167,6 +1287,16 @@ function accountFromImportedChecklist(checklist, previousAccount = emptyAccount(
       if (isComplete || count > 0) {
         completions[date] = { value: isComplete, count, stamp, deviceID };
       }
+    }
+    const occurrences = {};
+    for (const [key, occurrence] of Object.entries(item.occurrences || {}).sort(([left], [right]) => left.localeCompare(right))) {
+      const coordinates = occurrenceCoordinates(key, occurrence, item.id, scheduleRevision);
+      const id = deterministicOccurrenceID(item.id, coordinates.scheduleRevision, coordinates.scheduledDate);
+      occurrences[id] = {
+        value: normalizedOccurrence(occurrence, coordinates.scheduleRevision, coordinates.scheduledDate),
+        stamp,
+        deviceID
+      };
     }
 
     account.items[item.id] = {
@@ -1185,9 +1315,14 @@ function accountFromImportedChecklist(checklist, previousAccount = emptyAccount(
         endedAt: importedField(item.endedAt, stamp, deviceID),
         groupID: importedField(item.groupID, stamp, deviceID),
         sortOrder: importedField(item.sortOrder, stamp, deviceID),
-        pauseWindows: importedField(item.pauseWindows || [], stamp, deviceID)
+        pauseWindows: importedField(item.pauseWindows || [], stamp, deviceID),
+        scheduleRevision: importedField(scheduleRevision, stamp, deviceID),
+        missedBehavior: importedField(item.missedBehavior || "markMissed", stamp, deviceID),
+        carryoverStartDate: importedField(item.carryoverStartDate, stamp, deviceID),
+        carryoverResolvedThroughDate: importedField(item.carryoverResolvedThroughDate, stamp, deviceID)
       },
-      completions
+      completions,
+      occurrences
     };
   }
 
@@ -1227,6 +1362,21 @@ function validMutation(mutation) {
         || (Number.isInteger(mutation.completionCount)
           && mutation.completionCount >= 0
           && mutation.completionCount <= 99));
+  }
+  if (mutation.kind === "occurrence") {
+    if (!validOccurrencePayload(mutation.occurrence)) return false;
+    const scheduledDate = mutation.occurrence.scheduledDate
+      ?? mutation.occurrence.originalScheduledDate
+      ?? mutation.occurrenceDate;
+    if (!validDateKey(scheduledDate)) return false;
+    if (mutation.occurrenceDate != null && mutation.occurrenceDate !== scheduledDate) return false;
+    if (mutation.occurrenceID == null) return validDateKey(mutation.occurrenceDate);
+    if (!validScheduleRevision(mutation.occurrence.scheduleRevision, { nullable: false })) return false;
+    return mutation.occurrenceID === deterministicOccurrenceID(
+      mutation.itemID,
+      mutation.occurrence.scheduleRevision,
+      scheduledDate
+    );
   }
   if (mutation.kind === "upsert") {
     return validChangedFields(mutation.changedFields, itemFields) && validItemPayload(mutation.item);
@@ -1287,7 +1437,8 @@ function applyMutation(account, mutation, deviceID) {
 
   if (!mutation.itemID) return false;
   account.items ||= {};
-  const record = account.items[mutation.itemID] ||= { id: mutation.itemID, fields: {}, completions: {} };
+  const record = account.items[mutation.itemID] ||= { id: mutation.itemID, fields: {}, completions: {}, occurrences: {} };
+  migrateRecordOccurrences(record);
 
   if (mutation.kind === "delete") {
     const incoming = { stamp: mutation.stamp, deviceID };
@@ -1311,6 +1462,28 @@ function applyMutation(account, mutation, deviceID) {
     return true;
   }
 
+  if (mutation.kind === "occurrence" && mutation.occurrence) {
+    record.occurrences ||= {};
+    const currentRevision = normalizedScheduleRevision(record.fields.scheduleRevision?.value);
+    const scheduledDate = mutation.occurrence.scheduledDate
+      ?? mutation.occurrence.originalScheduledDate
+      ?? mutation.occurrenceDate;
+    const scheduleRevision = mutation.occurrenceID
+      ? mutation.occurrence.scheduleRevision
+      : currentRevision;
+    const occurrenceID = mutation.occurrenceID
+      ?? deterministicOccurrenceID(mutation.itemID, scheduleRevision, scheduledDate);
+    const incoming = {
+      value: normalizedOccurrence(mutation.occurrence, scheduleRevision, scheduledDate),
+      stamp: mutation.stamp,
+      deviceID
+    };
+    if (stampWins(incoming, record.occurrences[occurrenceID])) {
+      record.occurrences[occurrenceID] = incoming;
+    }
+    return true;
+  }
+
   if (mutation.kind === "upsert" && mutation.item) {
     const changed = new Set(mutation.changedFields || itemFields);
     for (const field of itemFields) {
@@ -1327,17 +1500,85 @@ function applyMutation(account, mutation, deviceID) {
   return false;
 }
 
+function authoritativeOccurrenceStates(record) {
+  const latestByDate = new Map();
+  for (const [occurrenceID, state] of Object.entries(record.occurrences || {})) {
+    if (!validOccurrencePayload(state?.value)) continue;
+    const scheduledDate = state.value.scheduledDate;
+    if (!validDateKey(scheduledDate)) continue;
+    const current = latestByDate.get(scheduledDate);
+    const incomingRevision = normalizedScheduleRevision(state.value.scheduleRevision);
+    const currentRevision = normalizedScheduleRevision(current?.state.value.scheduleRevision);
+    let wins = !current || incomingRevision > currentRevision;
+    if (current && incomingRevision === currentRevision) {
+      wins = stampWins(state, current.state)
+        || (!stampWins(current.state, state) && occurrenceID > current.occurrenceID);
+    }
+    if (wins) latestByDate.set(scheduledDate, { occurrenceID, state });
+  }
+  return latestByDate;
+}
+
+function reconciledLegacyDayState(record, value, quantity) {
+  const completedDates = new Set(
+    Object.entries(record.completions || {})
+      .filter(([, state]) => state.value)
+      .map(([date]) => date)
+  );
+  const completionCounts = new Map(
+    Object.entries(record.completions || {})
+      .map(([date, state]) => [
+        date,
+        Math.min(Math.max(0, state.count ?? (state.value ? quantity : 0)), quantity)
+      ])
+      .filter(([, count]) => count > 0)
+  );
+  const skippedDates = new Set(uniqueDateKeys(value.skippedDates || []));
+  const openDates = new Set(uniqueDateKeys(value.openDates || []));
+
+  for (const [scheduledDate, { state }] of authoritativeOccurrenceStates(record)) {
+    const occurrence = state.value;
+    const count = Math.min(Math.max(0, occurrence.completionCount), quantity);
+    completedDates.delete(scheduledDate);
+    completionCounts.delete(scheduledDate);
+    skippedDates.delete(scheduledDate);
+    openDates.delete(scheduledDate);
+
+    if (occurrence.outcome === "done") {
+      completedDates.add(scheduledDate);
+      if (count > 0) completionCounts.set(scheduledDate, count);
+    } else if (occurrence.outcome === "open") {
+      openDates.add(scheduledDate);
+      if (count > 0) completionCounts.set(scheduledDate, count);
+    } else if (occurrence.outcome === "skipped") {
+      skippedDates.add(scheduledDate);
+    }
+    // An internally closed missed occurrence is intentionally absent from all
+    // legacy date sets. Its history remains available in the occurrence record.
+  }
+
+  return {
+    completedDates: [...completedDates].sort(),
+    completionCounts: Object.fromEntries([...completionCounts].sort(([left], [right]) => left.localeCompare(right))),
+    skippedDates: [...skippedDates].sort(),
+    openDates: [...openDates].sort()
+  };
+}
+
 function materializeAccount(account) {
   const items = Object.values(account.items || {})
     .filter((record) => !record.deleted)
     .map((record) => {
+      migrateRecordOccurrences(record);
       const value = {};
       for (const field of itemFields) value[field] = record.fields[field]?.value ?? null;
       const quantity = Number.isInteger(value.quantity) && value.quantity > 0 ? Math.min(value.quantity, 99) : 1;
-      const completionCounts = Object.fromEntries(
-        Object.entries(record.completions || {})
-          .map(([date, state]) => [date, Math.min(Math.max(0, state.count ?? (state.value ? quantity : 0)), quantity)])
-          .filter(([, count]) => count > 0)
+      const legacyDayState = reconciledLegacyDayState(record, value, quantity);
+      const occurrences = Object.fromEntries(
+        Object.entries(record.occurrences || {})
+          .filter(([, state]) => validOccurrencePayload(state?.value))
+          .sort(([left], [right]) => left.localeCompare(right))
+          .map(([occurrenceID, state]) => [occurrenceID, normalizedOccurrence(state.value)])
       );
       return {
         id: record.id,
@@ -1347,17 +1588,22 @@ function materializeAccount(account) {
         customWeekdays: value.customWeekdays || [],
         reminderMinutes: value.reminderMinutes,
         quantity,
-        skippedDates: value.skippedDates || [],
-        openDates: value.openDates || [],
+        skippedDates: legacyDayState.skippedDates,
+        openDates: legacyDayState.openDates,
         startDate: value.startDate,
         endedAt: value.endedAt,
         groupID: value.groupID,
         sortOrder: value.sortOrder,
         pauseWindows: value.pauseWindows || [],
-        completedDates: Object.entries(record.completions || {})
-          .filter(([, state]) => state.value)
-          .map(([date]) => date),
-        completionCounts,
+        scheduleRevision: normalizedScheduleRevision(value.scheduleRevision),
+        missedBehavior: missedBehaviors.includes(value.missedBehavior) ? value.missedBehavior : "markMissed",
+        carryoverStartDate: validDateKey(value.carryoverStartDate) ? value.carryoverStartDate : null,
+        carryoverResolvedThroughDate: validDateKey(value.carryoverResolvedThroughDate)
+          ? value.carryoverResolvedThroughDate
+          : null,
+        occurrences,
+        completedDates: legacyDayState.completedDates,
+        completionCounts: legacyDayState.completionCounts,
         createdAt: value.createdAt || new Date().toISOString()
       };
     })

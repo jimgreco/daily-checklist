@@ -22,6 +22,135 @@ enum ScheduleKind: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+enum MissedOccurrenceBehavior: String, Codable, CaseIterable, Identifiable {
+    case markMissed
+    case keepUntilDone
+
+    var id: String { rawValue }
+}
+
+struct ChecklistOccurrence: Codable, Hashable {
+    enum Outcome: String, Codable {
+        case open
+        case done
+        case skipped
+        case missed
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case outcome
+        case completionCount
+        case resolvedDate
+        case hiddenUntil
+        case scheduleRevision
+        case scheduledDate
+    }
+
+    private enum LegacyCodingKeys: String, CodingKey {
+        case originalScheduledDate
+    }
+
+    var outcome: Outcome
+    var completionCount: Int
+    var resolvedDate: String?
+    var hiddenUntil: String?
+    var scheduleRevision: Int
+    var scheduledDate: String
+
+    init(
+        outcome: Outcome = .open,
+        completionCount: Int = 0,
+        resolvedDate: String? = nil,
+        hiddenUntil: String? = nil,
+        scheduleRevision: Int = 0,
+        scheduledDate: String = ""
+    ) {
+        self.outcome = outcome
+        self.completionCount = Self.normalizedCompletionCount(completionCount)
+        self.resolvedDate = resolvedDate
+        self.hiddenUntil = hiddenUntil
+        self.scheduleRevision = Self.normalizedScheduleRevision(scheduleRevision)
+        self.scheduledDate = scheduledDate
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        outcome = try container.decodeIfPresent(Outcome.self, forKey: .outcome) ?? .open
+        completionCount = Self.normalizedCompletionCount(
+            try container.decodeIfPresent(Int.self, forKey: .completionCount) ?? 0
+        )
+        resolvedDate = try container.decodeIfPresent(String.self, forKey: .resolvedDate)
+        hiddenUntil = try container.decodeIfPresent(String.self, forKey: .hiddenUntil)
+        scheduleRevision = Self.normalizedScheduleRevision(
+            try container.decodeIfPresent(Int.self, forKey: .scheduleRevision) ?? 0
+        )
+        let legacyContainer = try decoder.container(keyedBy: LegacyCodingKeys.self)
+        scheduledDate = try container.decodeIfPresent(String.self, forKey: .scheduledDate)
+            ?? legacyContainer.decodeIfPresent(String.self, forKey: .originalScheduledDate)
+            ?? ""
+    }
+
+    private static func normalizedCompletionCount(_ count: Int) -> Int {
+        min(max(0, count), 99)
+    }
+
+    private static func normalizedScheduleRevision(_ revision: Int) -> Int {
+        min(max(0, revision), 1_000_000)
+    }
+}
+
+enum ChecklistOccurrenceIdentifier {
+    struct Parsed: Equatable {
+        var itemID: UUID
+        var scheduleRevision: Int?
+        var scheduledDateKey: String
+
+        var isLegacy: Bool { scheduleRevision == nil }
+    }
+
+    static func string(itemID: UUID, scheduleRevision: Int, scheduledDateKey: String) -> String {
+        "\(itemID.uuidString.lowercased()):\(min(max(0, scheduleRevision), 1_000_000)):\(scheduledDateKey)"
+    }
+
+    /// The two-part form remains available for notification payloads created by older clients.
+    static func string(itemID: UUID, scheduledDateKey: String) -> String {
+        "\(itemID.uuidString.lowercased()):\(scheduledDateKey)"
+    }
+
+    static func parse(_ identifier: String) -> Parsed? {
+        let parts = identifier.split(separator: ":", omittingEmptySubsequences: false)
+        guard parts.count == 2 || parts.count == 3,
+              let itemID = UUID(uuidString: String(parts[0])) else {
+            return nil
+        }
+
+        let revision: Int?
+        let datePart: Substring
+        if parts.count == 3 {
+            guard let parsedRevision = Int(parts[1]), parsedRevision >= 0 else { return nil }
+            revision = parsedRevision
+            datePart = parts[2]
+        } else {
+            revision = nil
+            datePart = parts[1]
+        }
+
+        let dateKey = String(datePart)
+        guard DateKey.date(from: dateKey) != nil else { return nil }
+        return Parsed(itemID: itemID, scheduleRevision: revision, scheduledDateKey: dateKey)
+    }
+
+    static func scheduledDateKey(from identifier: String, itemID: UUID) -> String? {
+        guard let parsed = parse(identifier), parsed.itemID == itemID else { return nil }
+        return parsed.scheduledDateKey
+    }
+
+    static func scheduleRevision(from identifier: String, itemID: UUID) -> Int? {
+        guard let parsed = parse(identifier), parsed.itemID == itemID else { return nil }
+        return parsed.scheduleRevision
+    }
+}
+
 struct NotificationGroupFilter: Codable, Equatable {
     enum Mode: String, Codable, CaseIterable, Identifiable {
         case all
@@ -237,6 +366,11 @@ struct ChecklistItem: Identifiable, Codable, Hashable {
         case groupID
         case sortOrder
         case pauseWindows
+        case scheduleRevision
+        case missedBehavior
+        case carryoverStartDate
+        case carryoverResolvedThroughDate
+        case occurrences
     }
 
     var id: UUID
@@ -256,6 +390,11 @@ struct ChecklistItem: Identifiable, Codable, Hashable {
     var groupID: UUID?
     var sortOrder: Double?
     var pauseWindows: [PauseWindow]
+    var scheduleRevision: Int
+    var missedBehavior: MissedOccurrenceBehavior
+    var carryoverStartDate: String?
+    var carryoverResolvedThroughDate: String?
+    var occurrences: [String: ChecklistOccurrence]
 
     init(
         id: UUID = UUID(),
@@ -274,7 +413,12 @@ struct ChecklistItem: Identifiable, Codable, Hashable {
         endedAt: Date? = nil,
         groupID: UUID? = nil,
         sortOrder: Double? = nil,
-        pauseWindows: [PauseWindow] = []
+        pauseWindows: [PauseWindow] = [],
+        scheduleRevision: Int = 0,
+        missedBehavior: MissedOccurrenceBehavior = .markMissed,
+        carryoverStartDate: String? = nil,
+        carryoverResolvedThroughDate: String? = nil,
+        occurrences: [String: ChecklistOccurrence] = [:]
     ) {
         self.id = id
         self.title = title
@@ -293,6 +437,11 @@ struct ChecklistItem: Identifiable, Codable, Hashable {
         self.groupID = groupID
         self.sortOrder = sortOrder
         self.pauseWindows = PauseWindow.normalized(pauseWindows)
+        self.scheduleRevision = min(max(0, scheduleRevision), 1_000_000)
+        self.missedBehavior = missedBehavior
+        self.carryoverStartDate = carryoverStartDate
+        self.carryoverResolvedThroughDate = carryoverResolvedThroughDate
+        self.occurrences = Self.migratedOccurrences(occurrences, itemID: id)
     }
 
     init(from decoder: Decoder) throws {
@@ -316,6 +465,99 @@ struct ChecklistItem: Identifiable, Codable, Hashable {
         groupID = try container.decodeIfPresent(UUID.self, forKey: .groupID)
         sortOrder = try container.decodeIfPresent(Double.self, forKey: .sortOrder)
         pauseWindows = PauseWindow.normalized(try container.decodeIfPresent([PauseWindow].self, forKey: .pauseWindows) ?? [])
+        scheduleRevision = min(max(0, try container.decodeIfPresent(Int.self, forKey: .scheduleRevision) ?? 0), 1_000_000)
+        missedBehavior = try container.decodeIfPresent(MissedOccurrenceBehavior.self, forKey: .missedBehavior) ?? .markMissed
+        carryoverStartDate = try container.decodeIfPresent(String.self, forKey: .carryoverStartDate)
+        carryoverResolvedThroughDate = try container.decodeIfPresent(String.self, forKey: .carryoverResolvedThroughDate)
+        occurrences = Self.migratedOccurrences(
+            try container.decodeIfPresent([String: ChecklistOccurrence].self, forKey: .occurrences) ?? [:],
+            itemID: id
+        )
+    }
+
+    func occurrenceID(scheduledDate: String, scheduleRevision: Int? = nil) -> String {
+        ChecklistOccurrenceIdentifier.string(
+            itemID: id,
+            scheduleRevision: min(max(0, scheduleRevision ?? self.scheduleRevision), 1_000_000),
+            scheduledDateKey: scheduledDate
+        )
+    }
+
+    func occurrence(
+        scheduledDate: String,
+        scheduleRevision: Int? = nil
+    ) -> ChecklistOccurrence? {
+        let revision = min(max(0, scheduleRevision ?? self.scheduleRevision), 1_000_000)
+        let identifier = occurrenceID(
+            scheduledDate: scheduledDate,
+            scheduleRevision: revision
+        )
+        if let occurrence = occurrences[identifier] {
+            return occurrence
+        }
+
+        // Revision zero is the only unambiguous interpretation of legacy date-only keys.
+        guard revision == 0 else { return nil }
+        return occurrences[scheduledDate]
+            ?? occurrences[ChecklistOccurrenceIdentifier.string(itemID: id, scheduledDateKey: scheduledDate)]
+    }
+
+    func latestOccurrence(scheduledDate: String) -> ChecklistOccurrence? {
+        occurrences.values
+            .filter { $0.scheduledDate == scheduledDate }
+            .max {
+                $0.scheduleRevision < $1.scheduleRevision
+            }
+    }
+
+    @discardableResult
+    mutating func setOccurrence(
+        _ occurrence: ChecklistOccurrence,
+        scheduledDate: String,
+        scheduleRevision: Int? = nil
+    ) -> String {
+        let revision = min(max(0, scheduleRevision ?? self.scheduleRevision), 1_000_000)
+        let identifier = occurrenceID(
+            scheduledDate: scheduledDate,
+            scheduleRevision: revision
+        )
+        var identifiedOccurrence = occurrence
+        identifiedOccurrence.scheduleRevision = revision
+        identifiedOccurrence.scheduledDate = scheduledDate
+        occurrences[identifier] = identifiedOccurrence
+
+        if revision == 0 {
+            occurrences.removeValue(forKey: scheduledDate)
+            occurrences.removeValue(
+                forKey: ChecklistOccurrenceIdentifier.string(
+                    itemID: id,
+                    scheduledDateKey: scheduledDate
+                )
+            )
+        }
+        return identifier
+    }
+
+    @discardableResult
+    mutating func removeOccurrence(
+        scheduledDate: String,
+        scheduleRevision: Int? = nil
+    ) -> ChecklistOccurrence? {
+        let revision = min(max(0, scheduleRevision ?? self.scheduleRevision), 1_000_000)
+        let identifier = occurrenceID(
+            scheduledDate: scheduledDate,
+            scheduleRevision: revision
+        )
+        let removed = occurrences.removeValue(forKey: identifier)
+        guard revision == 0 else { return removed }
+        let removedDateKey = occurrences.removeValue(forKey: scheduledDate)
+        let removedLegacyIdentifier = occurrences.removeValue(
+            forKey: ChecklistOccurrenceIdentifier.string(
+                itemID: id,
+                scheduledDateKey: scheduledDate
+            )
+        )
+        return removed ?? removedDateKey ?? removedLegacyIdentifier
     }
 
     func isActive(on date: Date, calendar: Calendar = .current) -> Bool {
@@ -399,6 +641,14 @@ struct ChecklistItem: Identifiable, Codable, Hashable {
 
     func historyState(on date: Date, calendar: Calendar = .current) -> ChecklistHistoryState {
         let day = calendar.startOfDay(for: date)
+        if let occurrence = latestOccurrence(scheduledDate: DateKey.string(from: day)) {
+            switch occurrence.outcome {
+            case .done: return .done
+            case .skipped: return .skipped
+            case .missed: return .missed
+            case .open: return .open
+            }
+        }
         if isComplete(on: day) { return .done }
         if isSkipped(on: day) { return .skipped }
         if isExplicitlyOpen(on: day) { return .open }
@@ -577,6 +827,68 @@ struct ChecklistItem: Identifiable, Codable, Hashable {
         return change
     }
 
+    private static func migratedOccurrences(
+        _ rawOccurrences: [String: ChecklistOccurrence],
+        itemID: UUID
+    ) -> [String: ChecklistOccurrence] {
+        var migrated: [String: ChecklistOccurrence] = [:]
+
+        // Canonical entries win if a payload contains both canonical and legacy keys.
+        for key in rawOccurrences.keys.sorted() {
+            guard let occurrence = rawOccurrences[key],
+                  let parsed = ChecklistOccurrenceIdentifier.parse(key),
+                  parsed.itemID == itemID,
+                  let revision = parsed.scheduleRevision else {
+                continue
+            }
+            let identifier = ChecklistOccurrenceIdentifier.string(
+                itemID: itemID,
+                scheduleRevision: revision,
+                scheduledDateKey: parsed.scheduledDateKey
+            )
+            var identifiedOccurrence = occurrence
+            identifiedOccurrence.scheduleRevision = revision
+            identifiedOccurrence.scheduledDate = parsed.scheduledDateKey
+            migrated[identifier] = identifiedOccurrence
+        }
+
+        for key in rawOccurrences.keys.sorted() {
+            guard var occurrence = rawOccurrences[key] else { continue }
+            if let parsed = ChecklistOccurrenceIdentifier.parse(key),
+               parsed.itemID == itemID,
+               parsed.scheduleRevision != nil {
+                continue
+            }
+
+            let scheduledDate: String
+            if DateKey.date(from: key) != nil {
+                scheduledDate = key
+            } else if let parsed = ChecklistOccurrenceIdentifier.parse(key),
+                      parsed.itemID == itemID,
+                      parsed.isLegacy {
+                scheduledDate = parsed.scheduledDateKey
+            } else if DateKey.date(from: occurrence.scheduledDate) != nil {
+                scheduledDate = occurrence.scheduledDate
+            } else {
+                migrated[key] = occurrence
+                continue
+            }
+
+            let revision = min(max(0, occurrence.scheduleRevision), 1_000_000)
+            let identifier = ChecklistOccurrenceIdentifier.string(
+                itemID: itemID,
+                scheduleRevision: revision,
+                scheduledDateKey: scheduledDate
+            )
+            occurrence.scheduleRevision = revision
+            occurrence.scheduledDate = scheduledDate
+            if migrated[identifier] == nil {
+                migrated[identifier] = occurrence
+            }
+        }
+        return migrated
+    }
+
     private static func normalizedQuantity(_ value: Int) -> Int {
         min(max(1, value), 99)
     }
@@ -657,6 +969,11 @@ struct ItemPayload: Codable {
         case groupID
         case sortOrder
         case pauseWindows
+        case scheduleRevision
+        case missedBehavior
+        case carryoverStartDate
+        case carryoverResolvedThroughDate
+        case occurrences
     }
 
     var title: String
@@ -673,6 +990,11 @@ struct ItemPayload: Codable {
     var groupID: UUID?
     var sortOrder: Double?
     var pauseWindows: [PauseWindow]
+    var scheduleRevision: Int
+    var missedBehavior: MissedOccurrenceBehavior
+    var carryoverStartDate: String?
+    var carryoverResolvedThroughDate: String?
+    var occurrences: [String: ChecklistOccurrence]
 
     init(
         title: String,
@@ -688,7 +1010,12 @@ struct ItemPayload: Codable {
         endedAt: Date?,
         groupID: UUID?,
         sortOrder: Double?,
-        pauseWindows: [PauseWindow]
+        pauseWindows: [PauseWindow],
+        scheduleRevision: Int = 0,
+        missedBehavior: MissedOccurrenceBehavior = .markMissed,
+        carryoverStartDate: String? = nil,
+        carryoverResolvedThroughDate: String? = nil,
+        occurrences: [String: ChecklistOccurrence] = [:]
     ) {
         self.title = title
         self.notes = notes
@@ -704,6 +1031,11 @@ struct ItemPayload: Codable {
         self.groupID = groupID
         self.sortOrder = sortOrder
         self.pauseWindows = PauseWindow.normalized(pauseWindows)
+        self.scheduleRevision = min(max(0, scheduleRevision), 1_000_000)
+        self.missedBehavior = missedBehavior
+        self.carryoverStartDate = carryoverStartDate
+        self.carryoverResolvedThroughDate = carryoverResolvedThroughDate
+        self.occurrences = occurrences
     }
 
     init(from decoder: Decoder) throws {
@@ -722,6 +1054,11 @@ struct ItemPayload: Codable {
         groupID = try container.decodeIfPresent(UUID.self, forKey: .groupID)
         sortOrder = try container.decodeIfPresent(Double.self, forKey: .sortOrder)
         pauseWindows = PauseWindow.normalized(try container.decodeIfPresent([PauseWindow].self, forKey: .pauseWindows) ?? [])
+        scheduleRevision = min(max(0, try container.decodeIfPresent(Int.self, forKey: .scheduleRevision) ?? 0), 1_000_000)
+        missedBehavior = try container.decodeIfPresent(MissedOccurrenceBehavior.self, forKey: .missedBehavior) ?? .markMissed
+        carryoverStartDate = try container.decodeIfPresent(String.self, forKey: .carryoverStartDate)
+        carryoverResolvedThroughDate = try container.decodeIfPresent(String.self, forKey: .carryoverResolvedThroughDate)
+        occurrences = try container.decodeIfPresent([String: ChecklistOccurrence].self, forKey: .occurrences) ?? [:]
     }
 }
 
@@ -763,6 +1100,7 @@ struct SyncMutation: Identifiable, Codable {
         case notificationGroupFilter
         case groupUpsert
         case groupDelete
+        case occurrence
     }
 
     var id: UUID
@@ -776,11 +1114,14 @@ struct SyncMutation: Identifiable, Codable {
     var completionDate: String?
     var completed: Bool?
     var completionCount: Int?
+    var occurrenceDate: String?
+    var occurrenceID: String?
+    var occurrence: ChecklistOccurrence?
     var eveningReminderMinutes: Int?
     var notificationGroupFilter: NotificationGroupFilter?
 
     static func upsert(item: ChecklistItem, changedFields: Set<String>) -> SyncMutation {
-        SyncMutation(
+        return SyncMutation(
             id: UUID(),
             itemID: item.id,
             kind: .upsert,
@@ -800,7 +1141,12 @@ struct SyncMutation: Identifiable, Codable {
                 endedAt: item.endedAt,
                 groupID: item.groupID,
                 sortOrder: item.sortOrder,
-                pauseWindows: item.pauseWindows
+                pauseWindows: item.pauseWindows,
+                scheduleRevision: item.scheduleRevision,
+                missedBehavior: item.missedBehavior,
+                carryoverStartDate: item.carryoverStartDate,
+                carryoverResolvedThroughDate: item.carryoverResolvedThroughDate,
+                occurrences: item.occurrences
             )
         )
     }
@@ -838,6 +1184,49 @@ struct SyncMutation: Identifiable, Codable {
             completionDate: date,
             completed: completed,
             completionCount: count
+        )
+    }
+
+    static func occurrence(
+        itemID: UUID,
+        occurrenceDate: String,
+        occurrence: ChecklistOccurrence
+    ) -> SyncMutation {
+        let revision = min(max(0, occurrence.scheduleRevision), 1_000_000)
+        var identifiedOccurrence = occurrence
+        identifiedOccurrence.scheduleRevision = revision
+        identifiedOccurrence.scheduledDate = occurrenceDate
+        return .occurrence(
+            itemID: itemID,
+            occurrenceID: ChecklistOccurrenceIdentifier.string(
+                itemID: itemID,
+                scheduleRevision: revision,
+                scheduledDateKey: occurrenceDate
+            ),
+            occurrence: identifiedOccurrence
+        )
+    }
+
+    static func occurrence(
+        itemID: UUID,
+        occurrenceID: String,
+        occurrence: ChecklistOccurrence
+    ) -> SyncMutation {
+        var identifiedOccurrence = occurrence
+        if let parsed = ChecklistOccurrenceIdentifier.parse(occurrenceID),
+           parsed.itemID == itemID,
+           let revision = parsed.scheduleRevision {
+            identifiedOccurrence.scheduleRevision = revision
+            identifiedOccurrence.scheduledDate = parsed.scheduledDateKey
+        }
+        return SyncMutation(
+            id: UUID(),
+            itemID: itemID,
+            kind: .occurrence,
+            stamp: SyncStamp.now,
+            occurrenceDate: identifiedOccurrence.scheduledDate,
+            occurrenceID: occurrenceID,
+            occurrence: identifiedOccurrence
         )
     }
 

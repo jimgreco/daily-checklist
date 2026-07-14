@@ -596,6 +596,11 @@ private struct RoutineInsightsView: View {
                 Text("\(summary.completedCheckIns) of \(summary.expectedCheckIns) scheduled check-ins finished")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
+                if summary.lateCompletedCheckIns > 0 {
+                    Text("\(summary.lateCompletedCheckIns) completed after the original due date")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(delayed)
+                }
             }
             Spacer(minLength: 0)
         }

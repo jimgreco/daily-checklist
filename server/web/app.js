@@ -112,6 +112,99 @@
 
   function sameDay(left, right) { return dateKey(left) === dateKey(right); }
 
+  function isDateKey(value) {
+    return /^\d{4}-\d{2}-\d{2}$/.test(value || "");
+  }
+
+  function normalizedScheduleRevision(value) {
+    return Number.isSafeInteger(value) && value >= 0 ? Math.min(value, 1_000_000) : 0;
+  }
+
+  function occurrenceIdentifier(item, scheduledDate, revision = normalizedScheduleRevision(item.scheduleRevision)) {
+    return `${item.id}:${normalizedScheduleRevision(revision)}:${scheduledDate}`;
+  }
+
+  function parsedOccurrenceCoordinates(item, identifier) {
+    if (isDateKey(identifier)) {
+      return { scheduledDate: identifier, scheduleRevision: null, legacy: true };
+    }
+    const prefix = `${item.id}:`;
+    if (typeof identifier !== "string" || !identifier.startsWith(prefix)) return null;
+    const remainder = identifier.slice(prefix.length);
+    if (isDateKey(remainder)) {
+      return { scheduledDate: remainder, scheduleRevision: null, legacy: true };
+    }
+    const separator = remainder.indexOf(":");
+    if (separator <= 0 || remainder.indexOf(":", separator + 1) !== -1) return null;
+    const revisionText = remainder.slice(0, separator);
+    const scheduledDate = remainder.slice(separator + 1);
+    if (!/^\d+$/.test(revisionText) || !isDateKey(scheduledDate)) return null;
+    const scheduleRevision = Number(revisionText);
+    if (!Number.isSafeInteger(scheduleRevision)) return null;
+    return { scheduledDate, scheduleRevision, legacy: false };
+  }
+
+  function normalizedOccurrence(item, identifier, raw = {}) {
+    const parsed = parsedOccurrenceCoordinates(item, identifier);
+    const scheduledDate = parsed?.scheduledDate
+      || (isDateKey(raw.scheduledDate) ? raw.scheduledDate : null)
+      || (isDateKey(raw.originalScheduledDate) ? raw.originalScheduledDate : null);
+    if (!scheduledDate) return null;
+    const scheduleRevision = parsed?.scheduleRevision == null
+      ? normalizedScheduleRevision(raw.scheduleRevision ?? item.scheduleRevision)
+      : parsed.scheduleRevision;
+    const id = occurrenceIdentifier(item, scheduledDate, scheduleRevision);
+    return {
+      id,
+      scheduledDate,
+      scheduleRevision,
+      legacy: parsed?.legacy !== false,
+      occurrence: {
+        outcome: ["open", "done", "skipped", "missed"].includes(raw.outcome) ? raw.outcome : "open",
+        completionCount: Math.min(Math.max(0, Number.isInteger(raw.completionCount) ? raw.completionCount : 0), 99),
+        resolvedDate: isDateKey(raw.resolvedDate) ? raw.resolvedDate : null,
+        hiddenUntil: isDateKey(raw.hiddenUntil) ? raw.hiddenUntil : null,
+        scheduleRevision,
+        scheduledDate,
+      }
+    };
+  }
+
+  function occurrenceRecords(item) {
+    const records = new Map();
+    const entries = Object.entries(item.occurrences || {});
+    const add = ([identifier, raw]) => {
+      const record = normalizedOccurrence(item, identifier, raw);
+      if (record && !records.has(record.id)) records.set(record.id, record);
+    };
+    entries.filter(([identifier]) => parsedOccurrenceCoordinates(item, identifier)?.legacy === false).forEach(add);
+    entries.filter(([identifier]) => parsedOccurrenceCoordinates(item, identifier)?.legacy !== false).forEach(add);
+    return [...records.values()];
+  }
+
+  function normalizeChecklistItems(items) {
+    return (Array.isArray(items) ? items : []).map((item) => {
+      item.scheduleRevision = normalizedScheduleRevision(item.scheduleRevision);
+      item.occurrences = Object.fromEntries(
+        occurrenceRecords(item).map((record) => [record.id, record.occurrence])
+      );
+      return item;
+    });
+  }
+
+  function occurrenceRecord(item, scheduledDate, revision = normalizedScheduleRevision(item.scheduleRevision)) {
+    const id = occurrenceIdentifier(item, scheduledDate, revision);
+    return occurrenceRecords(item).find((record) => record.id === id) || null;
+  }
+
+  function latestOccurrenceRecord(item, scheduledDate) {
+    return occurrenceRecords(item)
+      .filter((record) => record.scheduledDate === scheduledDate)
+      .sort((left, right) => right.scheduleRevision - left.scheduleRevision || right.id.localeCompare(left.id))[0] || null;
+  }
+
+  state.items = normalizeChecklistItems(state.items);
+
   function isFutureDate(date) {
     return startOfDay(date) > startOfDay(new Date());
   }
@@ -285,7 +378,7 @@
       });
       const accepted = new Set(result.acceptedMutationIDs || []);
       state.pending = state.pending.filter((entry) => !accepted.has(entry.id));
-      state.items = result.items || [];
+      state.items = normalizeChecklistItems(result.items || []);
       state.groups = result.groups || [];
       state.loaded = true;
       persistData();
@@ -340,11 +433,19 @@
     return (item.completedDates || []).includes(key)
       || (item.completionCounts?.[key] || 0) > 0
       || (item.skippedDates || []).includes(key)
-      || (item.openDates || []).includes(key);
+      || (item.openDates || []).includes(key)
+      || occurrenceRecords(item).some((record) => record.scheduledDate === key);
   }
 
-  function complete(item) { return (item.completedDates || []).includes(dateKey(state.selectedDate)); }
-  function skipped(item) { return (item.skippedDates || []).includes(dateKey(state.selectedDate)); }
+  function complete(item) {
+    const key = dateKey(state.selectedDate);
+    return (item.completedDates || []).includes(key);
+  }
+
+  function skipped(item) {
+    const key = dateKey(state.selectedDate);
+    return (item.skippedDates || []).includes(key);
+  }
 
   function quantity(item) {
     return Number.isInteger(item.quantity) && item.quantity > 0 ? Math.min(item.quantity, 99) : 1;
@@ -383,13 +484,207 @@
     }));
   }
 
-  function visibleItems() {
+  function occurrenceValue(item, key, { revision = normalizedScheduleRevision(item.scheduleRevision), record = null, anyRevision = false } = {}) {
+    const selectedRecord = record || (anyRevision ? latestOccurrenceRecord(item, key) : occurrenceRecord(item, key, revision));
+    const raw = selectedRecord?.occurrence || {};
+    const target = quantity(item);
+    const recordedCount = item.completionCounts?.[key];
+    const count = Number.isInteger(raw.completionCount)
+      ? raw.completionCount
+      : (Number.isInteger(recordedCount) ? recordedCount : ((item.completedDates || []).includes(key) ? target : 0));
+    const outcome = ["open", "done", "skipped", "missed"].includes(raw.outcome)
+      ? raw.outcome
+      : ((item.completedDates || []).includes(key) ? "done" : (item.skippedDates || []).includes(key) ? "skipped" : "open");
+    return {
+      outcome,
+      completionCount: Math.min(Math.max(0, Number.isInteger(count) ? count : 0), target),
+      resolvedDate: isDateKey(raw.resolvedDate) ? raw.resolvedDate : null,
+      hiddenUntil: isDateKey(raw.hiddenUntil) ? raw.hiddenUntil : null,
+    };
+  }
+
+  function setOccurrence(item, key, occurrence, { revision = occurrence.scheduleRevision ?? normalizedScheduleRevision(item.scheduleRevision), occurrenceID = null } = {}) {
+    item.occurrences ||= {};
+    const id = occurrenceID || occurrenceIdentifier(item, key, revision);
+    const record = normalizedOccurrence(item, id, {
+      ...occurrence,
+      scheduleRevision: revision,
+      scheduledDate: key,
+    });
+    if (!record) return null;
+    item.occurrences[record.id] = record.occurrence;
+    delete item.occurrences[key];
+    delete item.occurrences[`${item.id}:${key}`];
+    state.pending.push(mutation("occurrence", {
+      itemID: item.id,
+      occurrenceDate: key,
+      occurrenceID: record.id,
+      occurrence: record.occurrence
+    }));
+    return record;
+  }
+
+  function resolveOlderOpenOccurrences(item, entry, resolvedDate) {
+    let daySetsChanged = false;
+    entry.occurrences.forEach((candidate) => {
+      if (candidate.id === entry.latestID || candidate.occurrence.outcome !== "open") return;
+      if (candidate.scheduledDate !== entry.latestDate) {
+        const key = candidate.scheduledDate;
+        const previousCount = completionCount(item, dateFromInput(key));
+        const wasCompleted = (item.completedDates || []).includes(key);
+        const wasSkipped = (item.skippedDates || []).includes(key);
+        const wasOpen = (item.openDates || []).includes(key);
+        setCompletionCount(item, key, 0);
+        item.skippedDates = (item.skippedDates || []).filter((date) => date !== key);
+        item.openDates = (item.openDates || []).filter((date) => date !== key);
+        if (wasCompleted || previousCount > 0) queueCompletion(item, key);
+        daySetsChanged ||= wasSkipped || wasOpen;
+      }
+      setOccurrence(item, candidate.scheduledDate, {
+        outcome: "missed",
+        completionCount: candidate.occurrence.completionCount,
+        resolvedDate,
+        hiddenUntil: null,
+      }, { revision: candidate.scheduleRevision, occurrenceID: candidate.id });
+    });
+    if (daySetsChanged) {
+      state.pending.push(mutation("upsert", {
+        itemID: item.id,
+        changedFields: ["skippedDates", "openDates"],
+        item: { skippedDates: item.skippedDates, openDates: item.openDates }
+      }));
+    }
+  }
+
+  function queryMatches(item) {
     const query = state.search.trim().toLowerCase();
-    const items = state.items
+    return !query
+      || item.title.toLowerCase().includes(query)
+      || String(item.notes || "").toLowerCase().includes(query);
+  }
+
+  function carryoverForItem(item, today = startOfDay(new Date()), { includeHidden = false, ignoreCurrentPause = false } = {}) {
+    if (item.missedBehavior !== "keepUntilDone" || item.schedule === "everyDay") return null;
+    if (!isDateKey(item.carryoverStartDate) || (!ignoreCurrentPause && isPaused(item, today))) return null;
+
+    const todayKey = dateKey(today);
+    const currentRevision = normalizedScheduleRevision(item.scheduleRevision);
+    const resolvedThrough = isDateKey(item.carryoverResolvedThroughDate) ? item.carryoverResolvedThroughDate : null;
+    let cursor = dateFromInput(item.carryoverStartDate);
+    const unresolved = new Map();
+    while (cursor && cursor < today) {
+      const key = dateKey(cursor);
+      const record = occurrenceRecord(item, key, currentRevision);
+      const occurrence = occurrenceValue(item, key, { revision: currentRevision, record });
+      const recordedDone = record
+        ? occurrence.completionCount >= quantity(item)
+        : (item.completedDates || []).includes(key) || completionCount(item, cursor) >= quantity(item);
+      const recordedSkipped = !record && (item.skippedDates || []).includes(key);
+      const explicitlyOpen = record?.occurrence.outcome === "open";
+      const afterResolutionBoundary = !resolvedThrough || key > resolvedThrough || explicitlyOpen;
+      if (afterResolutionBoundary
+        && occursOnDate(item, cursor)
+        && !recordedDone
+        && !recordedSkipped
+        && occurrence.outcome !== "done"
+        && occurrence.outcome !== "skipped"
+        && occurrence.outcome !== "missed") {
+        const id = occurrenceIdentifier(item, key, currentRevision);
+        unresolved.set(id, {
+          id,
+          scheduledDate: key,
+          scheduleRevision: currentRevision,
+          occurrence,
+          persisted: Boolean(record),
+        });
+      }
+      cursor = addDays(cursor, 1);
+    }
+
+    for (const record of occurrenceRecords(item)) {
+      const key = record.scheduledDate;
+      const explicitlyUserOpened = (item.openDates || []).includes(key);
+      const survivesRevisionBoundary = record.scheduleRevision < currentRevision;
+      if (record.occurrence.outcome === "open"
+        && (key >= item.carryoverStartDate || survivesRevisionBoundary || explicitlyUserOpened)
+        && key < todayKey
+        && occurrenceValue(item, key, { record }).completionCount < quantity(item)) {
+        unresolved.set(record.id, {
+          ...record,
+          occurrence: occurrenceValue(item, key, { record }),
+          persisted: true,
+        });
+      }
+    }
+    if (!unresolved.size) return null;
+
+    const todayRecord = occurrenceRecord(item, todayKey, currentRevision);
+    const todayOccurrence = occurrenceValue(item, todayKey, { revision: currentRevision, record: todayRecord });
+    const todayRecordedDone = todayRecord
+      ? todayOccurrence.completionCount >= quantity(item)
+      : (item.completedDates || []).includes(todayKey) || completionCount(item, today) >= quantity(item);
+    const todayRecordedSkipped = !todayRecord && (item.skippedDates || []).includes(todayKey);
+    const todayAfterResolutionBoundary = !resolvedThrough || todayKey > resolvedThrough;
+    if (todayAfterResolutionBoundary
+      && todayKey >= item.carryoverStartDate
+      && occursOnDate(item, today)
+      && !todayRecordedDone
+      && todayOccurrence.completionCount < quantity(item)
+      && !todayRecordedSkipped
+      && todayOccurrence.outcome !== "done"
+      && todayOccurrence.outcome !== "skipped"
+      && todayOccurrence.outcome !== "missed") {
+      const id = occurrenceIdentifier(item, todayKey, currentRevision);
+      unresolved.set(id, {
+        id,
+        scheduledDate: todayKey,
+        scheduleRevision: currentRevision,
+        occurrence: todayOccurrence,
+        persisted: Boolean(todayRecord),
+      });
+    }
+
+    const occurrences = [...unresolved.values()].sort((left, right) => (
+      left.scheduledDate.localeCompare(right.scheduledDate)
+      || left.scheduleRevision - right.scheduleRevision
+      || left.id.localeCompare(right.id)
+    ));
+    const latest = occurrences[occurrences.length - 1];
+    const oldest = occurrences[0];
+    const latestDate = latest.scheduledDate;
+    const latestOccurrence = latest.occurrence;
+    if (!includeHidden && latestOccurrence.hiddenUntil && latestOccurrence.hiddenUntil > todayKey) return null;
+    return {
+      item,
+      occurrences,
+      dueDates: occurrences.map((occurrence) => occurrence.scheduledDate),
+      oldestDate: oldest.scheduledDate,
+      latestDate,
+      latestID: latest.id,
+      latestRevision: latest.scheduleRevision,
+      latestOccurrence,
+    };
+  }
+
+  function carryoverItems(options = {}) {
+    const today = startOfDay(new Date());
+    return state.items
+      .filter(queryMatches)
+      .map((item) => carryoverForItem(item, today, options))
+      .filter(Boolean)
+      .sort((left, right) => left.oldestDate.localeCompare(right.oldestDate)
+        || (left.item.sortOrder ?? 9999) - (right.item.sortOrder ?? 9999)
+        || left.item.title.localeCompare(right.item.title));
+  }
+
+  function visibleItems() {
+    let items = state.items
       .filter((item) => occurs(item, state.selectedDate))
-      .filter((item) => !query
-        || item.title.toLowerCase().includes(query)
-        || String(item.notes || "").toLowerCase().includes(query));
+      .filter(queryMatches);
+    if (state.mode === "today" && sameDay(state.selectedDate, new Date())) {
+      const groupedCarryoverIDs = new Set(carryoverItems({ includeHidden: true }).map((entry) => entry.item.id));
+      items = items.filter((item) => !groupedCarryoverIDs.has(item.id));
+    }
     return items.sort((left, right) => {
       if (state.sort === "name") return left.title.localeCompare(right.title);
       if (state.sort === "time") return (left.reminderMinutes ?? 9999) - (right.reminderMinutes ?? 9999);
@@ -412,6 +707,12 @@
     if (minutes == null) return "";
     const date = new Date(2000, 0, 1, Math.floor(minutes / 60), minutes % 60);
     return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  }
+
+  function calendarDayDistance(from, to) {
+    const left = Date.UTC(from.getFullYear(), from.getMonth(), from.getDate());
+    const right = Date.UTC(to.getFullYear(), to.getMonth(), to.getDate());
+    return Math.max(0, Math.round((right - left) / 86_400_000));
   }
 
   function groupProgress(items) {
@@ -471,6 +772,39 @@
     </article>`;
   }
 
+  function renderCarryoverTask(entry) {
+    const { item, occurrences, oldestDate, latestDate, latestID } = entry;
+    const oldest = dateFromInput(oldestDate);
+    const lateDays = calendarDayDistance(oldest, startOfDay(new Date()));
+    const oldestLabel = oldest.toLocaleDateString([], { month: "short", day: "numeric" });
+    const lateText = `${lateDays} ${lateDays === 1 ? "day" : "days"} late`;
+    const occurrenceCount = occurrences.length;
+    const count = entry.latestOccurrence.completionCount;
+    const target = quantity(item);
+    return `<article class="task carryover-task" data-carryover-date="${latestDate}">
+      <button class="check carryover-check" data-action="carryover-complete" data-id="${item.id}" data-date="${latestDate}" data-occurrence="${escapeHTML(latestID)}" aria-label="Complete still-open ${escapeHTML(item.title)}"></button>
+      <div class="task-copy">
+        <div class="task-title-line">
+          <div class="task-title">${escapeHTML(item.title)}</div>
+          ${target > 1 ? `<span class="quantity-chip">${count}/${target}</span>` : ""}
+          <span class="status-badge carryover-count">${occurrenceCount} ${occurrenceCount === 1 ? "occurrence" : "occurrences"}</span>
+        </div>
+        <div class="task-meta carryover-meta">
+          <span>${icon("clock", "meta-icon")} Due ${escapeHTML(oldestLabel)}</span>
+          <span>${escapeHTML(lateText)}</span>
+        </div>
+        ${item.notes ? `<p class="notes">${escapeHTML(item.notes)}</p>` : ""}
+      </div>
+      <div class="task-actions">
+        <button class="mini-button" data-action="carryover-skip" data-id="${item.id}" data-date="${latestDate}" data-occurrence="${escapeHTML(latestID)}">Skip</button>
+        <button class="mini-button" data-action="carryover-tomorrow" data-id="${item.id}" data-date="${latestDate}" data-occurrence="${escapeHTML(latestID)}">${icon("startTomorrow")} Tomorrow</button>
+        <button class="mini-button" data-action="pause" data-id="${item.id}">${icon("pause")} Pause</button>
+        <button class="mini-button" data-action="history" data-id="${item.id}" aria-label="History for ${escapeHTML(item.title)}">History</button>
+        <button class="edit-button" data-action="edit" data-id="${item.id}" aria-label="Edit ${escapeHTML(item.title)}">${icon("pencil")}</button>
+      </div>
+    </article>`;
+  }
+
   function renderGroup(name, items, groupID, realGroup, { allowsBulkActions = false, isCollapsed = false } = {}) {
     if (!items.length) return "";
     const groupPaused = realGroup && groupID ? isGroupPaused(groupID, state.selectedDate) : false;
@@ -498,6 +832,10 @@
 
   function renderChecklist() {
     const items = visibleItems();
+    const showsCarryovers = state.mode === "today" && sameDay(state.selectedDate, new Date());
+    const carryovers = showsCarryovers ? carryoverItems() : [];
+    const carryoverCount = carryovers.length;
+    const carryoverBody = carryovers.length ? `<div class="task-list still-open-list">${carryovers.map(renderCarryoverTask).join("")}</div>` : "";
     const groups = [...state.groups].sort((a, b) => a.sortOrder - b.sortOrder);
     const known = new Set(groups.map((group) => group.id));
     const ungrouped = items.filter((item) => !item.groupID || !known.has(item.groupID));
@@ -507,7 +845,7 @@
     const hidesPausedExpected = state.mode === "today";
     const subtitle = state.mode === "archive"
       ? `${items.length} ${items.length === 1 ? "archived item" : "archived items"}.`
-      : `${remaining} ${remaining === 1 ? "thing" : "things"} left today.`;
+      : `${remaining} ${remaining === 1 ? "thing" : "things"} left today${carryoverCount ? ` · ${carryoverCount} still open` : ""}.`;
     const separatesSkipped = state.mode === "today";
     const isTodoItem = (item) => !complete(item)
       && (!hidesPausedExpected || !isPaused(item, state.selectedDate))
@@ -567,7 +905,7 @@
         </div>
         <label class="search-field"><span>${icon("search")}</span><input data-search placeholder="Search tasks" value="${escapeHTML(state.search)}"></label>
       </div>
-      ${state.mode === "archive" ? `<div class="section-head"><span class="section-label">Archive</span></div>${archiveBody || `<div class="empty">No ended tasks.</div>`}` : `<div class="section-head">
+      ${state.mode === "archive" ? `<div class="section-head"><span class="section-label">Archive</span></div>${archiveBody || `<div class="empty">No ended tasks.</div>`}` : `${carryoverBody ? `<div class="section-head still-open-head"><span class="section-label">Still open</span><span class="section-count">${carryoverCount} outstanding</span></div>${carryoverBody}` : ""}<div class="section-head">
         <span class="section-label">To do</span>
         ${remaining ? `<button class="complete-all" data-action="complete-all">${icon("check")} All&nbsp;&nbsp;${remaining}</button>` : ""}
       </div>
@@ -650,6 +988,21 @@
     if (state.modal.type === "insights") {
       return renderRoutineInsights(routineInsights());
     }
+    if (state.modal.type === "endCarryover") {
+      const item = state.items.find((candidate) => candidate.id === state.modal.itemID);
+      const entry = item ? carryoverForItem(item, startOfDay(new Date()), { includeHidden: true, ignoreCurrentPause: true }) : null;
+      if (!item || !entry) return "";
+      const count = entry.occurrences.length;
+      return `<div class="scrim" data-action="cancel-end-carryover"><section class="modal" data-modal>
+        <h2>Handle still-open task?</h2>
+        <p class="end-carryover-copy"><strong>${escapeHTML(item.title)}</strong> has ${count} still-open ${count === 1 ? "occurrence" : "occurrences"}. Choose how to handle the latest one before ending the task.</p>
+        <div class="end-carryover-actions">
+          <button class="primary" data-action="complete-carryover-and-end" data-id="${item.id}" data-date="${entry.latestDate}" data-occurrence="${escapeHTML(entry.latestID)}">Complete latest and end</button>
+          <button class="secondary" data-action="skip-carryover-and-end" data-id="${item.id}" data-date="${entry.latestDate}" data-occurrence="${escapeHTML(entry.latestID)}">Skip overdue and end</button>
+          <button class="secondary" data-action="cancel-end-carryover">Cancel</button>
+        </div>
+      </section></div>`;
+    }
     if (state.modal.type === "history") {
       const item = state.modal.item;
       const historyEntries = historyFor(item);
@@ -659,7 +1012,10 @@
         ${renderHistoryCalendar(calendarEntries)}
         <div class="history-list">
           ${historyEntries.map((entry) => `<div class="history-row">
-            <span>${escapeHTML(entry.label)}</span>
+            <div class="history-date">
+              <span>${escapeHTML(entry.label)}</span>
+              ${historyResolvedText(item, entry.key) ? `<small>${escapeHTML(historyResolvedText(item, entry.key))}</small>` : ""}
+            </div>
             <div class="history-actions">
               ${canDelayHistoryState(entry.state) ? `<button class="history-delay" data-action="delay-history" data-id="${item.id}" data-date="${entry.key}" aria-label="Delay ${escapeHTML(entry.label)} to next day">${icon("startTomorrow")}</button>` : ""}
               ${canBringForwardHistoryState(entry.key, entry.state) ? `<button class="history-bring-forward" data-action="bring-forward-history" data-id="${item.id}" data-date="${entry.key}" aria-label="Bring ${escapeHTML(entry.label)} to today">${icon("startToday")}</button>` : ""}
@@ -690,6 +1046,10 @@
         Days
         <div class="weekdays">${["S","M","T","W","T","F","S"].map((label,index) => `<button type="button" class="weekday ${weekdays.has(index + 1) ? "active" : ""}" data-action="weekday" data-day="${index + 1}">${label}</button>`).join("")}</div>
       </div>
+      <label class="carryover-option" data-carryover-behavior ${schedule === "everyDay" ? "hidden" : ""}>
+        <input type="checkbox" name="keepUntilDone" data-carryover-manual="false" ${item.missedBehavior === "keepUntilDone" ? "checked" : ""}>
+        <span><strong>Keep visible until handled</strong><small>Missed occurrences stay in Still Open without changing their due dates.</small></span>
+      </label>
       <label class="field">Group<select name="groupID">
         <option value="">No group</option>
         ${state.groups.map((group) => `<option value="${group.id}" ${item.groupID === group.id ? "selected" : ""}>${escapeHTML(group.name)}</option>`).join("")}
@@ -857,7 +1217,7 @@
       method: "POST",
       body: JSON.stringify(parsed)
     });
-    state.items = result.items || [];
+    state.items = normalizeChecklistItems(result.items || []);
     state.groups = result.groups || [];
     state.pending = [];
     state.modal = null;
@@ -951,6 +1311,117 @@
       changedFields: ["skippedDates", "openDates"],
       item: { skippedDates: item.skippedDates, openDates: item.openDates }
     }));
+  }
+
+  function carryoverActionEntry(item, requestedOccurrenceID, options = {}) {
+    if (!item || typeof requestedOccurrenceID !== "string") return null;
+    const entry = carryoverForItem(item, startOfDay(new Date()), options);
+    return entry && (entry.latestID === requestedOccurrenceID || entry.latestDate === requestedOccurrenceID) ? entry : null;
+  }
+
+  function completeCarryover(item, requestedOccurrenceID, { finish = false, deferSync = false, includeHidden = false, ignoreCurrentPause = false } = {}) {
+    const entry = carryoverActionEntry(item, requestedOccurrenceID, { includeHidden, ignoreCurrentPause });
+    if (!entry) return false;
+    const key = entry.latestDate;
+    const target = quantity(item);
+    const nextCount = setCompletionCount(item, key, finish ? target : entry.latestOccurrence.completionCount + 1);
+    item.skippedDates ||= [];
+    item.openDates ||= [];
+    const wasSkipped = item.skippedDates.includes(key);
+    const wasOpen = item.openDates.includes(key);
+    item.skippedDates = item.skippedDates.filter((date) => date !== key);
+    item.openDates = item.openDates.filter((date) => date !== key);
+
+    queueCompletion(item, key);
+    const resolved = nextCount >= target;
+    setOccurrence(item, key, {
+      outcome: resolved ? "done" : "open",
+      completionCount: nextCount,
+      resolvedDate: resolved ? dateKey(new Date()) : null,
+      hiddenUntil: null,
+    }, { revision: entry.latestRevision, occurrenceID: entry.latestID });
+    if (resolved) resolveOlderOpenOccurrences(item, entry, dateKey(new Date()));
+
+    const changedFields = [];
+    const changedItem = {};
+    if (wasSkipped || wasOpen) {
+      changedFields.push("skippedDates", "openDates");
+      changedItem.skippedDates = item.skippedDates;
+      changedItem.openDates = item.openDates;
+    }
+    if (resolved && (!isDateKey(item.carryoverResolvedThroughDate) || item.carryoverResolvedThroughDate < key)) {
+      item.carryoverResolvedThroughDate = key;
+      changedFields.push("carryoverResolvedThroughDate");
+      changedItem.carryoverResolvedThroughDate = key;
+    }
+    if (changedFields.length) {
+      state.pending.push(mutation("upsert", {
+        itemID: item.id,
+        changedFields,
+        item: changedItem
+      }));
+    }
+    persistData();
+    if (!deferSync) {
+      render();
+      void sync();
+    }
+    return true;
+  }
+
+  function skipCarryover(item, requestedOccurrenceID, { deferSync = false, includeHidden = false, ignoreCurrentPause = false } = {}) {
+    const entry = carryoverActionEntry(item, requestedOccurrenceID, { includeHidden, ignoreCurrentPause });
+    if (!entry) return false;
+    const key = entry.latestDate;
+    item.skippedDates ||= [];
+    item.openDates ||= [];
+    setCompletionCount(item, key, 0);
+    if (!item.skippedDates.includes(key)) item.skippedDates.push(key);
+    item.openDates = item.openDates.filter((date) => date !== key);
+    item.carryoverResolvedThroughDate = !isDateKey(item.carryoverResolvedThroughDate)
+      || item.carryoverResolvedThroughDate < key
+      ? key
+      : item.carryoverResolvedThroughDate;
+
+    queueCompletion(item, key);
+    setOccurrence(item, key, {
+      outcome: "skipped",
+      completionCount: 0,
+      resolvedDate: dateKey(new Date()),
+      hiddenUntil: null,
+    }, { revision: entry.latestRevision, occurrenceID: entry.latestID });
+    resolveOlderOpenOccurrences(item, entry, dateKey(new Date()));
+    state.pending.push(mutation("upsert", {
+      itemID: item.id,
+      changedFields: ["skippedDates", "openDates", "carryoverResolvedThroughDate"],
+      item: {
+        skippedDates: item.skippedDates,
+        openDates: item.openDates,
+        carryoverResolvedThroughDate: item.carryoverResolvedThroughDate
+      }
+    }));
+    persistData();
+    if (!deferSync) {
+      render();
+      void sync();
+    }
+    return true;
+  }
+
+  function hideCarryoverUntilTomorrow(item, requestedOccurrenceID) {
+    const entry = carryoverActionEntry(item, requestedOccurrenceID);
+    if (!entry) return;
+    const key = entry.latestDate;
+    const occurrence = entry.latestOccurrence;
+    setOccurrence(item, key, {
+      outcome: "open",
+      completionCount: occurrence.completionCount,
+      resolvedDate: null,
+      hiddenUntil: dateKey(addDays(new Date(), 1)),
+    }, { revision: entry.latestRevision, occurrenceID: entry.latestID });
+    persistData();
+    render();
+    void sync();
   }
 
   function pauseItem(item, days = 7) {
@@ -1092,6 +1563,7 @@
     let recentExpected = 0;
     let priorCompleted = 0;
     let priorExpected = 0;
+    let lateCompletedCheckIns = 0;
     const missedWeekdays = new Map();
 
     state.items.forEach((item) => {
@@ -1100,7 +1572,12 @@
         const expected = ["Done", "Missed", "Open"].includes(historyState);
         if (!expected) return;
         expectedCheckIns += 1;
-        if (historyState === "Done") completedCheckIns += 1;
+        if (historyState === "Done") {
+          completedCheckIns += 1;
+          const key = dateKey(day);
+          const resolvedDate = latestOccurrenceRecord(item, key)?.occurrence.resolvedDate;
+          if (isDateKey(resolvedDate) && resolvedDate > key) lateCompletedCheckIns += 1;
+        }
         if (index < 7) {
           recentExpected += 1;
           if (historyState === "Done") recentCompleted += 1;
@@ -1136,6 +1613,7 @@
 
     return {
       completedCheckIns,
+      lateCompletedCheckIns,
       expectedCheckIns,
       completionPercentage: expectedCheckIns ? rate(completedCheckIns, expectedCheckIns) : 0,
       hasEnoughData: expectedCheckIns >= 3,
@@ -1167,6 +1645,10 @@
   }
 
   function renderRoutineInsights(summary) {
+    const lateValue = String(summary.lateCompletedCheckIns);
+    const lateDetail = summary.lateCompletedCheckIns === 0
+      ? "Completed check-ins were handled on their scheduled day."
+      : `${summary.lateCompletedCheckIns} ${summary.lateCompletedCheckIns === 1 ? "check-in was" : "check-ins were"} finished after the scheduled day.`;
     if (!summary.hasEnoughData) {
       return `<div class="scrim" data-action="close"><section class="modal" data-modal>
         <h2>Routine insights</h2>
@@ -1176,6 +1658,9 @@
           <strong>Your patterns will appear here</strong>
           <p>Keep using your checklist normally. Insights begin after three scheduled check-ins have finished or passed.</p>
         </div>
+        ${summary.lateCompletedCheckIns ? `<div class="insights-grid insights-grid-single">
+          ${renderInsightCard("Late completions", lateValue, lateDetail)}
+        </div>` : ""}
         <div class="modal-actions"><span></span><button class="secondary" data-action="close">Done</button></div>
       </section></div>`;
     }
@@ -1202,6 +1687,7 @@
         ${renderInsightCard("7-day trend", trendValue, trendDetail)}
         ${renderInsightCard("Missed pattern", missedValue, missedDetail)}
         ${renderInsightCard("Longest delay", delayValue, delayDetail)}
+        ${renderInsightCard("Late completions", lateValue, lateDetail)}
       </div>
       <div class="modal-actions"><span></span><button class="secondary" data-action="close">Done</button></div>
     </section></div>`;
@@ -1223,8 +1709,25 @@
     };
   }
 
+  function historyResolvedText(item, key) {
+    const occurrence = latestOccurrenceRecord(item, key)?.occurrence;
+    const resolvedDate = occurrence?.resolvedDate;
+    if (!isDateKey(resolvedDate) || resolvedDate === key) return "";
+    if (occurrence.outcome === "done" && resolvedDate > key) {
+      const daysLate = calendarDayDistance(dateFromInput(key), dateFromInput(resolvedDate));
+      return `Completed ${daysLate} ${daysLate === 1 ? "day" : "days"} late`;
+    }
+    const resolved = dateFromInput(resolvedDate);
+    return `Handled ${resolved.toLocaleDateString([], { month: "short", day: "numeric" })}`;
+  }
+
   function historyStateForDate(item, date) {
     const key = dateKey(date);
+    const occurrence = latestOccurrenceRecord(item, key)?.occurrence;
+    if (occurrence?.outcome === "done") return "Done";
+    if (occurrence?.outcome === "skipped") return "Skipped";
+    if (occurrence?.outcome === "open") return "Open";
+    if (occurrence?.outcome === "missed") return "Missed";
     if ((item.completedDates || []).includes(key)) return "Done";
     if ((item.skippedDates || []).includes(key)) return "Skipped";
     if ((item.openDates || []).includes(key)) return "Open";
@@ -1306,7 +1809,7 @@
   function historyOptions(item, dateKeyValue, currentState) {
     const date = dateFromInput(dateKeyValue);
     const options = ["Done", "Open"];
-    if (isScheduledOnDate(item, date) && date < startOfDay(new Date())) options.push("Missed");
+    if (currentState === "Missed" || (isScheduledOnDate(item, date) && date < startOfDay(new Date()))) options.push("Missed");
     else if (!isScheduledOnDate(item, date)) options.push("Off");
     options.push("Paused");
     options.push("Skipped");
@@ -1323,6 +1826,11 @@
     item.skippedDates ||= [];
     item.openDates ||= [];
     item.pauseWindows ||= [];
+    item.occurrences ||= {};
+    const previousRecord = latestOccurrenceRecord(item, key);
+    const hadOccurrence = Boolean(previousRecord);
+    const previousOccurrence = hadOccurrence ? occurrenceValue(item, key, { record: previousRecord }) : null;
+    const wasOccurrence = previousRecord ? JSON.stringify(previousRecord.occurrence) : null;
     const wasCompleted = item.completedDates.includes(key);
     const wasCompletionCount = completionCount(item, dateFromInput(key));
     const wasSkipped = item.skippedDates.includes(key);
@@ -1361,7 +1869,34 @@
     const isSkipped = item.skippedDates.includes(key);
     const isOpen = item.openDates.includes(key);
     const pauseChanged = wasPauseWindows !== JSON.stringify(normalizePauseWindows(item.pauseWindows));
-    if (wasCompleted === isCompleted && wasCompletionCount === nextCompletionCount && wasSkipped === isSkipped && wasOpen === isOpen && !pauseChanged) return;
+    let nextOccurrence = null;
+    let nextOccurrenceID = null;
+    const tracksOccurrence = item.missedBehavior === "keepUntilDone" || hadOccurrence;
+    if (tracksOccurrence) {
+      const resolved = nextState !== "open";
+      const revision = previousRecord?.scheduleRevision ?? normalizedScheduleRevision(item.scheduleRevision);
+      const record = normalizedOccurrence(item, previousRecord?.id || occurrenceIdentifier(item, key, revision), {
+        outcome: nextState === "done"
+          ? "done"
+          : nextState === "open"
+            ? "open"
+            : nextState === "skipped"
+              ? "skipped"
+              : "missed",
+        completionCount: nextState === "done" ? quantity(item) : 0,
+        resolvedDate: resolved ? (previousOccurrence?.resolvedDate || dateKey(new Date())) : null,
+        hiddenUntil: null,
+        scheduleRevision: revision,
+        scheduledDate: key,
+      });
+      nextOccurrence = record.occurrence;
+      nextOccurrenceID = record.id;
+      item.occurrences[record.id] = record.occurrence;
+      delete item.occurrences[key];
+      delete item.occurrences[`${item.id}:${key}`];
+    }
+    const occurrenceChanged = tracksOccurrence && wasOccurrence !== JSON.stringify(nextOccurrence);
+    if (wasCompleted === isCompleted && wasCompletionCount === nextCompletionCount && wasSkipped === isSkipped && wasOpen === isOpen && !pauseChanged && !occurrenceChanged) return;
 
     if (wasCompleted !== isCompleted || wasCompletionCount !== nextCompletionCount || (!isCompleted && (isSkipped || wasSkipped))) {
       state.pending.push(mutation("completion", {
@@ -1380,6 +1915,14 @@
           ...(pauseChanged ? ["pauseWindows"] : [])
         ],
         item: { skippedDates: item.skippedDates, openDates: item.openDates, pauseWindows: item.pauseWindows }
+      }));
+    }
+    if (occurrenceChanged) {
+      state.pending.push(mutation("occurrence", {
+        itemID: item.id,
+        occurrenceDate: key,
+        occurrenceID: nextOccurrenceID,
+        occurrence: nextOccurrence
       }));
     }
     persistData();
@@ -1432,11 +1975,16 @@
         groupID: group.id,
         sortOrder: firstOrder + index,
         pauseWindows: [],
+        scheduleRevision: 0,
+        missedBehavior: "markMissed",
+        carryoverStartDate: null,
+        carryoverResolvedThroughDate: null,
+        occurrences: {},
       };
       state.items.push(item);
       state.pending.push(mutation("upsert", {
         itemID: item.id,
-        changedFields: ["title","notes","schedule","customWeekdays","reminderMinutes","quantity","skippedDates","openDates","createdAt","startDate","endedAt","groupID","sortOrder","pauseWindows"],
+        changedFields: ["title","notes","schedule","customWeekdays","reminderMinutes","quantity","skippedDates","openDates","createdAt","startDate","endedAt","groupID","sortOrder","pauseWindows","scheduleRevision","missedBehavior","carryoverStartDate","carryoverResolvedThroughDate"],
         item
       }));
     }
@@ -1454,9 +2002,118 @@
     queue(mutation("delete", { itemID }));
   }
 
-  function saveEditor(form) {
+  function endItem(item) {
+    if (!item) return;
+    snapshotOutstandingOccurrences(item);
+    item.endedAt = startOfDay(new Date()).toISOString();
+    item.scheduleRevision = normalizedScheduleRevision(normalizedScheduleRevision(item.scheduleRevision) + 1);
+    state.modal = null;
+    queue(mutation("upsert", {
+      itemID: item.id,
+      changedFields: ["endedAt", "scheduleRevision"],
+      item: { endedAt: item.endedAt, scheduleRevision: item.scheduleRevision }
+    }));
+  }
+
+  function requestEndItem(item) {
+    if (!item) return;
+    const entry = carryoverForItem(item, startOfDay(new Date()), { includeHidden: true, ignoreCurrentPause: true });
+    if (!entry) {
+      endItem(item);
+      return;
+    }
+    state.modal = { type: "endCarryover", itemID: item.id };
+    render();
+  }
+
+  function resolveCarryoverAndEnd(item, occurrenceID, resolution) {
+    if (!item) return;
+    const pendingEditor = state.modal?.pendingEditor || null;
+    const options = { deferSync: true, includeHidden: true, ignoreCurrentPause: true };
+    const resolved = resolution === "complete"
+      ? completeCarryover(item, occurrenceID, { ...options, finish: true })
+      : skipCarryover(item, occurrenceID, options);
+    if (!resolved) {
+      showToast("That still-open occurrence changed. Review the task and try again.");
+      return;
+    }
+    if (pendingEditor) {
+      saveEditor(pendingEditor.form, { existingItem: item, skipEndResolution: true });
+    } else {
+      endItem(item);
+    }
+  }
+
+  function snapshotOutstandingOccurrences(item, { terminalize = false } = {}) {
+    const entry = carryoverForItem(item, startOfDay(new Date()), { includeHidden: true, ignoreCurrentPause: true });
+    const candidates = new Map((entry?.occurrences || []).map((candidate) => [candidate.id, candidate]));
+    if (item.missedBehavior === "keepUntilDone" && item.schedule !== "everyDay") {
+      const today = startOfDay(new Date());
+      const key = dateKey(today);
+      const revision = normalizedScheduleRevision(item.scheduleRevision);
+      const record = occurrenceRecord(item, key, revision);
+      const occurrence = occurrenceValue(item, key, { revision, record });
+      const aggregateDone = !record
+        && ((item.completedDates || []).includes(key) || completionCount(item, today) >= quantity(item));
+      const aggregateSkipped = !record && (item.skippedDates || []).includes(key);
+      if (key >= (item.carryoverStartDate || key)
+        && occursOnDate(item, today)
+        && !aggregateDone
+        && !aggregateSkipped
+        && occurrence.outcome === "open"
+        && occurrence.completionCount < quantity(item)) {
+        const id = occurrenceIdentifier(item, key, revision);
+        candidates.set(id, {
+          id,
+          scheduledDate: key,
+          scheduleRevision: revision,
+          occurrence,
+          persisted: Boolean(record),
+        });
+      }
+    }
+    candidates.forEach((candidate) => {
+      if (candidate.persisted) return;
+      setOccurrence(item, candidate.scheduledDate, {
+        outcome: terminalize ? "missed" : "open",
+        completionCount: candidate.occurrence.completionCount,
+        resolvedDate: terminalize ? dateKey(new Date()) : null,
+        hiddenUntil: null,
+      }, { revision: candidate.scheduleRevision, occurrenceID: candidate.id });
+    });
+  }
+
+  function closeOpenOccurrencesAsMissed(item) {
+    const todayKey = dateKey(new Date());
+    occurrenceRecords(item).forEach((record) => {
+      if (record.occurrence.outcome !== "open" || record.scheduledDate > todayKey) return;
+      setOccurrence(item, record.scheduledDate, {
+        outcome: "missed",
+        completionCount: record.occurrence.completionCount,
+        resolvedDate: todayKey,
+        hiddenUntil: null,
+      }, { revision: record.scheduleRevision, occurrenceID: record.id });
+    });
+  }
+
+  function saveEditor(form, { existingItem = null, skipEndResolution = false } = {}) {
     const data = new FormData(form);
-    const existing = state.modal.item;
+    const existing = existingItem || state.modal.item;
+    const previousEditorValues = existing ? editorValues(existing) : null;
+    const nextEndDate = String(data.get("endDate") || "");
+    const endDateChanged = Boolean(existing && nextEndDate !== previousEditorValues.end);
+    if (!skipEndResolution && endDateChanged && nextEndDate) {
+      const entry = carryoverForItem(existing, startOfDay(new Date()), { includeHidden: true, ignoreCurrentPause: true });
+      if (entry) {
+        state.modal = {
+          type: "endCarryover",
+          itemID: existing.id,
+          pendingEditor: { form, existing }
+        };
+        render();
+        return;
+      }
+    }
     let groupID = data.get("groupID") || null;
     if (groupID === "__new") {
       const name = prompt("Name this group");
@@ -1476,11 +2133,31 @@
     const lastDay = dateFromInput(data.get("endDate"));
     const endedAt = lastDay ? addDays(lastDay, 1).toISOString() : null;
     const parsedQuantity = Number(data.get("quantity"));
+    const schedule = String(data.get("schedule"));
+    const keepUntilDone = schedule !== "everyDay" && data.get("keepUntilDone") === "on";
+    const activeScheduleChanged = Boolean(existing && (
+      schedule !== existing.schedule
+      || JSON.stringify(customWeekdays) !== JSON.stringify(existing.customWeekdays || [])
+      || String(data.get("startDate") || "") !== previousEditorValues.start
+      || nextEndDate !== previousEditorValues.end
+    ));
+    const carryoverDisabled = Boolean(existing
+      && existing.missedBehavior === "keepUntilDone"
+      && !keepUntilDone);
+    if (activeScheduleChanged || carryoverDisabled) {
+      snapshotOutstandingOccurrences(existing, { terminalize: carryoverDisabled });
+    }
+    if (carryoverDisabled) closeOpenOccurrencesAsMissed(existing);
+    const carryoverStartDate = activeScheduleChanged && keepUntilDone
+      ? dateKey(new Date())
+      : keepUntilDone && !isDateKey(existing?.carryoverStartDate)
+        ? dateKey(new Date())
+        : (isDateKey(existing?.carryoverStartDate) ? existing.carryoverStartDate : null);
     const item = {
       id: existing?.id || crypto.randomUUID(),
       title: String(data.get("title")).trim(),
       notes: String(data.get("notes") || "").trim(),
-      schedule: data.get("schedule"),
+      schedule,
       customWeekdays,
       reminderMinutes: reminder ? hours * 60 + minutes : null,
       quantity: Number.isInteger(parsedQuantity) ? Math.min(Math.max(1, parsedQuantity), 99) : 1,
@@ -1494,6 +2171,13 @@
       groupID,
       sortOrder: existing?.sortOrder ?? state.items.filter((candidate) => candidate.groupID === groupID).length,
       pauseWindows: existing?.pauseWindows || [],
+      scheduleRevision: normalizedScheduleRevision(
+        normalizedScheduleRevision(existing?.scheduleRevision) + (activeScheduleChanged ? 1 : 0)
+      ),
+      missedBehavior: keepUntilDone ? "keepUntilDone" : "markMissed",
+      carryoverStartDate,
+      carryoverResolvedThroughDate: isDateKey(existing?.carryoverResolvedThroughDate) ? existing.carryoverResolvedThroughDate : null,
+      occurrences: existing?.occurrences || {},
     };
     if (!item.title) return;
     const index = state.items.findIndex((candidate) => candidate.id === item.id);
@@ -1501,13 +2185,16 @@
     state.modal = null;
     queue(mutation("upsert", {
       itemID: item.id,
-      changedFields: ["title","notes","schedule","customWeekdays","reminderMinutes","quantity","skippedDates","openDates","createdAt","startDate","endedAt","groupID","sortOrder","pauseWindows"],
+      changedFields: ["title","notes","schedule","customWeekdays","reminderMinutes","quantity","skippedDates","openDates","createdAt","startDate","endedAt","groupID","sortOrder","pauseWindows","scheduleRevision","missedBehavior","carryoverStartDate","carryoverResolvedThroughDate"],
       item: {
         title: item.title, notes: item.notes, schedule: item.schedule,
         customWeekdays: item.customWeekdays, reminderMinutes: item.reminderMinutes, quantity: item.quantity,
         skippedDates: item.skippedDates, openDates: item.openDates,
         createdAt: item.createdAt, startDate: item.startDate, endedAt: item.endedAt,
-        groupID: item.groupID, sortOrder: item.sortOrder, pauseWindows: item.pauseWindows
+        groupID: item.groupID, sortOrder: item.sortOrder, pauseWindows: item.pauseWindows,
+        scheduleRevision: item.scheduleRevision,
+        missedBehavior: item.missedBehavior, carryoverStartDate: item.carryoverStartDate,
+        carryoverResolvedThroughDate: item.carryoverResolvedThroughDate
       }
     }));
   }
@@ -1518,6 +2205,11 @@
     if (target.classList.contains("scrim") && event.target !== target) return;
     const action = target.dataset.action;
     if (action === "close") { state.modal = null; render(); }
+    if (action === "cancel-end-carryover") {
+      const item = state.items.find((candidate) => candidate.id === state.modal?.itemID);
+      state.modal = item ? { type: "editor", item } : null;
+      render();
+    }
     if (action === "previous") { state.selectedDate = addDays(state.selectedDate, -1); render(); }
     if (action === "next") { state.selectedDate = addDays(state.selectedDate, 1); render(); }
     if (action === "mode") { state.mode = target.dataset.mode; render(); }
@@ -1531,6 +2223,11 @@
       render();
     }
     if (action === "toggle") toggle(state.items.find((item) => item.id === target.dataset.id));
+    if (action === "carryover-complete") completeCarryover(state.items.find((item) => item.id === target.dataset.id), target.dataset.occurrence || target.dataset.date);
+    if (action === "carryover-skip") skipCarryover(state.items.find((item) => item.id === target.dataset.id), target.dataset.occurrence || target.dataset.date);
+    if (action === "carryover-tomorrow") hideCarryoverUntilTomorrow(state.items.find((item) => item.id === target.dataset.id), target.dataset.occurrence || target.dataset.date);
+    if (action === "complete-carryover-and-end") resolveCarryoverAndEnd(state.items.find((item) => item.id === target.dataset.id), target.dataset.occurrence || target.dataset.date, "complete");
+    if (action === "skip-carryover-and-end") resolveCarryoverAndEnd(state.items.find((item) => item.id === target.dataset.id), target.dataset.occurrence || target.dataset.date, "skip");
     if (action === "skip") setSkipped(state.items.find((item) => item.id === target.dataset.id), true);
     if (action === "unskip") setSkipped(state.items.find((item) => item.id === target.dataset.id), false);
     if (action === "pause") pauseItem(state.items.find((item) => item.id === target.dataset.id));
@@ -1574,14 +2271,18 @@
     }
     if (action === "privacy") { location.href = "/privacy.html"; }
     if (action === "support") { location.href = "/support.html"; }
-    if (action === "weekday") { target.classList.toggle("active"); }
+    if (action === "weekday") {
+      target.classList.toggle("active");
+      const form = target.closest("form");
+      const keepVisible = form?.querySelector("input[name='keepUntilDone']");
+      if (!state.modal?.item
+        && form?.elements.schedule.value === "custom"
+        && keepVisible?.dataset.carryoverManual !== "true") {
+        keepVisible.checked = form.querySelectorAll(".weekday.active").length <= 1;
+      }
+    }
     if (action === "end-item") {
-      const item = state.modal.item;
-      item.endedAt = startOfDay(new Date()).toISOString();
-      state.modal = null;
-      queue(mutation("upsert", {
-        itemID: item.id, changedFields: ["endedAt"], item: { endedAt: item.endedAt }
-      }));
+      requestEndItem(state.modal.item);
     }
     if (action === "dev") {
       try {
@@ -1607,9 +2308,21 @@
       setHistoryState(event.target.dataset.id, event.target.dataset.date, event.target.value);
       return;
     }
+    if (event.target.name === "keepUntilDone") {
+      event.target.dataset.carryoverManual = "true";
+      return;
+    }
     if (event.target.name === "schedule") {
-      const custom = event.target.closest("form").querySelector("[data-custom-days]");
+      const form = event.target.closest("form");
+      const custom = form.querySelector("[data-custom-days]");
+      const carryover = form.querySelector("[data-carryover-behavior]");
+      const keepVisible = carryover.querySelector("input[name='keepUntilDone']");
       custom.hidden = event.target.value !== "custom";
+      carryover.hidden = event.target.value === "everyDay";
+      if (!state.modal?.item && keepVisible.dataset.carryoverManual !== "true") {
+        keepVisible.checked = event.target.value === "custom"
+          && form.querySelectorAll(".weekday.active").length <= 1;
+      }
     }
   });
 
