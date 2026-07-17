@@ -1120,6 +1120,7 @@ final class ChecklistStore: ObservableObject {
             var occurrenceMutations: [SyncMutation] = []
             let scheduleChanged = previous.schedule != item.schedule
                 || previous.customWeekdays != item.customWeekdays
+                || previous.recurrence != item.recurrence
                 || previous.startDate != item.startDate
                 || previous.endedAt != item.endedAt
             let disablingCarryover = previous.missedBehavior == .keepUntilDone
@@ -1499,6 +1500,7 @@ final class ChecklistStore: ObservableObject {
                 notes: item.notes,
                 schedule: item.schedule,
                 customWeekdays: item.customWeekdays,
+                recurrence: item.recurrence,
                 reminderMinutes: item.reminderMinutes,
                 quantity: item.quantity,
                 createdAt: .now,
@@ -1913,7 +1915,7 @@ final class ChecklistStore: ObservableObject {
     }
 
     static let allFields: Set<String> = [
-        "title", "notes", "schedule", "customWeekdays", "reminderMinutes", "quantity", "skippedDates", "openDates", "createdAt", "startDate", "endedAt", "groupID", "sortOrder", "pauseWindows", "scheduleRevision", "missedBehavior", "carryoverStartDate", "carryoverResolvedThroughDate"
+        "title", "notes", "schedule", "customWeekdays", "recurrence", "reminderMinutes", "quantity", "skippedDates", "openDates", "createdAt", "startDate", "endedAt", "groupID", "sortOrder", "pauseWindows", "scheduleRevision", "missedBehavior", "carryoverStartDate", "carryoverResolvedThroughDate"
     ]
     static let allGroupFields: Set<String> = ["name", "sortOrder", "isCollapsed", "pauseWindows"]
 
@@ -1923,6 +1925,7 @@ final class ChecklistStore: ObservableObject {
         if old.notes != new.notes { changed.insert("notes") }
         if old.schedule != new.schedule { changed.insert("schedule") }
         if old.customWeekdays != new.customWeekdays { changed.insert("customWeekdays") }
+        if old.recurrence != new.recurrence { changed.insert("recurrence") }
         if old.reminderMinutes != new.reminderMinutes { changed.insert("reminderMinutes") }
         if old.quantity != new.quantity { changed.insert("quantity") }
         if old.skippedDates != new.skippedDates { changed.insert("skippedDates") }

@@ -118,6 +118,11 @@ h1 { margin: 0; font-size: clamp(48px, 14vw, 68px); line-height: .96; letter-spa
 .weekdays { display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px; }
 .weekday { aspect-ratio: 1; border-radius: 50%; background: #ebe9e5; color: var(--muted); font-size: 12px; font-weight: 800; }
 .weekday.active { background: var(--accent); color: white; }
+.recurrence-options { margin: 14px 0; padding: 2px 14px; border: 1px solid var(--line); border-radius: 16px; background: white; }
+.recurrence-unit-label { align-content: end; min-height: 48px; padding: 0 14px; border: 1px solid var(--line); border-radius: 13px; background: #f7f6f3; }
+.schedule-preview { display: grid; gap: 8px; margin: 14px 0; padding: 14px; border-radius: 14px; background: var(--accent-soft); }
+.schedule-preview strong { color: var(--accent); font-size: 14px; }
+.schedule-preview [data-schedule-dates] { display: flex; flex-wrap: wrap; gap: 6px 10px; color: var(--muted); font-size: 12px; font-weight: 650; }
 .carryover-option { display: flex; align-items: flex-start; gap: 12px; margin: 14px 0; padding: 14px; border: 1px solid var(--line); border-radius: 14px; background: white; color: var(--ink); cursor: pointer; }
 .carryover-option input { width: 20px; height: 20px; flex: 0 0 auto; margin: 1px 0 0; accent-color: var(--accent); }
 .carryover-option span { display: grid; gap: 4px; }

@@ -169,6 +169,162 @@ final class ChecklistStateTests: XCTestCase {
         XCTAssertEqual(item.consecutiveMissedDays(asOf: today, calendar: calendar), 1)
     }
 
+    func testIntervalRecurrenceUsesCalendarDaysAcrossDST() throws {
+        var eastern = Calendar(identifier: .gregorian)
+        eastern.timeZone = try XCTUnwrap(TimeZone(identifier: "America/New_York"))
+        let anchor = try XCTUnwrap(DateKey.date(from: "2026-03-07", calendar: eastern))
+        let rule = RecurrenceRule(
+            kind: .interval,
+            interval: 2,
+            anchorDate: "2026-03-07",
+            unit: .day
+        )
+        let everyTwoWeeks = RecurrenceRule(
+            kind: .interval,
+            interval: 2,
+            anchorDate: "2026-03-07",
+            unit: .week
+        )
+        let item = ChecklistItem(
+            title: "Water plants",
+            schedule: .custom,
+            recurrence: rule,
+            createdAt: anchor,
+            startDate: anchor
+        )
+
+        XCTAssertTrue(item.isScheduled(on: anchor, calendar: eastern))
+        XCTAssertFalse(item.isScheduled(
+            on: try XCTUnwrap(DateKey.date(from: "2026-03-08", calendar: eastern)),
+            calendar: eastern
+        ))
+        XCTAssertTrue(item.isScheduled(
+            on: try XCTUnwrap(DateKey.date(from: "2026-03-09", calendar: eastern)),
+            calendar: eastern
+        ))
+        XCTAssertFalse(everyTwoWeeks.isScheduled(
+            on: try XCTUnwrap(DateKey.date(from: "2026-03-14", calendar: eastern)),
+            calendar: eastern
+        ))
+        XCTAssertTrue(everyTwoWeeks.isScheduled(
+            on: try XCTUnwrap(DateKey.date(from: "2026-03-21", calendar: eastern)),
+            calendar: eastern
+        ))
+        XCTAssertEqual(
+            item.nextScheduledDates(startingAt: anchor, count: 4, calendar: eastern).map {
+                let parts = eastern.dateComponents([.year, .month, .day], from: $0)
+                return String(format: "%04d-%02d-%02d", parts.year ?? 0, parts.month ?? 0, parts.day ?? 0)
+            },
+            ["2026-03-07", "2026-03-09", "2026-03-11", "2026-03-13"]
+        )
+    }
+
+    func testMonthlyRecurrenceClampsMonthEndsAndHandlesLeapYears() throws {
+        var utc = Calendar(identifier: .gregorian)
+        utc.timeZone = try XCTUnwrap(TimeZone(secondsFromGMT: 0))
+        let monthly = RecurrenceRule(
+            kind: .monthlyDay,
+            interval: 1,
+            anchorDate: "2024-01-31",
+            dayOfMonth: 31
+        )
+        let quarterly = RecurrenceRule(
+            kind: .monthlyDay,
+            interval: 3,
+            anchorDate: "2024-01-31",
+            dayOfMonth: 31
+        )
+
+        XCTAssertEqual(monthly.summary, "Monthly on day 31 (last day in shorter months)")
+
+        for key in ["2024-01-31", "2024-02-29", "2024-03-31", "2024-04-30", "2025-02-28"] {
+            XCTAssertTrue(monthly.isScheduled(
+                on: try XCTUnwrap(DateKey.date(from: key, calendar: utc)),
+                calendar: utc
+            ), key)
+        }
+        XCTAssertFalse(monthly.isScheduled(
+            on: try XCTUnwrap(DateKey.date(from: "2024-02-28", calendar: utc)),
+            calendar: utc
+        ))
+        XCTAssertFalse(quarterly.isScheduled(
+            on: try XCTUnwrap(DateKey.date(from: "2024-02-29", calendar: utc)),
+            calendar: utc
+        ))
+        XCTAssertTrue(quarterly.isScheduled(
+            on: try XCTUnwrap(DateKey.date(from: "2024-04-30", calendar: utc)),
+            calendar: utc
+        ))
+    }
+
+    func testMonthlyOrdinalRecurrenceSupportsSecondAndLastWeekdays() throws {
+        var utc = Calendar(identifier: .gregorian)
+        utc.timeZone = try XCTUnwrap(TimeZone(secondsFromGMT: 0))
+        let secondTuesday = RecurrenceRule(
+            kind: .monthlyOrdinal,
+            interval: 1,
+            anchorDate: "2026-01-01",
+            ordinal: 2,
+            weekday: 3
+        )
+        let lastSaturday = RecurrenceRule(
+            kind: .monthlyOrdinal,
+            interval: 1,
+            anchorDate: "2026-01-01",
+            ordinal: -1,
+            weekday: 7
+        )
+
+        XCTAssertTrue(secondTuesday.isScheduled(
+            on: try XCTUnwrap(DateKey.date(from: "2026-01-13", calendar: utc)),
+            calendar: utc
+        ))
+        XCTAssertFalse(secondTuesday.isScheduled(
+            on: try XCTUnwrap(DateKey.date(from: "2026-01-06", calendar: utc)),
+            calendar: utc
+        ))
+        XCTAssertTrue(lastSaturday.isScheduled(
+            on: try XCTUnwrap(DateKey.date(from: "2026-01-31", calendar: utc)),
+            calendar: utc
+        ))
+        XCTAssertTrue(lastSaturday.isScheduled(
+            on: try XCTUnwrap(DateKey.date(from: "2026-02-28", calendar: utc)),
+            calendar: utc
+        ))
+    }
+
+    func testRecurrenceRespectsActiveAndPauseBoundaries() throws {
+        let start = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 3, day: 1)))
+        let due = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 3, day: 31)))
+        let beforeStart = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 2, day: 28)))
+        let afterEnd = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 4, day: 30)))
+        let end = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 4, day: 1)))
+        var item = ChecklistItem(
+            title: "Month-end close",
+            schedule: .custom,
+            recurrence: RecurrenceRule(
+                kind: .monthlyDay,
+                interval: 1,
+                anchorDate: "2026-01-31",
+                dayOfMonth: 31
+            ),
+            createdAt: start,
+            startDate: start,
+            endedAt: end
+        )
+        item.pause(from: due, until: due)
+
+        XCTAssertFalse(item.isScheduled(on: beforeStart, calendar: calendar))
+        XCTAssertTrue(item.isScheduled(on: due, calendar: calendar))
+        XCTAssertFalse(item.occurs(on: due, calendar: calendar))
+        XCTAssertFalse(item.isScheduled(on: afterEnd, calendar: calendar))
+        XCTAssertTrue(item.nextScheduledDates(
+            startingAt: beforeStart,
+            count: 1,
+            calendar: calendar
+        ).isEmpty)
+    }
+
     @MainActor
     func testRoutineInsightsSummarizeCompletionTrendStreakMissesAndDelays() throws {
         let accountID = "routine-insights-\(UUID().uuidString)"
@@ -421,6 +577,36 @@ final class ChecklistStateTests: XCTestCase {
     }
 
     @MainActor
+    func testWidgetSnapshotIncludesAdvancedRecurrenceDueToday() throws {
+        let accountID = "widget-recurrence-test-\(UUID().uuidString)"
+        let now = calendar.startOfDay(for: .now)
+        cleanCaches(for: [accountID])
+        defer {
+            cleanCaches(for: [accountID])
+            UserDefaults.standard.removeObject(forKey: "activeAccountID")
+        }
+        UserDefaults.standard.set(accountID, forKey: "activeAccountID")
+
+        let store = ChecklistStore()
+        store.save(ChecklistItem(
+            title: "Advanced interval",
+            schedule: .custom,
+            recurrence: RecurrenceRule(
+                kind: .interval,
+                interval: 2,
+                anchorDate: DateKey.string(from: now),
+                unit: .day
+            ),
+            createdAt: now,
+            startDate: now
+        ))
+
+        let snapshot = store.widgetSnapshot(now: now)
+        XCTAssertEqual(snapshot.scheduledCount, 1)
+        XCTAssertEqual(snapshot.remainingCount, 1)
+    }
+
+    @MainActor
     func testReturningAuthenticatedAccountKeepsExistingLocalProgressCache() throws {
         let accountID = "test-user-\(UUID().uuidString)"
         let itemID = UUID()
@@ -626,6 +812,59 @@ final class ChecklistStateTests: XCTestCase {
         XCTAssertEqual(store.items.first?.scheduleRevision, 1)
         XCTAssertEqual(store.carryoverEntries.first?.scheduledDateKeys, [yesterdayKey, DateKey.string(from: today)])
         XCTAssertTrue(store.todoItems.isEmpty)
+    }
+
+    @MainActor
+    func testRecurrenceEditAdvancesRevisionAndPreservesOccurrenceIdentity() throws {
+        let accountID = "recurrence-schedule-edit-\(UUID().uuidString)"
+        let today = calendar.startOfDay(for: .now)
+        let todayKey = DateKey.string(from: today)
+        cleanCaches(for: [accountID])
+        defer {
+            cleanCaches(for: [accountID])
+            UserDefaults.standard.removeObject(forKey: "activeAccountID")
+        }
+        UserDefaults.standard.set(accountID, forKey: "activeAccountID")
+
+        let store = ChecklistStore()
+        store.save(ChecklistItem(
+            title: "Replace filter",
+            schedule: .custom,
+            recurrence: RecurrenceRule(
+                kind: .interval,
+                interval: 2,
+                anchorDate: todayKey,
+                unit: .day
+            ),
+            createdAt: today,
+            startDate: today,
+            missedBehavior: .keepUntilDone,
+            carryoverStartDate: todayKey
+        ))
+
+        var edited = try XCTUnwrap(store.items.first)
+        edited.recurrence = RecurrenceRule(
+            kind: .interval,
+            interval: 3,
+            anchorDate: todayKey,
+            unit: .day
+        )
+        store.save(edited)
+
+        let saved = try XCTUnwrap(store.items.first)
+        XCTAssertEqual(saved.scheduleRevision, 1)
+        XCTAssertEqual(
+            saved.occurrence(scheduledDate: todayKey, scheduleRevision: 0)?.outcome,
+            .open
+        )
+        XCTAssertEqual(
+            saved.occurrenceID(scheduledDate: todayKey, scheduleRevision: 0),
+            ChecklistOccurrenceIdentifier.string(
+                itemID: saved.id,
+                scheduleRevision: 0,
+                scheduledDateKey: todayKey
+            )
+        )
     }
 
     @MainActor
@@ -1089,6 +1328,7 @@ final class ChecklistStateTests: XCTestCase {
 
         XCTAssertEqual(item.scheduleRevision, 0)
         XCTAssertEqual(item.missedBehavior, .markMissed)
+        XCTAssertNil(item.recurrence)
         XCTAssertNil(item.carryoverStartDate)
         XCTAssertNil(item.carryoverResolvedThroughDate)
         XCTAssertTrue(item.occurrences.isEmpty)
@@ -1151,7 +1391,7 @@ final class ChecklistStateTests: XCTestCase {
         XCTAssertFalse(canonicalJSON.contains("originalScheduledDate"))
     }
 
-    func testUpsertPayloadIncludesCarryoverConfigurationAndOccurrences() {
+    func testUpsertPayloadIncludesRecurrenceCarryoverConfigurationAndOccurrences() {
         let occurrence = ChecklistOccurrence(
             outcome: .open,
             completionCount: 2,
@@ -1161,6 +1401,13 @@ final class ChecklistStateTests: XCTestCase {
             title: "Weekly review",
             schedule: .custom,
             customWeekdays: [2],
+            recurrence: RecurrenceRule(
+                kind: .monthlyOrdinal,
+                interval: 2,
+                anchorDate: "2026-07-01",
+                ordinal: -1,
+                weekday: 6
+            ),
             quantity: 3,
             missedBehavior: .keepUntilDone,
             carryoverStartDate: "2026-07-01",
@@ -1174,12 +1421,19 @@ final class ChecklistStateTests: XCTestCase {
         )
 
         XCTAssertEqual(mutation.item?.missedBehavior, .keepUntilDone)
+        XCTAssertEqual(mutation.item?.recurrence, item.recurrence)
         XCTAssertEqual(mutation.item?.carryoverStartDate, "2026-07-01")
         XCTAssertEqual(mutation.item?.carryoverResolvedThroughDate, "2026-07-07")
         XCTAssertEqual(
             mutation.item?.occurrences[item.occurrenceID(scheduledDate: "2026-07-08")],
             occurrence
         )
+
+        let decoded = try? JSONDecoder().decode(
+            SyncMutation.self,
+            from: JSONEncoder().encode(mutation)
+        )
+        XCTAssertEqual(decoded?.item?.recurrence, item.recurrence)
     }
 
     func testOccurrenceIdentifierParsesRevisionedAndLegacyForms() throws {

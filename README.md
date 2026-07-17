@@ -88,6 +88,8 @@ The server merges item fields independently using timestamp plus device-ID order
 
 Each checklist item has a schedule plus per-date state sets. The schedule answers whether the item naturally occurs on a date. The per-date sets record user intent for dates that have been touched.
 
+Schedules support daily, weekday, selected-weekday, anchored day/week intervals, and monthly rules by day number or ordinal weekday. Monthly day 29–31 rules use the last available day in shorter months. Advanced rules are stored in the optional `recurrence` field, so items created before flexible recurrence continue using their existing schedule unchanged.
+
 - `completedDates`: the item is Done on that date.
 - `skippedDates`: the item was intentionally skipped on that date.
 - `openDates`: the item is explicitly Open on that date, even if the schedule would otherwise make it Off.

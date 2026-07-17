@@ -138,6 +138,7 @@ test("expired browser sessions preserve cached routines and pending changes for 
   expect(persisted.accountID).toBe("expired-session-user");
   expect(persisted.cache.items).toEqual([{
     ...cachedItem,
+    recurrence: null,
     scheduleRevision: 0,
     occurrences: {}
   }]);
@@ -389,6 +390,87 @@ test("configures carryover only for irregular schedules and preserves its histor
   saved = cached.items.find((item) => item.title === title);
   expect(saved.endedAt).toBeTruthy();
   expect(saved.scheduleRevision).toBe(3);
+});
+
+test("creates, previews, syncs, and edits advanced recurrence offline", async ({ page }) => {
+  const title = `E2E month-end close ${Date.now()}`;
+  const anchorDate = "2024-01-31";
+  const ordinalAnchorDate = "2024-01-01";
+  await signIn(page);
+  await page.getByRole("button", { name: "Add checklist item" }).click();
+  await page.getByLabel("Title").fill(title);
+  await page.getByLabel("Schedule").selectOption("monthlyDay");
+  await expect(page.getByLabel("Every", { exact: true })).toHaveValue("1");
+  await expect(page.getByRole("spinbutton", { name: "Day of month" })).toHaveValue(String(new Date().getDate()));
+  await page.getByLabel("Every", { exact: true }).fill("2");
+  await page.getByRole("spinbutton", { name: "Day of month" }).fill("31");
+  await page.getByLabel("Anchor date").fill(anchorDate);
+  await page.getByLabel("Start date").fill(todayKey());
+
+  await expect(page.locator("[data-schedule-summary]")).toHaveText(
+    "Every 2 months on day 31 (last day in shorter months)"
+  );
+  const preview = page.locator("[data-schedule-dates]");
+  await expect(preview.locator("span")).toHaveCount(5);
+  await expect(page.getByLabel("Keep visible until handled", { exact: false })).toBeChecked();
+
+  await saveEditor(page);
+  await page.getByRole("button", { name: "All items" }).click();
+  await expect(task(page, title)).toContainText("Every 2 months on day 31");
+
+  let cached = await page.evaluate(() => JSON.parse(localStorage.getItem("dailyWeb.cache")));
+  let saved = cached.items.find((item) => item.title === title);
+  expect(saved.schedule).toBe("custom");
+  expect(saved.customWeekdays).toEqual([]);
+  expect(saved.recurrence).toEqual({
+    kind: "monthlyDay",
+    interval: 2,
+    anchorDate,
+    dayOfMonth: 31
+  });
+  expect(saved.scheduleRevision).toBe(0);
+  expect(saved.missedBehavior).toBe("keepUntilDone");
+
+  await page.evaluate(() => {
+    window.name = "preserve-e2e-storage";
+    sessionStorage.clear();
+  });
+  await page.route("**/auth/refresh", (route) => route.fulfill({
+    status: 503,
+    contentType: "application/json",
+    body: JSON.stringify({ error: "Offline for recurrence cache test" })
+  }));
+  await page.reload();
+
+  await expect(page.getByRole("heading", { name: "Ritual Cue" })).toBeVisible();
+  await page.getByRole("button", { name: "All items" }).click();
+  await expect(task(page, title)).toContainText("Every 2 months on day 31");
+  await task(page, title).getByRole("button", { name: `Edit ${title}` }).click();
+  await expect(page.getByLabel("Schedule")).toHaveValue("monthlyDay");
+  await expect(page.getByLabel("Every", { exact: true })).toHaveValue("2");
+  await expect(page.getByRole("spinbutton", { name: "Day of month" })).toHaveValue("31");
+  await expect(page.getByLabel("Anchor date")).toHaveValue(anchorDate);
+
+  await page.getByLabel("Schedule").selectOption("monthlyOrdinal");
+  await page.getByLabel("Every", { exact: true }).fill("1");
+  await page.getByRole("combobox", { name: "Occurrence", exact: true }).selectOption("-1");
+  await page.getByRole("combobox", { name: "Weekday", exact: true }).selectOption("3");
+  await page.getByLabel("Anchor date").fill(ordinalAnchorDate);
+  await expect(page.locator("[data-schedule-summary]")).toHaveText("Last Tuesday monthly");
+  await page.getByRole("button", { name: "Save" }).click();
+
+  cached = await page.evaluate(() => JSON.parse(localStorage.getItem("dailyWeb.cache")));
+  saved = cached.items.find((item) => item.title === title);
+  expect(saved.recurrence).toEqual({
+    kind: "monthlyOrdinal",
+    interval: 1,
+    anchorDate: ordinalAnchorDate,
+    ordinal: -1,
+    weekday: 3
+  });
+  expect(saved.scheduleRevision).toBe(1);
+  const pending = await page.evaluate(() => JSON.parse(localStorage.getItem("dailyWeb.pending")));
+  expect(pending.findLast((entry) => entry.kind === "upsert").item.recurrence).toEqual(saved.recurrence);
 });
 
 test("requires a still-open resolution before ending a deferred or paused item", async ({ page }) => {

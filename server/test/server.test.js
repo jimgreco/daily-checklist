@@ -17,7 +17,9 @@ const {
   trustedProxyHops,
   upsertUser,
   validSyncRequest,
-  stampWins
+  stampWins,
+  recurrenceMatchesDate,
+  nextRecurrenceDates
 } = require("../src/server");
 const { hasData } = require("../src/migrate-json-to-postgres");
 
@@ -875,8 +877,14 @@ test("authenticated users can import valid exports and reject malformed exports"
           id: "33333333-3333-4333-8333-333333333333",
           title: "Restore me",
           notes: "Imported note",
-          schedule: "everyDay",
+          schedule: "custom",
           customWeekdays: [],
+          recurrence: {
+            kind: "monthlyDay",
+            interval: 2,
+            anchorDate: "2026-01-31",
+            dayOfMonth: 31
+          },
           reminderMinutes: 540,
           quantity: 2,
           scheduleRevision: 3,
@@ -925,6 +933,12 @@ test("authenticated users can import valid exports and reject malformed exports"
   assert.deepEqual(imported.items[0].completedDates, ["2026-07-06"]);
   assert.deepEqual(imported.items[0].openDates, ["2026-07-05"]);
   assert.equal(imported.items[0].scheduleRevision, 3);
+  assert.deepEqual(imported.items[0].recurrence, {
+    kind: "monthlyDay",
+    interval: 2,
+    anchorDate: "2026-01-31",
+    dayOfMonth: 31
+  });
   assert.equal(imported.items[0].missedBehavior, "keepUntilDone");
   assert.equal(imported.items[0].carryoverStartDate, "2026-07-05");
   assert.equal(imported.items[0].carryoverResolvedThroughDate, "2026-07-04");
@@ -967,6 +981,7 @@ test("authenticated users can import valid exports and reject malformed exports"
   const exportedItem = (await exported.json()).checklist.items[0];
   assert.equal(exportedItem.missedBehavior, "keepUntilDone");
   assert.equal(exportedItem.scheduleRevision, 3);
+  assert.deepEqual(exportedItem.recurrence, imported.items[0].recurrence);
   assert.equal(exportedItem.carryoverStartDate, "2026-07-05");
   assert.equal(exportedItem.carryoverResolvedThroughDate, "2026-07-04");
   assert.deepEqual(exportedItem.occurrences, imported.items[0].occurrences);
@@ -1482,6 +1497,80 @@ test("validates carryover fields and atomic occurrence mutations", () => {
   })), false);
 });
 
+test("validates and calculates interval and calendar recurrence deterministically", () => {
+  const everyTwoDays = {
+    kind: "interval",
+    interval: 2,
+    anchorDate: "2026-03-07",
+    unit: "day"
+  };
+  const monthEnd = {
+    kind: "monthlyDay",
+    interval: 1,
+    anchorDate: "2024-01-31",
+    dayOfMonth: 31
+  };
+  const everyTwoWeeks = { ...everyTwoDays, interval: 2, unit: "week" };
+  const secondTuesday = {
+    kind: "monthlyOrdinal",
+    interval: 1,
+    anchorDate: "2026-01-01",
+    ordinal: 2,
+    weekday: 3
+  };
+  const lastSaturday = { ...secondTuesday, ordinal: -1, weekday: 7 };
+
+  assert.deepEqual(
+    nextRecurrenceDates(everyTwoDays, "2026-03-07", 4),
+    ["2026-03-07", "2026-03-09", "2026-03-11", "2026-03-13"]
+  );
+  assert.deepEqual(
+    nextRecurrenceDates(everyTwoWeeks, "2026-03-07", 3),
+    ["2026-03-07", "2026-03-21", "2026-04-04"]
+  );
+  assert.deepEqual(
+    nextRecurrenceDates(monthEnd, "2024-01-01", 5),
+    ["2024-01-31", "2024-02-29", "2024-03-31", "2024-04-30", "2024-05-31"]
+  );
+  assert.equal(recurrenceMatchesDate(monthEnd, "2025-02-28"), true);
+  assert.equal(recurrenceMatchesDate(monthEnd, "2024-02-28"), false);
+  assert.equal(recurrenceMatchesDate(secondTuesday, "2026-01-13"), true);
+  assert.equal(recurrenceMatchesDate(secondTuesday, "2026-01-06"), false);
+  assert.equal(recurrenceMatchesDate(lastSaturday, "2026-01-31"), true);
+  assert.equal(recurrenceMatchesDate(lastSaturday, "2026-02-28"), true);
+  assert.deepEqual(
+    nextRecurrenceDates(monthEnd, "2024-01-01", 5, "2024-04-01"),
+    ["2024-01-31", "2024-02-29", "2024-03-31"]
+  );
+
+  const requestForRecurrence = (recurrence) => ({
+    deviceID: "recurrence-device",
+    mutations: [{
+      id: `recurrence-${crypto.randomUUID()}`,
+      itemID: "recurrence-item",
+      kind: "upsert",
+      stamp: "2026-07-17T12:00:00.000Z",
+      changedFields: ["recurrence"],
+      item: { recurrence }
+    }]
+  });
+  for (const recurrence of [everyTwoDays, everyTwoWeeks, monthEnd, secondTuesday, lastSaturday, null]) {
+    assert.equal(validSyncRequest(requestForRecurrence(recurrence)), true);
+  }
+  for (const recurrence of [
+    { ...everyTwoDays, anchorDate: "2026-02-30" },
+    { ...everyTwoDays, interval: 0 },
+    { ...everyTwoDays, interval: 366 },
+    { ...everyTwoDays, unit: "month" },
+    { ...monthEnd, interval: 25 },
+    { ...monthEnd, dayOfMonth: 32 },
+    { ...secondTuesday, ordinal: 5 },
+    { ...secondTuesday, weekday: 0 }
+  ]) {
+    assert.equal(validSyncRequest(requestForRecurrence(recurrence)), false);
+  }
+});
+
 test("imports legacy carryover defaults and enforces occurrence entry limits", () => {
   const legacyAccount = accountFromImportedChecklist({
     items: [{ id: "legacy-item", title: "Legacy item" }]
@@ -1490,6 +1579,7 @@ test("imports legacy carryover defaults and enforces occurrence entry limits", (
   assert.equal(legacyItem.missedBehavior, "markMissed");
   assert.equal(legacyItem.carryoverStartDate, null);
   assert.equal(legacyItem.carryoverResolvedThroughDate, null);
+  assert.equal(legacyItem.recurrence, undefined);
   assert.deepEqual(legacyItem.occurrences, {});
 
   const storedLegacyAccount = account();
@@ -1639,6 +1729,63 @@ test("field-level merging preserves unrelated offline edits", () => {
   const item = materializeAccount(state).items[0];
   assert.equal(item.title, "Walk Pepper");
   assert.equal(item.notes, "Bring bags");
+});
+
+test("two-client recurrence conflicts merge per field and converge", () => {
+  const state = account();
+  const everyTwoDays = {
+    kind: "interval",
+    interval: 2,
+    anchorDate: "2026-07-01",
+    unit: "day"
+  };
+  const monthEnd = {
+    kind: "monthlyDay",
+    interval: 1,
+    anchorDate: "2026-07-01",
+    dayOfMonth: 31
+  };
+  applyMutation(state, {
+    id: "recurrence-create",
+    itemID: "recurrence-item",
+    kind: "upsert",
+    stamp: "2026-07-17T10:00:00.000Z",
+    changedFields: ["title", "schedule", "customWeekdays", "recurrence"],
+    item: {
+      title: "Replace filter",
+      schedule: "custom",
+      customWeekdays: [],
+      recurrence: everyTwoDays
+    }
+  }, "device-a");
+  applyMutation(state, {
+    id: "recurrence-title-b",
+    itemID: "recurrence-item",
+    kind: "upsert",
+    stamp: "2026-07-17T10:02:00.000Z",
+    changedFields: ["title"],
+    item: { title: "Replace HVAC filter" }
+  }, "device-b");
+  applyMutation(state, {
+    id: "recurrence-new-a",
+    itemID: "recurrence-item",
+    kind: "upsert",
+    stamp: "2026-07-17T10:03:00.000Z",
+    changedFields: ["recurrence"],
+    item: { recurrence: monthEnd }
+  }, "device-a");
+  applyMutation(state, {
+    id: "recurrence-stale-b",
+    itemID: "recurrence-item",
+    kind: "upsert",
+    stamp: "2026-07-17T10:01:00.000Z",
+    changedFields: ["recurrence"],
+    item: { recurrence: everyTwoDays }
+  }, "device-b");
+
+  const item = materializeAccount(state).items[0];
+  assert.equal(item.title, "Replace HVAC filter");
+  assert.deepEqual(item.recurrence, monthEnd);
 });
 
 test("completion conflicts resolve per date", () => {

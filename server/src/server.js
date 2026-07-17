@@ -950,11 +950,14 @@ function stampWins(incoming, current) {
   return incoming.deviceID > current.deviceID;
 }
 
-const itemFields = ["title", "notes", "schedule", "customWeekdays", "reminderMinutes", "quantity", "skippedDates", "openDates", "createdAt", "startDate", "endedAt", "groupID", "sortOrder", "pauseWindows", "scheduleRevision", "missedBehavior", "carryoverStartDate", "carryoverResolvedThroughDate"];
+const itemFields = ["title", "notes", "schedule", "customWeekdays", "recurrence", "reminderMinutes", "quantity", "skippedDates", "openDates", "createdAt", "startDate", "endedAt", "groupID", "sortOrder", "pauseWindows", "scheduleRevision", "missedBehavior", "carryoverStartDate", "carryoverResolvedThroughDate"];
 const groupFields = ["name", "sortOrder", "isCollapsed", "pauseWindows"];
 const notificationGroupFilterModes = ["all", "include", "exclude"];
 const missedBehaviors = ["markMissed", "keepUntilDone"];
 const occurrenceOutcomes = ["open", "done", "skipped", "missed"];
+const recurrenceKinds = ["interval", "monthlyDay", "monthlyOrdinal"];
+const recurrenceIntervalUnits = ["day", "week"];
+const recurrenceOrdinals = [-1, 1, 2, 3, 4];
 
 function validID(value) {
   return typeof value === "string" && /^[a-z0-9._:-]{1,120}$/i.test(value);
@@ -983,7 +986,9 @@ function validISODate(value, { nullable = true } = {}) {
 }
 
 function validDateKey(value) {
-  return typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value);
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const date = new Date(`${value}T00:00:00.000Z`);
+  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
 }
 
 function validNullableDateKey(value) {
@@ -1031,6 +1036,100 @@ function validWeekdays(value) {
     && value.length <= 7
     && value.every((day) => Number.isInteger(day) && day >= 1 && day <= 7)
     && new Set(value).size === value.length;
+}
+
+function validRecurrence(value) {
+  if (value == null) return true;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  if (!recurrenceKinds.includes(value.kind) || !validDateKey(value.anchorDate)) return false;
+  if (!Number.isSafeInteger(value.interval) || value.interval < 1) return false;
+  if (value.kind === "interval") {
+    const maximum = value.unit === "week" ? 52 : 365;
+    return recurrenceIntervalUnits.includes(value.unit) && value.interval <= maximum;
+  }
+  if (value.interval > 24) return false;
+  if (value.kind === "monthlyDay") {
+    return Number.isInteger(value.dayOfMonth) && value.dayOfMonth >= 1 && value.dayOfMonth <= 31;
+  }
+  return recurrenceOrdinals.includes(value.ordinal)
+    && Number.isInteger(value.weekday)
+    && value.weekday >= 1
+    && value.weekday <= 7;
+}
+
+function normalizedRecurrence(value) {
+  if (!validRecurrence(value) || value == null) return null;
+  const recurrence = {
+    kind: value.kind,
+    interval: value.interval,
+    anchorDate: value.anchorDate
+  };
+  if (value.kind === "interval") recurrence.unit = value.unit;
+  if (value.kind === "monthlyDay") recurrence.dayOfMonth = value.dayOfMonth;
+  if (value.kind === "monthlyOrdinal") {
+    recurrence.ordinal = value.ordinal;
+    recurrence.weekday = value.weekday;
+  }
+  return recurrence;
+}
+
+function dateKeyParts(value) {
+  if (!validDateKey(value)) return null;
+  const [year, month, day] = value.split("-").map(Number);
+  return { year, month, day };
+}
+
+function utcDateFromKey(value) {
+  const parts = dateKeyParts(value);
+  return parts ? new Date(Date.UTC(parts.year, parts.month - 1, parts.day)) : null;
+}
+
+function recurrenceMatchesDate(value, dateKey) {
+  const recurrence = normalizedRecurrence(value);
+  const target = dateKeyParts(dateKey);
+  const anchor = dateKeyParts(recurrence?.anchorDate);
+  if (!recurrence || !target || !anchor || dateKey < recurrence.anchorDate) return false;
+
+  if (recurrence.kind === "interval") {
+    const anchorDate = utcDateFromKey(recurrence.anchorDate);
+    const targetDate = utcDateFromKey(dateKey);
+    const elapsedDays = Math.round((targetDate - anchorDate) / 86_400_000);
+    const cadence = recurrence.interval * (recurrence.unit === "week" ? 7 : 1);
+    return elapsedDays >= 0 && elapsedDays % cadence === 0;
+  }
+
+  const elapsedMonths = (target.year - anchor.year) * 12 + target.month - anchor.month;
+  if (elapsedMonths < 0 || elapsedMonths % recurrence.interval !== 0) return false;
+  const daysInMonth = new Date(Date.UTC(target.year, target.month, 0)).getUTCDate();
+  if (recurrence.kind === "monthlyDay") {
+    return target.day === Math.min(recurrence.dayOfMonth, daysInMonth);
+  }
+
+  const desiredWeekday = recurrence.weekday;
+  let expectedDay;
+  if (recurrence.ordinal === -1) {
+    const lastWeekday = new Date(Date.UTC(target.year, target.month - 1, daysInMonth)).getUTCDay() + 1;
+    expectedDay = daysInMonth - ((lastWeekday - desiredWeekday + 7) % 7);
+  } else {
+    const firstWeekday = new Date(Date.UTC(target.year, target.month - 1, 1)).getUTCDay() + 1;
+    expectedDay = 1 + ((desiredWeekday - firstWeekday + 7) % 7) + (recurrence.ordinal - 1) * 7;
+    if (expectedDay > daysInMonth) return false;
+  }
+  return target.day === expectedDay;
+}
+
+function nextRecurrenceDates(value, fromDateKey, count = 5, endDateKey = null) {
+  const recurrence = normalizedRecurrence(value);
+  let cursor = utcDateFromKey(fromDateKey);
+  if (!recurrence || !cursor || !Number.isSafeInteger(count) || count <= 0) return [];
+  const dates = [];
+  for (let inspected = 0; dates.length < count && inspected < 20_000; inspected += 1) {
+    const key = cursor.toISOString().slice(0, 10);
+    if (endDateKey && key >= endDateKey) break;
+    if (recurrenceMatchesDate(recurrence, key)) dates.push(key);
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+  return dates;
 }
 
 function validPauseWindows(value) {
@@ -1134,6 +1233,7 @@ function validItemPayload(item = {}) {
     && (item.notes == null || (typeof item.notes === "string" && item.notes.length <= 2000))
     && (item.schedule == null || ["everyDay", "weekdays", "weekends", "custom"].includes(item.schedule))
     && (item.customWeekdays == null || validWeekdays(item.customWeekdays))
+    && validRecurrence(item.recurrence)
     && validFiniteNumber(item.reminderMinutes, { nullable: true, min: 0, max: 1439 })
     && (item.quantity == null || (Number.isInteger(item.quantity) && item.quantity >= 1 && item.quantity <= 99))
     && (item.skippedDates == null || (
@@ -1306,6 +1406,7 @@ function accountFromImportedChecklist(checklist, previousAccount = emptyAccount(
         notes: importedField(item.notes || "", stamp, deviceID),
         schedule: importedField(item.schedule || "everyDay", stamp, deviceID),
         customWeekdays: importedField(item.customWeekdays || [], stamp, deviceID),
+        recurrence: importedField(normalizedRecurrence(item.recurrence), stamp, deviceID),
         reminderMinutes: importedField(item.reminderMinutes, stamp, deviceID),
         quantity: importedField(quantity, stamp, deviceID),
         skippedDates: importedField(uniqueDateKeys(item.skippedDates || []), stamp, deviceID),
@@ -1586,6 +1687,7 @@ function materializeAccount(account) {
         notes: value.notes || "",
         schedule: value.schedule || "everyDay",
         customWeekdays: value.customWeekdays || [],
+        ...(normalizedRecurrence(value.recurrence) ? { recurrence: normalizedRecurrence(value.recurrence) } : {}),
         reminderMinutes: value.reminderMinutes,
         quantity,
         skippedDates: legacyDayState.skippedDates,
@@ -2118,5 +2220,7 @@ module.exports = {
   clientIP,
   rateLimit,
   resetRateLimits,
-  trustedProxyHops
+  trustedProxyHops,
+  recurrenceMatchesDate,
+  nextRecurrenceDates
 };

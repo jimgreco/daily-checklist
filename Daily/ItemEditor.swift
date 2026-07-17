@@ -1,10 +1,52 @@
 import SwiftUI
 
+private enum ScheduleEditorMode: String, CaseIterable, Identifiable {
+    case everyDay
+    case weekdays
+    case weekends
+    case selectedWeekdays
+    case interval
+    case monthlyDay
+    case monthlyOrdinal
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .everyDay: "Every day"
+        case .weekdays: "Weekdays"
+        case .weekends: "Weekends"
+        case .selectedWeekdays: "Selected weekdays"
+        case .interval: "Every N days or weeks"
+        case .monthlyDay: "Day of month"
+        case .monthlyOrdinal: "Ordinal weekday"
+        }
+    }
+
+    init(item: ChecklistItem) {
+        if let recurrence = item.recurrence {
+            switch recurrence.kind {
+            case .interval: self = .interval
+            case .monthlyDay: self = .monthlyDay
+            case .monthlyOrdinal: self = .monthlyOrdinal
+            }
+            return
+        }
+        switch item.schedule {
+        case .everyDay: self = .everyDay
+        case .weekdays: self = .weekdays
+        case .weekends: self = .weekends
+        case .custom: self = .selectedWeekdays
+        }
+    }
+}
+
 struct ItemEditor: View {
     @Environment(\.dismiss) private var dismiss
     @State private var item: ChecklistItem
     @State private var reminderEnabled: Bool
     @State private var reminderTime: Date
+    @State private var scheduleMode: ScheduleEditorMode
     @State private var startDateEnabled: Bool
     @State private var startDate: Date
     @State private var endDateEnabled: Bool
@@ -28,6 +70,7 @@ struct ItemEditor: View {
         let calendar = Calendar.current
         _item = State(initialValue: item)
         _reminderEnabled = State(initialValue: item.reminderMinutes != nil)
+        _scheduleMode = State(initialValue: ScheduleEditorMode(item: item))
         var components = DateComponents()
         components.hour = (item.reminderMinutes ?? 9 * 60) / 60
         components.minute = (item.reminderMinutes ?? 9 * 60) % 60
@@ -87,17 +130,18 @@ struct ItemEditor: View {
                 }
 
                 Section("Repeats") {
-                    Picker("Schedule", selection: $item.schedule) {
-                        ForEach(ScheduleKind.allCases) { kind in
-                            Text(kind.title).tag(kind)
+                    Picker("Schedule", selection: $scheduleMode) {
+                        ForEach(ScheduleEditorMode.allCases) { mode in
+                            Text(mode.title).tag(mode)
                         }
                     }
-                    if item.schedule == .custom {
+                    if scheduleMode == .selectedWeekdays {
                         weekdayPicker
                     }
+                    recurrenceControls
                 }
 
-                if item.schedule != .everyDay {
+                if scheduleMode != .everyDay {
                     Section {
                         Toggle("Keep visible until handled", isOn: Binding(
                             get: { item.missedBehavior == .keepUntilDone },
@@ -113,6 +157,23 @@ struct ItemEditor: View {
                         Text("If missed")
                     } footer: {
                         Text("Missed occurrences stay in Still Open until completed, skipped, or deferred. Turn this off to count them as missed normally.")
+                    }
+                }
+
+                Section("Upcoming") {
+                    Text(previewItem.scheduleSummary)
+                        .font(.subheadline.weight(.semibold))
+                    let dates = previewItem.nextScheduledDates(startingAt: .now, count: 5)
+                    if dates.isEmpty {
+                        Text("No upcoming occurrences within the active dates.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(Array(dates.enumerated()), id: \.offset) { entry in
+                            Text(entry.element.formatted(date: .abbreviated, time: .omitted))
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                        }
                     }
                 }
 
@@ -168,7 +229,9 @@ struct ItemEditor: View {
                         } else {
                             item.reminderMinutes = nil
                         }
-                        if item.schedule == .custom, item.customWeekdays.isEmpty {
+                        if item.schedule == .custom,
+                           item.recurrence == nil,
+                           item.customWeekdays.isEmpty {
                             item.customWeekdays = [Calendar.current.component(.weekday, from: .now)]
                         }
                         if item.schedule == .everyDay {
@@ -203,19 +266,12 @@ struct ItemEditor: View {
                     endDate = startDate
                 }
             }
-            .onChange(of: item.schedule) { _, newValue in
-                if newValue == .everyDay {
-                    item.missedBehavior = .markMissed
-                } else if isNewItem, !didManuallyChooseMissedBehavior {
-                    item.missedBehavior = newValue == .custom ? .keepUntilDone : .markMissed
-                    if item.missedBehavior == .keepUntilDone {
-                        item.carryoverStartDate = item.carryoverStartDate ?? DateKey.string(from: .now)
-                    }
-                }
+            .onChange(of: scheduleMode) { _, newValue in
+                configureSchedule(for: newValue)
             }
             .onChange(of: item.customWeekdays) { _, weekdays in
                 guard isNewItem,
-                      item.schedule == .custom,
+                      scheduleMode == .selectedWeekdays,
                       !didManuallyChooseMissedBehavior else { return }
                 item.missedBehavior = weekdays.count <= 1 ? .keepUntilDone : .markMissed
                 if item.missedBehavior == .keepUntilDone {
@@ -248,6 +304,191 @@ struct ItemEditor: View {
 
     private var minimumEndDate: Date {
         Calendar.current.startOfDay(for: startDateEnabled ? startDate : item.createdAt)
+    }
+
+    private var previewItem: ChecklistItem {
+        var preview = item
+        let calendar = Calendar.current
+        preview.startDate = startDateEnabled ? calendar.startOfDay(for: startDate) : nil
+        if endDateEnabled {
+            preview.endedAt = calendar.date(
+                byAdding: .day,
+                value: 1,
+                to: max(calendar.startOfDay(for: endDate), minimumEndDate)
+            )
+        } else {
+            preview.endedAt = nil
+        }
+        return preview
+    }
+
+    @ViewBuilder
+    private var recurrenceControls: some View {
+        switch scheduleMode {
+        case .interval:
+            Picker("Unit", selection: recurrenceUnit) {
+                Text("Days").tag(RecurrenceRule.IntervalUnit.day)
+                Text("Weeks").tag(RecurrenceRule.IntervalUnit.week)
+            }
+            .pickerStyle(.segmented)
+            Stepper(value: recurrenceInterval, in: recurrenceUnit.wrappedValue == .week ? 1...52 : 1...365) {
+                LabeledContent("Every", value: "\(recurrenceInterval.wrappedValue) \(recurrenceUnit.wrappedValue == .week ? "week" : "day")\(recurrenceInterval.wrappedValue == 1 ? "" : "s")")
+            }
+            DatePicker("Anchor date", selection: recurrenceAnchorDate, displayedComponents: .date)
+
+        case .monthlyDay:
+            Stepper(value: recurrenceInterval, in: 1...24) {
+                LabeledContent("Every", value: recurrenceInterval.wrappedValue == 1 ? "Month" : "\(recurrenceInterval.wrappedValue) months")
+            }
+            Stepper(value: recurrenceDayOfMonth, in: 1...31) {
+                LabeledContent("Day", value: "\(recurrenceDayOfMonth.wrappedValue)")
+            }
+            DatePicker("Cycle anchor", selection: recurrenceAnchorDate, displayedComponents: .date)
+
+        case .monthlyOrdinal:
+            Stepper(value: recurrenceInterval, in: 1...24) {
+                LabeledContent("Every", value: recurrenceInterval.wrappedValue == 1 ? "Month" : "\(recurrenceInterval.wrappedValue) months")
+            }
+            Picker("Occurrence", selection: recurrenceOrdinal) {
+                ForEach([-1, 1, 2, 3, 4], id: \.self) { ordinal in
+                    Text(RecurrenceRule.ordinalNames[ordinal] ?? "First").tag(ordinal)
+                }
+            }
+            Picker("Weekday", selection: recurrenceWeekday) {
+                ForEach(1...7, id: \.self) { weekday in
+                    Text(RecurrenceRule.weekdayNames[weekday - 1]).tag(weekday)
+                }
+            }
+            DatePicker("Cycle anchor", selection: recurrenceAnchorDate, displayedComponents: .date)
+
+        case .everyDay, .weekdays, .weekends, .selectedWeekdays:
+            EmptyView()
+        }
+    }
+
+    private var recurrenceInterval: Binding<Int> {
+        Binding(
+            get: { item.recurrence?.interval ?? 1 },
+            set: { value in
+                guard var recurrence = item.recurrence else { return }
+                recurrence.interval = value
+                item.recurrence = recurrence.normalized
+            }
+        )
+    }
+
+    private var recurrenceUnit: Binding<RecurrenceRule.IntervalUnit> {
+        Binding(
+            get: { item.recurrence?.unit ?? .day },
+            set: { value in
+                guard var recurrence = item.recurrence else { return }
+                recurrence.unit = value
+                item.recurrence = recurrence.normalized
+            }
+        )
+    }
+
+    private var recurrenceDayOfMonth: Binding<Int> {
+        Binding(
+            get: { item.recurrence?.dayOfMonth ?? 1 },
+            set: { value in
+                guard var recurrence = item.recurrence else { return }
+                recurrence.dayOfMonth = value
+                item.recurrence = recurrence.normalized
+            }
+        )
+    }
+
+    private var recurrenceOrdinal: Binding<Int> {
+        Binding(
+            get: { item.recurrence?.ordinal ?? 1 },
+            set: { value in
+                guard var recurrence = item.recurrence else { return }
+                recurrence.ordinal = value
+                item.recurrence = recurrence.normalized
+            }
+        )
+    }
+
+    private var recurrenceWeekday: Binding<Int> {
+        Binding(
+            get: { item.recurrence?.weekday ?? 1 },
+            set: { value in
+                guard var recurrence = item.recurrence else { return }
+                recurrence.weekday = value
+                item.recurrence = recurrence.normalized
+            }
+        )
+    }
+
+    private var recurrenceAnchorDate: Binding<Date> {
+        Binding(
+            get: { item.recurrence.flatMap { DateKey.date(from: $0.anchorDate) } ?? .now },
+            set: { value in
+                guard var recurrence = item.recurrence else { return }
+                recurrence.anchorDate = DateKey.string(from: value)
+                item.recurrence = recurrence.normalized
+            }
+        )
+    }
+
+    private func configureSchedule(for mode: ScheduleEditorMode) {
+        let anchor = startDateEnabled ? startDate : Date.now
+        switch mode {
+        case .everyDay:
+            item.schedule = .everyDay
+            item.customWeekdays = []
+            item.recurrence = nil
+            item.missedBehavior = .markMissed
+        case .weekdays:
+            item.schedule = .weekdays
+            item.customWeekdays = []
+            item.recurrence = nil
+        case .weekends:
+            item.schedule = .weekends
+            item.customWeekdays = []
+            item.recurrence = nil
+        case .selectedWeekdays:
+            item.schedule = .custom
+            item.recurrence = nil
+            if item.customWeekdays.isEmpty {
+                item.customWeekdays = [Calendar.current.component(.weekday, from: .now)]
+            }
+        case .interval:
+            item.schedule = .custom
+            item.customWeekdays = []
+            if item.recurrence?.kind != .interval {
+                item.recurrence = .every(2, unit: .day, anchoredOn: anchor)
+            }
+        case .monthlyDay:
+            item.schedule = .custom
+            item.customWeekdays = []
+            if item.recurrence?.kind != .monthlyDay {
+                item.recurrence = .monthly(
+                    dayOfMonth: Calendar.current.component(.day, from: anchor),
+                    anchoredOn: anchor
+                )
+            }
+        case .monthlyOrdinal:
+            item.schedule = .custom
+            item.customWeekdays = []
+            if item.recurrence?.kind != .monthlyOrdinal {
+                item.recurrence = .monthly(
+                    ordinal: 1,
+                    weekday: Calendar.current.component(.weekday, from: anchor),
+                    anchoredOn: anchor
+                )
+            }
+        }
+
+        if isNewItem, mode != .everyDay, !didManuallyChooseMissedBehavior {
+            item.missedBehavior = [.selectedWeekdays, .interval, .monthlyDay, .monthlyOrdinal].contains(mode)
+                ? .keepUntilDone
+                : .markMissed
+            if item.missedBehavior == .keepUntilDone {
+                item.carryoverStartDate = item.carryoverStartDate ?? DateKey.string(from: .now)
+            }
+        }
     }
 
     private var weekdayPicker: some View {

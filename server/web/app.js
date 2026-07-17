@@ -113,7 +113,91 @@
   function sameDay(left, right) { return dateKey(left) === dateKey(right); }
 
   function isDateKey(value) {
-    return /^\d{4}-\d{2}-\d{2}$/.test(value || "");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value || "")) return false;
+    const parsed = dateFromInput(value);
+    return Boolean(parsed && !Number.isNaN(parsed.getTime()) && dateKey(parsed) === value);
+  }
+
+  const recurrenceOrdinals = [-1, 1, 2, 3, 4];
+
+  function normalizedRecurrence(value) {
+    if (!value || typeof value !== "object" || !["interval", "monthlyDay", "monthlyOrdinal"].includes(value.kind)) return null;
+    if (!isDateKey(value.anchorDate) || !Number.isSafeInteger(value.interval) || value.interval < 1) return null;
+    const recurrence = { kind: value.kind, interval: value.interval, anchorDate: value.anchorDate };
+    if (value.kind === "interval") {
+      if (!["day", "week"].includes(value.unit) || value.interval > (value.unit === "week" ? 52 : 365)) return null;
+      recurrence.unit = value.unit;
+    } else if (value.kind === "monthlyDay") {
+      if (value.interval > 24 || !Number.isInteger(value.dayOfMonth) || value.dayOfMonth < 1 || value.dayOfMonth > 31) return null;
+      recurrence.dayOfMonth = value.dayOfMonth;
+    } else {
+      if (value.interval > 24 || !recurrenceOrdinals.includes(value.ordinal)
+        || !Number.isInteger(value.weekday) || value.weekday < 1 || value.weekday > 7) return null;
+      recurrence.ordinal = value.ordinal;
+      recurrence.weekday = value.weekday;
+    }
+    return recurrence;
+  }
+
+  function recurrenceMatchesDate(value, date) {
+    const recurrence = normalizedRecurrence(value);
+    const day = startOfDay(date);
+    const anchor = recurrence ? dateFromInput(recurrence.anchorDate) : null;
+    if (!recurrence || !anchor || day < anchor) return false;
+
+    if (recurrence.kind === "interval") {
+      const elapsedDays = Math.round((Date.UTC(day.getFullYear(), day.getMonth(), day.getDate())
+        - Date.UTC(anchor.getFullYear(), anchor.getMonth(), anchor.getDate())) / 86_400_000);
+      const cadence = recurrence.interval * (recurrence.unit === "week" ? 7 : 1);
+      return elapsedDays >= 0 && elapsedDays % cadence === 0;
+    }
+
+    const elapsedMonths = (day.getFullYear() - anchor.getFullYear()) * 12 + day.getMonth() - anchor.getMonth();
+    if (elapsedMonths < 0 || elapsedMonths % recurrence.interval !== 0) return false;
+    const daysInMonth = new Date(day.getFullYear(), day.getMonth() + 1, 0).getDate();
+    if (recurrence.kind === "monthlyDay") {
+      return day.getDate() === Math.min(recurrence.dayOfMonth, daysInMonth);
+    }
+
+    let expectedDay;
+    if (recurrence.ordinal === -1) {
+      const lastWeekday = new Date(day.getFullYear(), day.getMonth(), daysInMonth).getDay() + 1;
+      expectedDay = daysInMonth - ((lastWeekday - recurrence.weekday + 7) % 7);
+    } else {
+      const firstWeekday = new Date(day.getFullYear(), day.getMonth(), 1).getDay() + 1;
+      expectedDay = 1 + ((recurrence.weekday - firstWeekday + 7) % 7) + (recurrence.ordinal - 1) * 7;
+      if (expectedDay > daysInMonth) return false;
+    }
+    return day.getDate() === expectedDay;
+  }
+
+  function recurrenceText(value) {
+    const recurrence = normalizedRecurrence(value);
+    if (!recurrence) return "Custom";
+    if (recurrence.kind === "interval") {
+      if (recurrence.interval === 1) return recurrence.unit === "week" ? "Every week" : "Every day";
+      return `Every ${recurrence.interval} ${recurrence.unit}${recurrence.interval === 1 ? "" : "s"}`;
+    }
+    if (recurrence.kind === "monthlyDay") {
+      const cadence = recurrence.interval === 1 ? "Monthly" : `Every ${recurrence.interval} months`;
+      return `${cadence} on day ${recurrence.dayOfMonth}${recurrence.dayOfMonth >= 29 ? " (last day in shorter months)" : ""}`;
+    }
+    const ordinal = ({ "-1": "Last", 1: "First", 2: "Second", 3: "Third", 4: "Fourth" })[recurrence.ordinal];
+    const weekday = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][recurrence.weekday - 1];
+    return `${ordinal} ${weekday} ${recurrence.interval === 1 ? "monthly" : `every ${recurrence.interval} months`}`;
+  }
+
+  function nextScheduledDates(item, startingAt = new Date(), count = 5) {
+    let cursor = startOfDay(startingAt);
+    const firstActive = startOfDay(new Date(item.startDate || item.createdAt || startingAt));
+    if (cursor < firstActive) cursor = firstActive;
+    const dates = [];
+    for (let inspected = 0; dates.length < count && inspected < 20_000; inspected += 1) {
+      if (item.endedAt && cursor >= startOfDay(new Date(item.endedAt))) break;
+      if (occursOnDate(item, cursor)) dates.push(new Date(cursor));
+      cursor = addDays(cursor, 1);
+    }
+    return dates;
   }
 
   function normalizedScheduleRevision(value) {
@@ -185,6 +269,7 @@
   function normalizeChecklistItems(items) {
     return (Array.isArray(items) ? items : []).map((item) => {
       item.scheduleRevision = normalizedScheduleRevision(item.scheduleRevision);
+      item.recurrence = normalizedRecurrence(item.recurrence);
       item.occurrences = Object.fromEntries(
         occurrenceRecords(item).map((record) => [record.id, record.occurrence])
       );
@@ -407,6 +492,7 @@
 
   function isScheduledOnDate(item, date) {
     if (!isActiveOnDate(item, date)) return false;
+    if (normalizedRecurrence(item.recurrence)) return recurrenceMatchesDate(item.recurrence, date);
     const day = startOfDay(date);
     const weekday = day.getDay() + 1;
     if (item.schedule === "weekdays") return weekday >= 2 && weekday <= 6;
@@ -694,6 +780,7 @@
   }
 
   function scheduleText(item) {
+    if (normalizedRecurrence(item.recurrence)) return recurrenceText(item.recurrence);
     if (item.schedule === "weekdays") return "Weekdays";
     if (item.schedule === "weekends") return "Weekends";
     if (item.schedule === "custom") {
@@ -951,7 +1038,115 @@
     const end = source.endedAt ? dateKey(addDays(new Date(source.endedAt), -1)) : "";
     const time = source.reminderMinutes == null ? "" :
       `${String(Math.floor(source.reminderMinutes / 60)).padStart(2, "0")}:${String(source.reminderMinutes % 60).padStart(2, "0")}`;
-    return { ...source, quantity: quantity(source), start, end, time };
+    return {
+      ...source,
+      quantity: quantity(source),
+      start,
+      end,
+      time,
+      scheduleMode: scheduleModeForItem(source),
+      recurrence: normalizedRecurrence(source.recurrence)
+    };
+  }
+
+  function scheduleModeForItem(item = {}) {
+    const recurrence = normalizedRecurrence(item.recurrence);
+    if (recurrence) return recurrence.kind;
+    return ["everyDay", "weekdays", "weekends", "custom"].includes(item.schedule) ? item.schedule : "everyDay";
+  }
+
+  function defaultRecurrence(mode, anchorDate = dateKey(new Date())) {
+    if (mode === "interval") return { kind: "interval", interval: 2, anchorDate, unit: "day" };
+    if (mode === "monthlyDay") {
+      return { kind: "monthlyDay", interval: 1, anchorDate, dayOfMonth: dateFromInput(anchorDate)?.getDate() || 1 };
+    }
+    return {
+      kind: "monthlyOrdinal",
+      interval: 1,
+      anchorDate,
+      ordinal: 1,
+      weekday: (dateFromInput(anchorDate)?.getDay() ?? 0) + 1
+    };
+  }
+
+  function recurrenceFromForm(form) {
+    const data = new FormData(form);
+    const mode = String(data.get("schedule"));
+    if (!["interval", "monthlyDay", "monthlyOrdinal"].includes(mode)) return null;
+    const interval = Number(data.get("recurrenceInterval"));
+    const anchorDate = String(data.get("recurrenceAnchor") || dateKey(new Date()));
+    if (mode === "interval") {
+      return normalizedRecurrence({ kind: mode, interval, anchorDate, unit: String(data.get("intervalUnit") || "day") });
+    }
+    if (mode === "monthlyDay") {
+      return normalizedRecurrence({ kind: mode, interval, anchorDate, dayOfMonth: Number(data.get("dayOfMonth")) });
+    }
+    return normalizedRecurrence({
+      kind: mode,
+      interval,
+      anchorDate,
+      ordinal: Number(data.get("ordinal")),
+      weekday: Number(data.get("ordinalWeekday"))
+    });
+  }
+
+  function resetEditorRecurrenceControls(form, mode) {
+    if (!["interval", "monthlyDay", "monthlyOrdinal"].includes(mode)) return;
+    const anchorDate = String(form.elements.startDate.value || dateKey(new Date()));
+    const recurrence = defaultRecurrence(mode, anchorDate);
+    form.elements.recurrenceInterval.value = String(recurrence.interval);
+    form.elements.recurrenceAnchor.value = recurrence.anchorDate;
+    form.elements.intervalUnit.value = recurrence.unit || "day";
+    form.elements.dayOfMonth.value = String(recurrence.dayOfMonth || dateFromInput(anchorDate)?.getDate() || 1);
+    form.elements.ordinal.value = String(recurrence.ordinal || 1);
+    form.elements.ordinalWeekday.value = String(recurrence.weekday || 1);
+  }
+
+  function updateEditorScheduleControls(form) {
+    if (!form) return;
+    const mode = form.elements.schedule.value;
+    const advanced = ["interval", "monthlyDay", "monthlyOrdinal"].includes(mode);
+    form.querySelector("[data-custom-days]").hidden = mode !== "custom";
+    form.querySelector("[data-carryover-behavior]").hidden = mode === "everyDay";
+    form.querySelector("[data-recurrence-options]").hidden = !advanced;
+    form.querySelector("[data-interval-unit]").hidden = mode !== "interval";
+    form.querySelector("[data-month-cadence]").hidden = !["monthlyDay", "monthlyOrdinal"].includes(mode);
+    form.querySelector("[data-month-day]").hidden = mode !== "monthlyDay";
+    form.querySelector("[data-month-ordinal]").hidden = mode !== "monthlyOrdinal";
+
+    const intervalInput = form.elements.recurrenceInterval;
+    if (intervalInput) {
+      const maximum = mode === "interval"
+        ? (form.elements.intervalUnit.value === "week" ? 52 : 365)
+        : 24;
+      intervalInput.max = String(maximum);
+      if (Number(intervalInput.value) > maximum) intervalInput.value = String(maximum);
+      if (Number(intervalInput.value) < 1) intervalInput.value = "1";
+    }
+
+    const recurrence = recurrenceFromForm(form);
+    const data = new FormData(form);
+    const persistedSchedule = advanced ? "custom" : mode;
+    const item = {
+      ...(state.modal?.item || {}),
+      schedule: persistedSchedule,
+      customWeekdays: mode === "custom"
+        ? [...form.querySelectorAll(".weekday.active")].map((button) => Number(button.dataset.day))
+        : [],
+      recurrence,
+      createdAt: state.modal?.item?.createdAt || new Date().toISOString(),
+      startDate: localISO(data.get("startDate")),
+      endedAt: dateFromInput(data.get("endDate")) ? addDays(dateFromInput(data.get("endDate")), 1).toISOString() : null
+    };
+    const summary = form.querySelector("[data-schedule-summary]");
+    const dates = form.querySelector("[data-schedule-dates]");
+    if (summary) summary.textContent = scheduleText(item);
+    if (dates) {
+      const upcoming = nextScheduledDates(item, new Date(), 5);
+      dates.innerHTML = upcoming.length
+        ? upcoming.map((date) => `<span>${escapeHTML(date.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric", year: "numeric" }))}</span>`).join("")
+        : "<span>No upcoming occurrences within the active dates.</span>";
+    }
   }
 
   function renderModal() {
@@ -1029,22 +1224,48 @@
       </section></div>`;
     }
     const item = editorValues(state.modal.item);
-    const schedule = item.schedule || "everyDay";
+    const schedule = item.scheduleMode || "everyDay";
+    const advancedSchedule = ["interval","monthlyDay","monthlyOrdinal"].includes(schedule);
     const weekdays = new Set(item.customWeekdays || []);
-    return `<div class="scrim" data-action="close"><form class="modal" data-modal data-editor>
+    const recurrence = item.recurrence || defaultRecurrence(advancedSchedule ? schedule : "interval", item.start || dateKey(new Date()));
+    return `<div class="scrim" data-action="close"><form class="modal" data-modal data-editor data-schedule-mode="${schedule}">
       <h2>${state.modal.item ? "Edit item" : "New item"}</h2>
       <label class="field">Title<input name="title" required maxlength="120" value="${escapeHTML(item.title || "")}" autofocus></label>
       <label class="field">Notes<textarea name="notes" maxlength="2000">${escapeHTML(item.notes || "")}</textarea></label>
       <label class="field">Quantity<input name="quantity" type="number" min="1" max="99" step="1" inputmode="numeric" value="${item.quantity}"></label>
       <div class="field-row">
         <label class="field">Schedule<select name="schedule">
-          ${[["everyDay","Every day"],["weekdays","Weekdays"],["weekends","Weekends"],["custom","Custom"]].map(([value,label]) => `<option value="${value}" ${schedule === value ? "selected" : ""}>${label}</option>`).join("")}
+          ${[["everyDay","Every day"],["weekdays","Weekdays"],["weekends","Weekends"],["custom","Selected weekdays"],["interval","Every N days or weeks"],["monthlyDay","Day of month"],["monthlyOrdinal","Ordinal weekday"]].map(([value,label]) => `<option value="${value}" ${schedule === value ? "selected" : ""}>${label}</option>`).join("")}
         </select></label>
         <label class="field">Reminder<input name="reminder" type="time" value="${item.time}"></label>
       </div>
       <div class="field" data-custom-days ${schedule === "custom" ? "" : "hidden"}>
         Days
         <div class="weekdays">${["S","M","T","W","T","F","S"].map((label,index) => `<button type="button" class="weekday ${weekdays.has(index + 1) ? "active" : ""}" data-action="weekday" data-day="${index + 1}">${label}</button>`).join("")}</div>
+      </div>
+      <div class="recurrence-options" data-recurrence-options ${["interval","monthlyDay","monthlyOrdinal"].includes(schedule) ? "" : "hidden"}>
+        <div class="field-row">
+          <label class="field">Every<input name="recurrenceInterval" data-recurrence-control type="number" min="1" max="365" step="1" inputmode="numeric" value="${recurrence.interval}"></label>
+          <label class="field" data-interval-unit ${schedule === "interval" ? "" : "hidden"}>Unit<select name="intervalUnit" data-recurrence-control>
+            <option value="day" ${recurrence.unit !== "week" ? "selected" : ""}>Days</option>
+            <option value="week" ${recurrence.unit === "week" ? "selected" : ""}>Weeks</option>
+          </select></label>
+          <div class="field recurrence-unit-label" data-month-cadence ${["monthlyDay","monthlyOrdinal"].includes(schedule) ? "" : "hidden"}>Months</div>
+        </div>
+        <label class="field" data-month-day ${schedule === "monthlyDay" ? "" : "hidden"}>Day of month<input name="dayOfMonth" data-recurrence-control type="number" min="1" max="31" step="1" inputmode="numeric" value="${recurrence.dayOfMonth || 1}"></label>
+        <div class="field-row" data-month-ordinal ${schedule === "monthlyOrdinal" ? "" : "hidden"}>
+          <label class="field">Occurrence<select name="ordinal" data-recurrence-control>
+            ${[[-1,"Last"],[1,"First"],[2,"Second"],[3,"Third"],[4,"Fourth"]].map(([value,label]) => `<option value="${value}" ${(recurrence.ordinal ?? 1) === value ? "selected" : ""}>${label}</option>`).join("")}
+          </select></label>
+          <label class="field">Weekday<select name="ordinalWeekday" data-recurrence-control>
+            ${["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"].map((label,index) => `<option value="${index + 1}" ${(recurrence.weekday ?? (dateFromInput(item.start)?.getDay() ?? 0) + 1) === index + 1 ? "selected" : ""}>${label}</option>`).join("")}
+          </select></label>
+        </div>
+        <label class="field">Anchor date<input name="recurrenceAnchor" data-recurrence-control type="date" value="${recurrence.anchorDate}"></label>
+      </div>
+      <div class="schedule-preview">
+        <strong data-schedule-summary>${escapeHTML(scheduleText({ ...item, schedule: advancedSchedule ? "custom" : schedule, recurrence: advancedSchedule ? normalizedRecurrence(recurrence) : null }))}</strong>
+        <div data-schedule-dates></div>
       </div>
       <label class="carryover-option" data-carryover-behavior ${schedule === "everyDay" ? "hidden" : ""}>
         <input type="checkbox" name="keepUntilDone" data-carryover-manual="false" ${item.missedBehavior === "keepUntilDone" ? "checked" : ""}>
@@ -1068,6 +1289,7 @@
 
   function render() {
     hasSession() ? renderChecklist() : renderAuth();
+    updateEditorScheduleControls(app.querySelector("[data-editor]"));
   }
 
   function showToast(message) {
@@ -1963,6 +2185,7 @@
         notes: "",
         schedule: "everyDay",
         customWeekdays: [],
+        recurrence: null,
         reminderMinutes: null,
         quantity: 1,
         completedDates: [],
@@ -1984,7 +2207,7 @@
       state.items.push(item);
       state.pending.push(mutation("upsert", {
         itemID: item.id,
-        changedFields: ["title","notes","schedule","customWeekdays","reminderMinutes","quantity","skippedDates","openDates","createdAt","startDate","endedAt","groupID","sortOrder","pauseWindows","scheduleRevision","missedBehavior","carryoverStartDate","carryoverResolvedThroughDate"],
+        changedFields: ["title","notes","schedule","customWeekdays","recurrence","reminderMinutes","quantity","skippedDates","openDates","createdAt","startDate","endedAt","groupID","sortOrder","pauseWindows","scheduleRevision","missedBehavior","carryoverStartDate","carryoverResolvedThroughDate"],
         item
       }));
     }
@@ -2128,16 +2351,22 @@
     }
     const reminder = String(data.get("reminder") || "");
     const [hours, minutes] = reminder ? reminder.split(":").map(Number) : [null, null];
-    const customWeekdays = [...form.querySelectorAll(".weekday.active")].map((button) => Number(button.dataset.day));
+    const scheduleMode = String(data.get("schedule"));
+    const advancedSchedule = ["interval", "monthlyDay", "monthlyOrdinal"].includes(scheduleMode);
+    const schedule = advancedSchedule ? "custom" : scheduleMode;
+    const customWeekdays = scheduleMode === "custom"
+      ? [...form.querySelectorAll(".weekday.active")].map((button) => Number(button.dataset.day))
+      : [];
+    const recurrence = recurrenceFromForm(form);
     const startDate = localISO(data.get("startDate"));
     const lastDay = dateFromInput(data.get("endDate"));
     const endedAt = lastDay ? addDays(lastDay, 1).toISOString() : null;
     const parsedQuantity = Number(data.get("quantity"));
-    const schedule = String(data.get("schedule"));
-    const keepUntilDone = schedule !== "everyDay" && data.get("keepUntilDone") === "on";
+    const keepUntilDone = scheduleMode !== "everyDay" && data.get("keepUntilDone") === "on";
     const activeScheduleChanged = Boolean(existing && (
       schedule !== existing.schedule
       || JSON.stringify(customWeekdays) !== JSON.stringify(existing.customWeekdays || [])
+      || JSON.stringify(recurrence) !== JSON.stringify(normalizedRecurrence(existing.recurrence))
       || String(data.get("startDate") || "") !== previousEditorValues.start
       || nextEndDate !== previousEditorValues.end
     ));
@@ -2159,6 +2388,7 @@
       notes: String(data.get("notes") || "").trim(),
       schedule,
       customWeekdays,
+      recurrence,
       reminderMinutes: reminder ? hours * 60 + minutes : null,
       quantity: Number.isInteger(parsedQuantity) ? Math.min(Math.max(1, parsedQuantity), 99) : 1,
       completedDates: existing?.completedDates || [],
@@ -2185,10 +2415,11 @@
     state.modal = null;
     queue(mutation("upsert", {
       itemID: item.id,
-      changedFields: ["title","notes","schedule","customWeekdays","reminderMinutes","quantity","skippedDates","openDates","createdAt","startDate","endedAt","groupID","sortOrder","pauseWindows","scheduleRevision","missedBehavior","carryoverStartDate","carryoverResolvedThroughDate"],
+      changedFields: ["title","notes","schedule","customWeekdays","recurrence","reminderMinutes","quantity","skippedDates","openDates","createdAt","startDate","endedAt","groupID","sortOrder","pauseWindows","scheduleRevision","missedBehavior","carryoverStartDate","carryoverResolvedThroughDate"],
       item: {
         title: item.title, notes: item.notes, schedule: item.schedule,
-        customWeekdays: item.customWeekdays, reminderMinutes: item.reminderMinutes, quantity: item.quantity,
+        customWeekdays: item.customWeekdays, recurrence: item.recurrence,
+        reminderMinutes: item.reminderMinutes, quantity: item.quantity,
         skippedDates: item.skippedDates, openDates: item.openDates,
         createdAt: item.createdAt, startDate: item.startDate, endedAt: item.endedAt,
         groupID: item.groupID, sortOrder: item.sortOrder, pauseWindows: item.pauseWindows,
@@ -2280,6 +2511,7 @@
         && keepVisible?.dataset.carryoverManual !== "true") {
         keepVisible.checked = form.querySelectorAll(".weekday.active").length <= 1;
       }
+      updateEditorScheduleControls(form);
     }
     if (action === "end-item") {
       requestEndItem(state.modal.item);
@@ -2314,19 +2546,30 @@
     }
     if (event.target.name === "schedule") {
       const form = event.target.closest("form");
-      const custom = form.querySelector("[data-custom-days]");
       const carryover = form.querySelector("[data-carryover-behavior]");
       const keepVisible = carryover.querySelector("input[name='keepUntilDone']");
-      custom.hidden = event.target.value !== "custom";
-      carryover.hidden = event.target.value === "everyDay";
-      if (!state.modal?.item && keepVisible.dataset.carryoverManual !== "true") {
-        keepVisible.checked = event.target.value === "custom"
-          && form.querySelectorAll(".weekday.active").length <= 1;
+      if (form.dataset.scheduleMode !== event.target.value) {
+        resetEditorRecurrenceControls(form, event.target.value);
+        form.dataset.scheduleMode = event.target.value;
       }
+      if (!state.modal?.item && keepVisible.dataset.carryoverManual !== "true") {
+        keepVisible.checked = ["interval", "monthlyDay", "monthlyOrdinal"].includes(event.target.value)
+          || (event.target.value === "custom" && form.querySelectorAll(".weekday.active").length <= 1);
+      }
+      updateEditorScheduleControls(form);
+      return;
+    }
+    if (event.target.matches("[data-recurrence-control]")
+      || ["startDate", "endDate"].includes(event.target.name)) {
+      updateEditorScheduleControls(event.target.closest("form"));
     }
   });
 
   app.addEventListener("input", (event) => {
+    if (event.target.matches("[data-recurrence-control]")) {
+      updateEditorScheduleControls(event.target.closest("form"));
+      return;
+    }
     if (!event.target.matches("[data-search]")) return;
     state.search = event.target.value;
     render();

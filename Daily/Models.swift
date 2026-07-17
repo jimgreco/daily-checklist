@@ -22,6 +22,227 @@ enum ScheduleKind: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+struct RecurrenceRule: Codable, Hashable {
+    enum Kind: String, Codable, CaseIterable, Identifiable {
+        case interval
+        case monthlyDay
+        case monthlyOrdinal
+
+        var id: String { rawValue }
+    }
+
+    enum IntervalUnit: String, Codable, CaseIterable, Identifiable {
+        case day
+        case week
+
+        var id: String { rawValue }
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case kind
+        case interval
+        case anchorDate
+        case unit
+        case dayOfMonth
+        case ordinal
+        case weekday
+    }
+
+    var kind: Kind
+    var interval: Int
+    var anchorDate: String
+    var unit: IntervalUnit?
+    var dayOfMonth: Int?
+    var ordinal: Int?
+    var weekday: Int?
+
+    init(
+        kind: Kind,
+        interval: Int = 1,
+        anchorDate: String = DateKey.string(from: .now),
+        unit: IntervalUnit? = nil,
+        dayOfMonth: Int? = nil,
+        ordinal: Int? = nil,
+        weekday: Int? = nil
+    ) {
+        self.kind = kind
+        self.interval = Self.normalizedInterval(interval, for: kind, unit: unit)
+        self.anchorDate = DateKey.date(from: anchorDate) == nil ? DateKey.string(from: .now) : anchorDate
+        self.unit = kind == .interval ? (unit ?? .day) : nil
+        self.dayOfMonth = kind == .monthlyDay ? min(max(1, dayOfMonth ?? 1), 31) : nil
+        self.ordinal = kind == .monthlyOrdinal && Self.validOrdinals.contains(ordinal ?? 1) ? (ordinal ?? 1) : (kind == .monthlyOrdinal ? 1 : nil)
+        self.weekday = kind == .monthlyOrdinal ? min(max(1, weekday ?? 1), 7) : nil
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let kind = try container.decode(Kind.self, forKey: .kind)
+        let unit = try container.decodeIfPresent(IntervalUnit.self, forKey: .unit)
+        self.init(
+            kind: kind,
+            interval: try container.decodeIfPresent(Int.self, forKey: .interval) ?? 1,
+            anchorDate: try container.decodeIfPresent(String.self, forKey: .anchorDate) ?? DateKey.string(from: .now),
+            unit: unit,
+            dayOfMonth: try container.decodeIfPresent(Int.self, forKey: .dayOfMonth),
+            ordinal: try container.decodeIfPresent(Int.self, forKey: .ordinal),
+            weekday: try container.decodeIfPresent(Int.self, forKey: .weekday)
+        )
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(kind, forKey: .kind)
+        try container.encode(interval, forKey: .interval)
+        try container.encode(anchorDate, forKey: .anchorDate)
+        try container.encodeIfPresent(unit, forKey: .unit)
+        try container.encodeIfPresent(dayOfMonth, forKey: .dayOfMonth)
+        try container.encodeIfPresent(ordinal, forKey: .ordinal)
+        try container.encodeIfPresent(weekday, forKey: .weekday)
+    }
+
+    static func every(_ interval: Int, unit: IntervalUnit, anchoredOn date: Date = .now) -> RecurrenceRule {
+        RecurrenceRule(
+            kind: .interval,
+            interval: interval,
+            anchorDate: DateKey.string(from: date),
+            unit: unit
+        )
+    }
+
+    static func monthly(
+        every interval: Int = 1,
+        dayOfMonth: Int,
+        anchoredOn date: Date = .now
+    ) -> RecurrenceRule {
+        RecurrenceRule(
+            kind: .monthlyDay,
+            interval: interval,
+            anchorDate: DateKey.string(from: date),
+            dayOfMonth: dayOfMonth
+        )
+    }
+
+    static func monthly(
+        every interval: Int = 1,
+        ordinal: Int,
+        weekday: Int,
+        anchoredOn date: Date = .now
+    ) -> RecurrenceRule {
+        RecurrenceRule(
+            kind: .monthlyOrdinal,
+            interval: interval,
+            anchorDate: DateKey.string(from: date),
+            ordinal: ordinal,
+            weekday: weekday
+        )
+    }
+
+    func isScheduled(on date: Date, calendar: Calendar = .current) -> Bool {
+        let calendar = Self.gregorianCalendar(matching: calendar)
+        let day = calendar.startOfDay(for: date)
+        guard let anchor = DateKey.date(from: anchorDate, calendar: calendar), day >= anchor else { return false }
+
+        switch kind {
+        case .interval:
+            let days = calendar.dateComponents([.day], from: anchor, to: day).day ?? -1
+            let multiplier = unit == .week ? 7 : 1
+            return days >= 0 && days.isMultiple(of: max(1, interval * multiplier))
+
+        case .monthlyDay, .monthlyOrdinal:
+            let anchorParts = calendar.dateComponents([.year, .month], from: anchor)
+            let dayParts = calendar.dateComponents([.year, .month, .day], from: day)
+            guard let anchorYear = anchorParts.year,
+                  let anchorMonth = anchorParts.month,
+                  let year = dayParts.year,
+                  let month = dayParts.month,
+                  let dayNumber = dayParts.day else { return false }
+            let elapsedMonths = (year - anchorYear) * 12 + month - anchorMonth
+            guard elapsedMonths >= 0, elapsedMonths.isMultiple(of: max(1, interval)) else { return false }
+            guard let daysInMonth = calendar.range(of: .day, in: .month, for: day)?.count else { return false }
+
+            if kind == .monthlyDay {
+                return dayNumber == min(dayOfMonth ?? 1, daysInMonth)
+            }
+
+            guard let weekday, let ordinal else { return false }
+            let expectedDay: Int?
+            if ordinal == -1 {
+                var lastComponents = DateComponents()
+                lastComponents.calendar = calendar
+                lastComponents.timeZone = calendar.timeZone
+                lastComponents.year = year
+                lastComponents.month = month
+                lastComponents.day = daysInMonth
+                guard let lastDate = calendar.date(from: lastComponents) else { return false }
+                let lastWeekday = calendar.component(.weekday, from: lastDate)
+                expectedDay = daysInMonth - (lastWeekday - weekday + 7) % 7
+            } else {
+                var firstComponents = DateComponents()
+                firstComponents.calendar = calendar
+                firstComponents.timeZone = calendar.timeZone
+                firstComponents.year = year
+                firstComponents.month = month
+                firstComponents.day = 1
+                guard let firstDate = calendar.date(from: firstComponents) else { return false }
+                let firstWeekday = calendar.component(.weekday, from: firstDate)
+                let candidate = 1 + (weekday - firstWeekday + 7) % 7 + (ordinal - 1) * 7
+                expectedDay = candidate <= daysInMonth ? candidate : nil
+            }
+            return expectedDay == dayNumber
+        }
+    }
+
+    var summary: String {
+        switch kind {
+        case .interval:
+            let unitName = unit == .week ? "week" : "day"
+            if interval == 1 {
+                return unit == .week ? "Every week" : "Every day"
+            }
+            return "Every \(interval) \(unitName)s"
+        case .monthlyDay:
+            let cadence = interval == 1 ? "Monthly" : "Every \(interval) months"
+            let day = dayOfMonth ?? 1
+            return day >= 29
+                ? "\(cadence) on day \(day) (last day in shorter months)"
+                : "\(cadence) on day \(day)"
+        case .monthlyOrdinal:
+            let cadence = interval == 1 ? "monthly" : "every \(interval) months"
+            let ordinalName = Self.ordinalNames[ordinal ?? 1] ?? "First"
+            let weekdayName = Self.weekdayNames[min(max(1, weekday ?? 1), 7) - 1]
+            return "\(ordinalName) \(weekdayName) \(cadence)"
+        }
+    }
+
+    var normalized: RecurrenceRule {
+        RecurrenceRule(
+            kind: kind,
+            interval: interval,
+            anchorDate: anchorDate,
+            unit: unit,
+            dayOfMonth: dayOfMonth,
+            ordinal: ordinal,
+            weekday: weekday
+        )
+    }
+
+    static let validOrdinals: Set<Int> = [-1, 1, 2, 3, 4]
+    static let ordinalNames: [Int: String] = [-1: "Last", 1: "First", 2: "Second", 3: "Third", 4: "Fourth"]
+    static let weekdayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
+
+    private static func normalizedInterval(_ value: Int, for kind: Kind, unit: IntervalUnit?) -> Int {
+        let maximum = kind == .interval ? (unit == .week ? 52 : 365) : 24
+        return min(max(1, value), maximum)
+    }
+
+    private static func gregorianCalendar(matching source: Calendar) -> Calendar {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.locale = Locale(identifier: "en_US_POSIX")
+        calendar.timeZone = source.timeZone
+        return calendar
+    }
+}
+
 enum MissedOccurrenceBehavior: String, Codable, CaseIterable, Identifiable {
     case markMissed
     case keepUntilDone
@@ -354,6 +575,7 @@ struct ChecklistItem: Identifiable, Codable, Hashable {
         case notes
         case schedule
         case customWeekdays
+        case recurrence
         case reminderMinutes
         case quantity
         case completedDates
@@ -378,6 +600,7 @@ struct ChecklistItem: Identifiable, Codable, Hashable {
     var notes: String
     var schedule: ScheduleKind
     var customWeekdays: Set<Int>
+    var recurrence: RecurrenceRule?
     var reminderMinutes: Int?
     var quantity: Int
     var completedDates: Set<String>
@@ -402,6 +625,7 @@ struct ChecklistItem: Identifiable, Codable, Hashable {
         notes: String = "",
         schedule: ScheduleKind = .everyDay,
         customWeekdays: Set<Int> = [],
+        recurrence: RecurrenceRule? = nil,
         reminderMinutes: Int? = nil,
         quantity: Int = 1,
         completedDates: Set<String> = [],
@@ -425,6 +649,7 @@ struct ChecklistItem: Identifiable, Codable, Hashable {
         self.notes = notes
         self.schedule = schedule
         self.customWeekdays = customWeekdays
+        self.recurrence = recurrence
         self.reminderMinutes = reminderMinutes
         self.quantity = Self.normalizedQuantity(quantity)
         self.completedDates = completedDates
@@ -451,6 +676,7 @@ struct ChecklistItem: Identifiable, Codable, Hashable {
         notes = try container.decodeIfPresent(String.self, forKey: .notes) ?? ""
         schedule = try container.decodeIfPresent(ScheduleKind.self, forKey: .schedule) ?? .everyDay
         customWeekdays = try container.decodeIfPresent(Set<Int>.self, forKey: .customWeekdays) ?? []
+        recurrence = try container.decodeIfPresent(RecurrenceRule.self, forKey: .recurrence)
         reminderMinutes = try container.decodeIfPresent(Int.self, forKey: .reminderMinutes)
         quantity = Self.normalizedQuantity(try container.decodeIfPresent(Int.self, forKey: .quantity) ?? 1)
         completedDates = try container.decodeIfPresent(Set<String>.self, forKey: .completedDates) ?? []
@@ -570,6 +796,9 @@ struct ChecklistItem: Identifiable, Codable, Hashable {
 
     func isScheduled(on date: Date, calendar: Calendar = .current) -> Bool {
         guard isActive(on: date, calendar: calendar) else { return false }
+        if let recurrence {
+            return recurrence.isScheduled(on: date, calendar: calendar)
+        }
         let weekday = calendar.component(.weekday, from: date)
         switch schedule {
         case .everyDay: return true
@@ -776,11 +1005,36 @@ struct ChecklistItem: Identifiable, Codable, Hashable {
     }
 
     var scheduleSummary: String {
+        if let recurrence { return recurrence.summary }
         guard schedule == .custom else { return schedule.title }
         return (1...7)
             .filter(customWeekdays.contains)
             .map { WeekdayAbbreviation.twoLetter[$0 - 1] }
             .joined(separator: " · ")
+    }
+
+    func nextScheduledDates(
+        startingAt date: Date = .now,
+        count: Int = 5,
+        calendar: Calendar = .current
+    ) -> [Date] {
+        guard count > 0 else { return [] }
+        var cursor = max(
+            calendar.startOfDay(for: date),
+            calendar.startOfDay(for: startDate ?? createdAt)
+        )
+        var dates: [Date] = []
+        var inspectedDays = 0
+        while dates.count < count, inspectedDays < 20_000 {
+            if let endedAt, cursor >= calendar.startOfDay(for: endedAt) { break }
+            if occurs(on: cursor, calendar: calendar) {
+                dates.append(cursor)
+            }
+            guard let next = calendar.date(byAdding: .day, value: 1, to: cursor) else { break }
+            cursor = next
+            inspectedDays += 1
+        }
+        return dates
     }
 
     mutating func delay(from date: Date, calendar: Calendar = .current) throws -> ChecklistDateMoveChange {
@@ -959,6 +1213,7 @@ struct ItemPayload: Codable {
         case notes
         case schedule
         case customWeekdays
+        case recurrence
         case reminderMinutes
         case quantity
         case skippedDates
@@ -980,6 +1235,7 @@ struct ItemPayload: Codable {
     var notes: String
     var schedule: ScheduleKind
     var customWeekdays: Set<Int>
+    var recurrence: RecurrenceRule?
     var reminderMinutes: Int?
     var quantity: Int
     var skippedDates: Set<String>
@@ -1001,6 +1257,7 @@ struct ItemPayload: Codable {
         notes: String,
         schedule: ScheduleKind,
         customWeekdays: Set<Int>,
+        recurrence: RecurrenceRule? = nil,
         reminderMinutes: Int?,
         quantity: Int,
         skippedDates: Set<String>,
@@ -1021,6 +1278,7 @@ struct ItemPayload: Codable {
         self.notes = notes
         self.schedule = schedule
         self.customWeekdays = customWeekdays
+        self.recurrence = recurrence
         self.reminderMinutes = reminderMinutes
         self.quantity = min(max(1, quantity), 99)
         self.skippedDates = skippedDates
@@ -1044,6 +1302,7 @@ struct ItemPayload: Codable {
         notes = try container.decodeIfPresent(String.self, forKey: .notes) ?? ""
         schedule = try container.decodeIfPresent(ScheduleKind.self, forKey: .schedule) ?? .everyDay
         customWeekdays = try container.decodeIfPresent(Set<Int>.self, forKey: .customWeekdays) ?? []
+        recurrence = try container.decodeIfPresent(RecurrenceRule.self, forKey: .recurrence)
         reminderMinutes = try container.decodeIfPresent(Int.self, forKey: .reminderMinutes)
         quantity = min(max(1, try container.decodeIfPresent(Int.self, forKey: .quantity) ?? 1), 99)
         skippedDates = try container.decodeIfPresent(Set<String>.self, forKey: .skippedDates) ?? []
@@ -1132,6 +1391,7 @@ struct SyncMutation: Identifiable, Codable {
                 notes: item.notes,
                 schedule: item.schedule,
                 customWeekdays: item.customWeekdays,
+                recurrence: item.recurrence,
                 reminderMinutes: item.reminderMinutes,
                 quantity: item.quantity,
                 skippedDates: item.skippedDates,
@@ -1304,6 +1564,7 @@ enum DateKey {
         formatter.calendar = Calendar(identifier: .gregorian)
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyy-MM-dd"
+        formatter.isLenient = false
         return formatter
     }()
 
@@ -1313,5 +1574,23 @@ enum DateKey {
 
     static func date(from key: String) -> Date? {
         formatter.date(from: key)
+    }
+
+    static func date(from key: String, calendar: Calendar) -> Date? {
+        let parts = key.split(separator: "-")
+        guard parts.count == 3,
+              let year = Int(parts[0]),
+              let month = Int(parts[1]),
+              let day = Int(parts[2]) else { return nil }
+        var components = DateComponents()
+        components.calendar = calendar
+        components.timeZone = calendar.timeZone
+        components.year = year
+        components.month = month
+        components.day = day
+        guard let date = calendar.date(from: components) else { return nil }
+        let roundTrip = calendar.dateComponents([.year, .month, .day], from: date)
+        guard roundTrip.year == year, roundTrip.month == month, roundTrip.day == day else { return nil }
+        return calendar.startOfDay(for: date)
     }
 }
