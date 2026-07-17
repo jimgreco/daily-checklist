@@ -313,6 +313,62 @@ jobs:
           done
           xcodebuild -version
 
+      - name: Prepare iOS simulator
+        id: simulator
+        run: |
+          set -euo pipefail
+
+          simulator_sdk_version=$(xcrun --sdk iphonesimulator --show-sdk-version)
+          echo "iPhoneSimulator SDK version: $simulator_sdk_version"
+          if ! xcrun simctl list runtimes | grep -q "iOS $simulator_sdk_version"; then
+            echo "Matching iOS simulator runtime is missing; downloading iOS platform."
+            sudo xcodebuild -downloadPlatform iOS
+          fi
+          export SIMULATOR_SDK_VERSION="$simulator_sdk_version"
+
+          runtime=$(xcrun simctl list runtimes --json | ruby -rjson -e '
+            def version_key(value)
+              value.to_s.scan(/\d+/).map(&:to_i)
+            end
+
+            runtimes = JSON.parse(STDIN.read).fetch("runtimes").select do |candidate|
+              candidate["isAvailable"] && candidate["platform"] == "iOS"
+            end
+            matching = runtimes.select do |candidate|
+              candidate["version"].to_s == ENV.fetch("SIMULATOR_SDK_VERSION")
+            end
+            selected = matching.max_by { |candidate| version_key(candidate["version"]) }
+            selected ||= runtimes.max_by { |candidate| version_key(candidate["version"]) }
+            abort("No available iOS simulator runtime found") unless selected
+            puts selected.fetch("identifier")
+          ')
+
+          device_type=$(xcrun simctl list devicetypes --json | ruby -rjson -e '
+            types = JSON.parse(STDIN.read).fetch("devicetypes").select do |candidate|
+              candidate["name"].to_s.include?("iPhone")
+            end
+            preferred = [
+              "com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro",
+              "com.apple.CoreSimulator.SimDeviceType.iPhone-17",
+              "com.apple.CoreSimulator.SimDeviceType.iPhone-16-Pro",
+              "com.apple.CoreSimulator.SimDeviceType.iPhone-16",
+              "com.apple.CoreSimulator.SimDeviceType.iPhone-15-Pro",
+              "com.apple.CoreSimulator.SimDeviceType.iPhone-15"
+            ]
+            selected = preferred.map do |identifier|
+              types.find { |candidate| candidate["identifier"] == identifier }
+            end.compact.first
+            selected ||= types.reverse.find { |candidate| candidate["name"].to_s.include?("Pro") }
+            selected ||= types.last
+            abort("No iPhone simulator device type found") unless selected
+            puts selected.fetch("identifier")
+          ')
+
+          udid=$(xcrun simctl create "Ritual Cue CI" "$device_type" "$runtime")
+          xcrun simctl boot "$udid" || true
+          xcrun simctl bootstatus "$udid" -b
+          echo "destination=platform=iOS Simulator,id=$udid" >> "$GITHUB_OUTPUT"
+
       - name: Validate release configuration
         env:
           API_BASE_URL: ${{ secrets.IOS_API_BASE_URL }}
@@ -349,7 +405,7 @@ jobs:
             -scheme Daily \
             -configuration Debug \
             -sdk iphonesimulator \
-            -destination 'platform=iOS Simulator,name=iPhone 17 Pro Max,OS=latest' \
+            -destination '${{ steps.simulator.outputs.destination }}' \
             CODE_SIGNING_ALLOWED=NO \
             API_BASE_URL="$API_BASE_URL" \
             GOOGLE_CLIENT_ID="$GOOGLE_CLIENT_ID" \
