@@ -48,6 +48,46 @@ test("shows a calm, private low-data insights state", async ({ page }) => {
   await expect(page.getByText(/Nothing is sent to an analytics service/)).toBeVisible();
 });
 
+test("configures synced reminder follow-ups and account quiet hours", async ({ page }) => {
+  const title = `E2E medication reminder ${Date.now()}`;
+  await signIn(page);
+  await page.getByRole("button", { name: "Add checklist item" }).click();
+  await page.getByLabel("Title").fill(title);
+
+  const followUp = page.getByLabel("Follow up if unfinished", { exact: false });
+  await expect(followUp).toBeHidden();
+  await page.getByLabel("Reminder", { exact: true }).fill("09:00");
+  await expect(followUp).toBeVisible();
+  await followUp.check();
+  await page.getByLabel("Remind again after").selectOption("30");
+  await page.getByLabel("Maximum follow-ups").selectOption("3");
+  await saveEditor(page);
+
+  await expect(task(page, title)).toContainText("3 follow-ups");
+  let cached = await page.evaluate(() => JSON.parse(localStorage.getItem("dailyWeb.cache")));
+  expect(cached.items.find((item) => item.title === title).followUpPolicy).toEqual({
+    delayMinutes: 30,
+    maximumCount: 3
+  });
+
+  await page.getByRole("button", { name: "Account" }).click();
+  const quietHours = page.getByLabel("Quiet hours", { exact: false });
+  await expect(quietHours).not.toBeChecked();
+  await Promise.all([waitForSync(page), quietHours.check()]);
+  await Promise.all([waitForSync(page), page.getByLabel("Quiet from").fill("21:30")]);
+  await Promise.all([waitForSync(page), page.getByLabel("Until", { exact: true }).fill("06:30")]);
+
+  cached = await page.evaluate(() => JSON.parse(localStorage.getItem("dailyWeb.cache")));
+  expect(cached.notificationQuietHours).toEqual({ startMinutes: 1290, endMinutes: 390 });
+  await page.getByRole("button", { name: "Done" }).click();
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "Ritual Cue" })).toBeVisible();
+  await page.getByRole("button", { name: "Account" }).click();
+  await expect(page.getByLabel("Quiet hours", { exact: false })).toBeChecked();
+  await expect(page.getByLabel("Quiet from")).toHaveValue("21:30");
+  await expect(page.getByLabel("Until", { exact: true })).toHaveValue("06:30");
+});
+
 async function saveEditor(page) {
   await Promise.all([
     waitForSync(page),
@@ -138,6 +178,7 @@ test("expired browser sessions preserve cached routines and pending changes for 
   expect(persisted.accountID).toBe("expired-session-user");
   expect(persisted.cache.items).toEqual([{
     ...cachedItem,
+    followUpPolicy: null,
     recurrence: null,
     scheduleRevision: 0,
     occurrences: {}

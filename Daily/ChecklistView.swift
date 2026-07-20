@@ -803,6 +803,15 @@ struct ChecklistView: View {
                         onPause: {
                             withAnimation(.snappy) { store.pause(entry.item) }
                         },
+                        onSnooze: { preset in
+                            store.snooze(
+                                itemID: entry.item.id,
+                                occurrenceDate: DateKey.date(from: entry.latestScheduledDateKey) ?? .now,
+                                occurrenceID: entry.latestOccurrenceID,
+                                isCarryover: true,
+                                preset: preset
+                            )
+                        },
                         onEdit: { editingItem = entry.item },
                         onHistory: { historyItem = entry.item }
                     )
@@ -1133,6 +1142,16 @@ struct ChecklistView: View {
                         onResume: { store.resume(item) },
                         onDelay: { delay(item) },
                         onBringForward: { bringForward(item) },
+                        onSnooze: { preset in
+                            store.snooze(
+                                itemID: item.id,
+                                occurrenceDate: store.selectedDate,
+                                occurrenceID: item.occurrenceID(
+                                    scheduledDate: DateKey.string(from: store.selectedDate)
+                                ),
+                                preset: preset
+                            )
+                        },
                         onHistory: { historyItem = item },
                         paused: store.isPaused(item, on: store.selectedDate),
                         allowsPermanentDelete: allowsPermanentDelete,
@@ -1167,6 +1186,16 @@ struct ChecklistView: View {
                         onResume: { store.resume(item) },
                         onDelay: { delay(item) },
                         onBringForward: { bringForward(item) },
+                        onSnooze: { preset in
+                            store.snooze(
+                                itemID: item.id,
+                                occurrenceDate: store.selectedDate,
+                                occurrenceID: item.occurrenceID(
+                                    scheduledDate: DateKey.string(from: store.selectedDate)
+                                ),
+                                preset: preset
+                            )
+                        },
                         onHistory: { historyItem = item },
                         paused: store.isPaused(item, on: store.selectedDate),
                         allowsPermanentDelete: allowsPermanentDelete,
@@ -1355,6 +1384,7 @@ private struct CarryoverRow: View {
     let onTomorrow: () -> Void
     let onSkip: () -> Void
     let onPause: () -> Void
+    let onSnooze: (ReminderSnoozePreset) -> Void
     let onEdit: () -> Void
     let onHistory: () -> Void
 
@@ -1447,6 +1477,13 @@ private struct CarryoverRow: View {
                 Button(action: onPause) {
                     Label("Pause 1 week", systemImage: "pause.circle")
                 }
+                if entry.item.reminderMinutes != nil {
+                    Menu {
+                        snoozeButtons
+                    } label: {
+                        Label("Snooze reminder", systemImage: "bell.badge")
+                    }
+                }
                 Divider()
                 Button(action: onEdit) {
                     Label("Edit", systemImage: "pencil")
@@ -1472,8 +1509,24 @@ private struct CarryoverRow: View {
             Button(action: onTomorrow) { Label("Tomorrow", systemImage: "sunrise") }
             Button(action: onSkip) { Label("Skip overdue occurrence", systemImage: "forward.end") }
             Button(action: onPause) { Label("Pause 1 week", systemImage: "pause.circle") }
+            if entry.item.reminderMinutes != nil {
+                snoozeButtons
+            }
             Button(action: onEdit) { Label("Edit", systemImage: "pencil") }
             Button(action: onHistory) { Label("History", systemImage: "calendar") }
+        }
+    }
+
+    @ViewBuilder
+    private var snoozeButtons: some View {
+        Button { onSnooze(.fifteenMinutes) } label: {
+            Label("Snooze 15 minutes", systemImage: "clock.badge")
+        }
+        Button { onSnooze(.oneHour) } label: {
+            Label("Snooze 1 hour", systemImage: "clock.badge")
+        }
+        Button { onSnooze(.tomorrowMorning) } label: {
+            Label("Snooze until tomorrow", systemImage: "sunrise")
         }
     }
 }
@@ -1491,6 +1544,7 @@ private struct ItemRow: View {
     let onResume: () -> Void
     let onDelay: () -> Void
     let onBringForward: () -> Void
+    let onSnooze: (ReminderSnoozePreset) -> Void
     let onHistory: () -> Void
     let paused: Bool
     let allowsPermanentDelete: Bool
@@ -1504,6 +1558,9 @@ private struct ItemRow: View {
     private var delayedDays: Int { item.delayedDays(asOf: date) }
     private var canBringForward: Bool {
         Calendar.current.startOfDay(for: date) > Calendar.current.startOfDay(for: .now)
+    }
+    private var canSnooze: Bool {
+        item.reminderMinutes != nil && Calendar.current.isDateInToday(date)
     }
 
     var body: some View {
@@ -1576,6 +1633,10 @@ private struct ItemRow: View {
                     Label(item.scheduleSummary, systemImage: "repeat")
                     if let minutes = item.reminderMinutes {
                         Label(timeString(minutes), systemImage: "bell.fill")
+                        if let followUp = item.followUpPolicy {
+                            Text("+\(followUp.maximumCount)")
+                                .accessibilityLabel("\(followUp.maximumCount) follow-up reminders")
+                        }
                     }
                 }
                 .font(.system(size: 12, weight: .medium))
@@ -1649,6 +1710,21 @@ private struct ItemRow: View {
                 }
                 Button(action: onSkip) {
                     Label("Skip today", systemImage: "forward.end")
+                }
+                if canSnooze {
+                    Menu {
+                        Button { onSnooze(.fifteenMinutes) } label: {
+                            Label("15 minutes", systemImage: "clock.badge")
+                        }
+                        Button { onSnooze(.oneHour) } label: {
+                            Label("1 hour", systemImage: "clock.badge")
+                        }
+                        Button { onSnooze(.tomorrowMorning) } label: {
+                            Label("Tomorrow morning", systemImage: "sunrise")
+                        }
+                    } label: {
+                        Label("Snooze reminder", systemImage: "bell.badge")
+                    }
                 }
             }
             if allowsPermanentDelete {

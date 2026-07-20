@@ -42,7 +42,10 @@ struct RitualCueApp: App {
                 }
                 .onChange(of: scenePhase) { _, phase in
                     guard phase == .active else { return }
-                    Task { await store.sync(using: authStore) }
+                    Task {
+                        await store.sync(using: authStore)
+                        await store.refreshNotificationSchedule()
+                    }
                 }
                 .onReceive(NotificationCenter.default.publisher(for: .ritualNotificationAction)) { notification in
                     guard let rawID = notification.userInfo?["itemID"] as? String,
@@ -79,12 +82,22 @@ struct RitualCueApp: App {
                         } else {
                             store.skip(itemID: itemID, on: date)
                         }
-                    case RitualNotificationAction.snooze:
+                    case RitualNotificationAction.snooze,
+                         RitualNotificationAction.snooze60:
                         store.snooze(
                             itemID: itemID,
                             occurrenceDate: date,
                             occurrenceID: occurrenceID,
-                            isCarryover: isCarryover
+                            isCarryover: isCarryover,
+                            preset: .oneHour
+                        )
+                    case RitualNotificationAction.snooze15:
+                        store.snooze(
+                            itemID: itemID,
+                            occurrenceDate: date,
+                            occurrenceID: occurrenceID,
+                            isCarryover: isCarryover,
+                            preset: .fifteenMinutes
                         )
                     default:
                         break

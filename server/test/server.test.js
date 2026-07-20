@@ -886,6 +886,7 @@ test("authenticated users can import valid exports and reject malformed exports"
             dayOfMonth: 31
           },
           reminderMinutes: 540,
+          followUpPolicy: { delayMinutes: 30, maximumCount: 3 },
           quantity: 2,
           scheduleRevision: 3,
           missedBehavior: "keepUntilDone",
@@ -920,7 +921,8 @@ test("authenticated users can import valid exports and reject malformed exports"
         notificationGroupFilter: {
           mode: "include",
           groupIDs: ["22222222-2222-4222-8222-222222222222"]
-        }
+        },
+        notificationQuietHours: { startMinutes: 1320, endMinutes: 420 }
       }
     })
   });
@@ -939,6 +941,7 @@ test("authenticated users can import valid exports and reject malformed exports"
     anchorDate: "2026-01-31",
     dayOfMonth: 31
   });
+  assert.deepEqual(imported.items[0].followUpPolicy, { delayMinutes: 30, maximumCount: 3 });
   assert.equal(imported.items[0].missedBehavior, "keepUntilDone");
   assert.equal(imported.items[0].carryoverStartDate, "2026-07-05");
   assert.equal(imported.items[0].carryoverResolvedThroughDate, "2026-07-04");
@@ -966,25 +969,30 @@ test("authenticated users can import valid exports and reject malformed exports"
     mode: "include",
     groupIDs: ["22222222-2222-4222-8222-222222222222"]
   });
+  assert.deepEqual(imported.notificationQuietHours, { startMinutes: 1320, endMinutes: 420 });
 
   const synced = await syncDevice(auth.token, "import-viewer");
   assert.equal(synced.items.length, 1);
   assert.equal(synced.items[0].title, "Restore me");
   assert.deepEqual(synced.items[0].occurrences, imported.items[0].occurrences);
   assert.deepEqual(synced.notificationGroupFilter, imported.notificationGroupFilter);
+  assert.deepEqual(synced.notificationQuietHours, imported.notificationQuietHours);
   assert.equal(synced.items.some((item) => item.title === "Replace me"), false);
 
   const exported = await fetch(`${baseURL}/api/export`, {
     headers: { authorization: `Bearer ${auth.token}` }
   });
   assert.equal(exported.status, 200);
-  const exportedItem = (await exported.json()).checklist.items[0];
+  const exportedChecklist = (await exported.json()).checklist;
+  const exportedItem = exportedChecklist.items[0];
   assert.equal(exportedItem.missedBehavior, "keepUntilDone");
   assert.equal(exportedItem.scheduleRevision, 3);
   assert.deepEqual(exportedItem.recurrence, imported.items[0].recurrence);
+  assert.deepEqual(exportedItem.followUpPolicy, imported.items[0].followUpPolicy);
   assert.equal(exportedItem.carryoverStartDate, "2026-07-05");
   assert.equal(exportedItem.carryoverResolvedThroughDate, "2026-07-04");
   assert.deepEqual(exportedItem.occurrences, imported.items[0].occurrences);
+  assert.deepEqual(exportedChecklist.notificationQuietHours, imported.notificationQuietHours);
 });
 
 test("two-client sync merges offline conflicts and preserves deletion tombstones", async () => {
@@ -1273,7 +1281,14 @@ test("Apple web authorization code sign-in requires server credentials", async (
 });
 
 function account() {
-  return { items: {}, groups: {}, appliedMutations: {}, eveningReminder: null, notificationGroupFilter: null };
+  return {
+    items: {},
+    groups: {},
+    appliedMutations: {},
+    eveningReminder: null,
+    notificationGroupFilter: null,
+    notificationQuietHours: null
+  };
 }
 
 function record(id, title, stamp = "2026-06-28T10:00:00.000Z") {
@@ -1373,6 +1388,42 @@ test("validates a sync request", () => {
       kind: "notificationGroupFilter",
       stamp: "2026-07-12T10:00:00.000Z",
       notificationGroupFilter: { mode: "sometimes", groupIDs: ["group-a"] }
+    }]
+  }), false);
+  assert.equal(validSyncRequest({
+    deviceID: "device-1234",
+    mutations: [{
+      id: "quiet-hours-ok",
+      kind: "notificationQuietHours",
+      stamp: "2026-07-20T10:00:00.000Z",
+      notificationQuietHours: { startMinutes: 1320, endMinutes: 420 }
+    }, {
+      id: "follow-up-ok",
+      itemID: "item-1",
+      kind: "upsert",
+      stamp: "2026-07-20T10:00:01.000Z",
+      changedFields: ["followUpPolicy"],
+      item: { followUpPolicy: { delayMinutes: 15, maximumCount: 5 } }
+    }]
+  }), true);
+  assert.equal(validSyncRequest({
+    deviceID: "device-1234",
+    mutations: [{
+      id: "quiet-hours-bad",
+      kind: "notificationQuietHours",
+      stamp: "2026-07-20T10:00:00.000Z",
+      notificationQuietHours: { startMinutes: 1440, endMinutes: 420 }
+    }]
+  }), false);
+  assert.equal(validSyncRequest({
+    deviceID: "device-1234",
+    mutations: [{
+      id: "follow-up-bad",
+      itemID: "item-1",
+      kind: "upsert",
+      stamp: "2026-07-20T10:00:00.000Z",
+      changedFields: ["followUpPolicy"],
+      item: { followUpPolicy: { delayMinutes: 4, maximumCount: 6 } }
     }]
   }), false);
 });
@@ -2299,6 +2350,54 @@ test("notification group filter syncs with last-writer wins", () => {
     mode: "exclude",
     groupIDs: ["group-morning", "group-night"]
   });
+});
+
+test("follow-up policies and quiet hours sync with field-level last-writer wins", () => {
+  const state = account();
+  applyMutation(state, {
+    id: "follow-up-initial",
+    itemID: "item-reminder",
+    kind: "upsert",
+    stamp: "2026-07-20T10:00:00.000Z",
+    changedFields: ["title", "reminderMinutes", "followUpPolicy"],
+    item: {
+      title: "Medication",
+      reminderMinutes: 540,
+      followUpPolicy: { delayMinutes: 30, maximumCount: 3 }
+    }
+  }, "device-a");
+  applyMutation(state, {
+    id: "follow-up-stale",
+    itemID: "item-reminder",
+    kind: "upsert",
+    stamp: "2026-07-20T09:59:00.000Z",
+    changedFields: ["followUpPolicy"],
+    item: { followUpPolicy: { delayMinutes: 60, maximumCount: 1 } }
+  }, "device-b");
+  applyMutation(state, {
+    id: "quiet-hours-initial",
+    kind: "notificationQuietHours",
+    stamp: "2026-07-20T10:00:00.000Z",
+    notificationQuietHours: { startMinutes: 1320, endMinutes: 420 }
+  }, "device-a");
+  applyMutation(state, {
+    id: "quiet-hours-latest",
+    kind: "notificationQuietHours",
+    stamp: "2026-07-20T10:05:00.000Z",
+    notificationQuietHours: { startMinutes: 1260, endMinutes: 360 }
+  }, "device-b");
+
+  const checklist = materializeAccount(state);
+  assert.deepEqual(checklist.items[0].followUpPolicy, { delayMinutes: 30, maximumCount: 3 });
+  assert.deepEqual(checklist.notificationQuietHours, { startMinutes: 1260, endMinutes: 360 });
+
+  applyMutation(state, {
+    id: "quiet-hours-disabled",
+    kind: "notificationQuietHours",
+    stamp: "2026-07-20T10:06:00.000Z",
+    notificationQuietHours: null
+  }, "device-a");
+  assert.equal(materializeAccount(state).notificationQuietHours, null);
 });
 
 test("equal timestamps use device ID as deterministic tie breaker", () => {

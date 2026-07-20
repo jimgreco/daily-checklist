@@ -15,6 +15,9 @@ struct AccountView: View {
     @State private var accountMessage: String?
     @State private var reminderEnabled = true
     @State private var reminderTime = Date.now
+    @State private var quietHoursEnabled = false
+    @State private var quietHoursStart = Date.now
+    @State private var quietHoursEnd = Date.now
     @State private var showingImportPicker = false
     @State private var showingImportConfirmation = false
     @State private var pendingImportData: Data?
@@ -163,6 +166,34 @@ struct AccountView: View {
                 ), displayedComponents: .hourAndMinute)
                 notificationGroupFilterControls
             }
+            Divider()
+            Toggle("Quiet hours", isOn: Binding(
+                get: { quietHoursEnabled },
+                set: { enabled in
+                    quietHoursEnabled = enabled
+                    saveQuietHours()
+                }
+            ))
+            if quietHoursEnabled {
+                DatePicker("Quiet from", selection: Binding(
+                    get: { quietHoursStart },
+                    set: { value in
+                        quietHoursStart = value
+                        saveQuietHours()
+                    }
+                ), displayedComponents: .hourAndMinute)
+                DatePicker("Until", selection: Binding(
+                    get: { quietHoursEnd },
+                    set: { value in
+                        quietHoursEnd = value
+                        saveQuietHours()
+                    }
+                ), displayedComponents: .hourAndMinute)
+                Text("Automatic follow-ups stop at the quiet-hours cutoff. Snoozes that land inside quiet hours move to the end time.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+            notificationSchedulingMessage
             Text("Ritual Cue will tell you how many scheduled tasks are still unfinished.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
@@ -369,6 +400,45 @@ struct AccountView: View {
         reminderEnabled = store.eveningReminderMinutes != nil
         let minutes = store.eveningReminderMinutes ?? 20 * 60
         reminderTime = Calendar.current.date(from: DateComponents(hour: minutes / 60, minute: minutes % 60)) ?? .now
+        let quietHours = store.notificationQuietHours ?? .standard
+        quietHoursEnabled = store.notificationQuietHours != nil
+        quietHoursStart = Calendar.current.date(from: DateComponents(
+            hour: quietHours.startMinutes / 60,
+            minute: quietHours.startMinutes % 60
+        )) ?? .now
+        quietHoursEnd = Calendar.current.date(from: DateComponents(
+            hour: quietHours.endMinutes / 60,
+            minute: quietHours.endMinutes % 60
+        )) ?? .now
+    }
+
+    @ViewBuilder
+    private var notificationSchedulingMessage: some View {
+        switch store.notificationSchedulingStatus.permission {
+        case .denied:
+            VStack(alignment: .leading, spacing: 8) {
+                Label("Notifications are disabled for Ritual Cue.", systemImage: "bell.slash.fill")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(.red)
+                Button("Open Settings") {
+                    if let url = URL(string: UIApplication.openSettingsURLString) {
+                        openURL(url)
+                    }
+                }
+                .font(.footnote.weight(.semibold))
+            }
+        case .authorized, .provisional, .ephemeral:
+            if store.notificationSchedulingStatus.isCapacityConstrained {
+                Label(
+                    "The iOS pending-notification limit left \(store.notificationSchedulingStatus.droppedCount) later reminder(s) unscheduled. Nearer reminders were kept first.",
+                    systemImage: "exclamationmark.triangle.fill"
+                )
+                .font(.footnote)
+                .foregroundStyle(.orange)
+            }
+        case .unknown, .notDetermined:
+            EmptyView()
+        }
     }
 
     private var notificationFilterModeBinding: Binding<NotificationGroupFilter.Mode> {
@@ -412,6 +482,19 @@ struct AccountView: View {
     private func saveReminderTime() {
         let parts = Calendar.current.dateComponents([.hour, .minute], from: reminderTime)
         store.updateEveningReminder((parts.hour ?? 20) * 60 + (parts.minute ?? 0))
+    }
+
+    private func saveQuietHours() {
+        guard quietHoursEnabled else {
+            store.updateNotificationQuietHours(nil)
+            return
+        }
+        let start = Calendar.current.dateComponents([.hour, .minute], from: quietHoursStart)
+        let end = Calendar.current.dateComponents([.hour, .minute], from: quietHoursEnd)
+        store.updateNotificationQuietHours(NotificationQuietHours(
+            startMinutes: (start.hour ?? 22) * 60 + (start.minute ?? 0),
+            endMinutes: (end.hour ?? 7) * 60 + (end.minute ?? 0)
+        ))
     }
 
     private func copyDiagnostics() {

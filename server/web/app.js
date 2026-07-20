@@ -10,12 +10,14 @@
     device: "dailyWeb.deviceID",
   };
   const cachedUser = readJSON(STORAGE.user, null);
+  const cachedChecklist = readJSON(STORAGE.cache, { items: [], groups: [] });
   const state = {
     token: "",
     user: cachedUser,
     accountID: localStorage.getItem(STORAGE.account) || cachedUser?.id || "",
-    items: readJSON(STORAGE.cache, { items: [] }).items || [],
-    groups: readJSON(STORAGE.cache, { groups: [] }).groups || [],
+    items: cachedChecklist.items || [],
+    groups: cachedChecklist.groups || [],
+    notificationQuietHours: cachedChecklist.notificationQuietHours || null,
     pending: readJSON(STORAGE.pending, []),
     deviceID: localStorage.getItem(STORAGE.device) || crypto.randomUUID(),
     selectedDate: startOfDay(new Date()),
@@ -270,11 +272,50 @@
     return (Array.isArray(items) ? items : []).map((item) => {
       item.scheduleRevision = normalizedScheduleRevision(item.scheduleRevision);
       item.recurrence = normalizedRecurrence(item.recurrence);
+      item.followUpPolicy = normalizedFollowUpPolicy(item.followUpPolicy);
       item.occurrences = Object.fromEntries(
         occurrenceRecords(item).map((record) => [record.id, record.occurrence])
       );
       return item;
     });
+  }
+
+  function normalizedFollowUpPolicy(policy) {
+    if (!policy || !Number.isInteger(policy.delayMinutes) || !Number.isInteger(policy.maximumCount)) return null;
+    return {
+      delayMinutes: Math.min(Math.max(5, policy.delayMinutes), 720),
+      maximumCount: Math.min(Math.max(1, policy.maximumCount), 5),
+    };
+  }
+
+  function normalizedQuietHours(quietHours) {
+    if (!quietHours || !Number.isInteger(quietHours.startMinutes) || !Number.isInteger(quietHours.endMinutes)) return null;
+    return {
+      startMinutes: Math.min(Math.max(0, quietHours.startMinutes), 1439),
+      endMinutes: Math.min(Math.max(0, quietHours.endMinutes), 1439),
+    };
+  }
+
+  function minutesFromTimeInput(value) {
+    const match = /^(\d{2}):(\d{2})$/.exec(String(value || ""));
+    if (!match) return null;
+    const hours = Number(match[1]);
+    const minutes = Number(match[2]);
+    return hours <= 23 && minutes <= 59 ? hours * 60 + minutes : null;
+  }
+
+  function timeInputValue(minutes, fallback) {
+    const value = Number.isInteger(minutes) ? Math.min(Math.max(0, minutes), 1439) : fallback;
+    return `${String(Math.floor(value / 60)).padStart(2, "0")}:${String(value % 60).padStart(2, "0")}`;
+  }
+
+  function followUpDelayText(minutes) {
+    if (minutes < 60) return `${minutes} minutes`;
+    if (minutes % 60 === 0) {
+      const hours = minutes / 60;
+      return `${hours} ${hours === 1 ? "hour" : "hours"}`;
+    }
+    return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
   }
 
   function occurrenceRecord(item, scheduledDate, revision = normalizedScheduleRevision(item.scheduleRevision)) {
@@ -289,6 +330,7 @@
   }
 
   state.items = normalizeChecklistItems(state.items);
+  state.notificationQuietHours = normalizedQuietHours(state.notificationQuietHours);
 
   function isFutureDate(date) {
     return startOfDay(date) > startOfDay(new Date());
@@ -362,7 +404,11 @@
   }
 
   function persistData() {
-    localStorage.setItem(STORAGE.cache, JSON.stringify({ items: state.items, groups: state.groups }));
+    localStorage.setItem(STORAGE.cache, JSON.stringify({
+      items: state.items,
+      groups: state.groups,
+      notificationQuietHours: state.notificationQuietHours,
+    }));
     localStorage.setItem(STORAGE.pending, JSON.stringify(state.pending));
   }
 
@@ -376,6 +422,7 @@
       state.accountID = "";
       state.items = [];
       state.groups = [];
+      state.notificationQuietHours = null;
       state.pending = [];
     }
     persistSession();
@@ -388,6 +435,7 @@
     if (state.accountID && nextAccountID && state.accountID !== nextAccountID) {
       state.items = [];
       state.groups = [];
+      state.notificationQuietHours = null;
       state.pending = [];
       persistData();
     }
@@ -456,6 +504,7 @@
     state.syncing = true;
     render();
     const sent = [...state.pending];
+    let didSync = false;
     try {
       const result = await request("/api/sync", {
         method: "POST",
@@ -465,13 +514,16 @@
       state.pending = state.pending.filter((entry) => !accepted.has(entry.id));
       state.items = normalizeChecklistItems(result.items || []);
       state.groups = result.groups || [];
+      state.notificationQuietHours = normalizedQuietHours(result.notificationQuietHours);
       state.loaded = true;
+      didSync = true;
       persistData();
     } catch (error) {
       if (!hasSession()) showToast("Your session expired. Sign in again.");
     } finally {
       state.syncing = false;
       render();
+      if (didSync && state.pending.length > 0) void sync();
     }
   }
 
@@ -843,6 +895,7 @@
         <div class="task-meta">
           <span>${icon("repeat", "meta-icon")} ${escapeHTML(scheduleText(item))}</span>
           ${item.reminderMinutes == null ? "" : `<span>${icon("clock", "meta-icon")} ${escapeHTML(timeText(item.reminderMinutes))}</span>`}
+          ${item.followUpPolicy == null ? "" : `<span>${icon("repeat", "meta-icon")} ${item.followUpPolicy.maximumCount} follow-up${item.followUpPolicy.maximumCount === 1 ? "" : "s"}</span>`}
           ${isSkipped ? "<span>Skipped today</span>" : ""}
         </div>
         ${item.notes ? `<p class="notes">${escapeHTML(item.notes)}</p>` : ""}
@@ -1045,8 +1098,33 @@
       end,
       time,
       scheduleMode: scheduleModeForItem(source),
-      recurrence: normalizedRecurrence(source.recurrence)
+      recurrence: normalizedRecurrence(source.recurrence),
+      followUpPolicy: normalizedFollowUpPolicy(source.followUpPolicy)
     };
+  }
+
+  function updateFollowUpControls(form) {
+    if (!form) return;
+    const settings = form.querySelector("[data-follow-up-settings]");
+    const controls = form.querySelector("[data-follow-up-controls]");
+    const toggle = form.elements.followUpEnabled;
+    const hasReminder = Boolean(form.elements.reminder?.value);
+    if (settings) settings.hidden = !hasReminder;
+    if (!hasReminder && toggle) toggle.checked = false;
+    if (controls) controls.hidden = !hasReminder || !toggle?.checked;
+  }
+
+  function saveQuietHoursFromAccount(form) {
+    if (!form) return;
+    const data = new FormData(form);
+    const enabled = data.get("quietHoursEnabled") === "on";
+    const startMinutes = minutesFromTimeInput(data.get("quietStart"));
+    const endMinutes = minutesFromTimeInput(data.get("quietEnd"));
+    if (enabled && (startMinutes == null || endMinutes == null)) return;
+    state.notificationQuietHours = enabled ? { startMinutes, endMinutes } : null;
+    queue(mutation("notificationQuietHours", {
+      notificationQuietHours: state.notificationQuietHours,
+    }));
   }
 
   function scheduleModeForItem(item = {}) {
@@ -1155,6 +1233,7 @@
       const displayName = state.user?.name || "Ritual Cue account";
       const email = state.user?.email || "";
       const photo = state.user?.profileImageURL;
+      const quietHours = normalizedQuietHours(state.notificationQuietHours);
       return `<div class="scrim" data-action="close"><section class="modal" data-modal>
         <h2>Account</h2>
         <div class="account-card">
@@ -1163,6 +1242,17 @@
             <strong>${escapeHTML(displayName)}</strong>
             <p>${escapeHTML(email)}</p>
           </div>
+          <form class="notification-settings" data-quiet-hours-form>
+            <label class="carryover-option">
+              <input type="checkbox" name="quietHoursEnabled" ${quietHours ? "checked" : ""}>
+              <span><strong>Quiet hours</strong><small>Stop follow-up notifications at the cutoff and hold snoozed reminders until quiet hours end.</small></span>
+            </label>
+            <div class="field-row" data-quiet-hours-controls ${quietHours ? "" : "hidden"}>
+              <label class="field">Quiet from<input name="quietStart" type="time" value="${timeInputValue(quietHours?.startMinutes, 22 * 60)}"></label>
+              <label class="field">Until<input name="quietEnd" type="time" value="${timeInputValue(quietHours?.endMinutes, 7 * 60)}"></label>
+            </div>
+            <p>These settings sync to your devices. Notification delivery remains on your iPhone.</p>
+          </form>
           <div class="account-panel">
             <button data-action="insights"><span>Routine insights</span><small>Private patterns from your last 21 days</small></button>
             <button data-action="export-data"><span>Export data</span><small>Copy a JSON backup</small></button>
@@ -1228,6 +1318,10 @@
     const advancedSchedule = ["interval","monthlyDay","monthlyOrdinal"].includes(schedule);
     const weekdays = new Set(item.customWeekdays || []);
     const recurrence = item.recurrence || defaultRecurrence(advancedSchedule ? schedule : "interval", item.start || dateKey(new Date()));
+    const followUpDelays = [...new Set([
+      15, 30, 60, 120, 240, 720,
+      ...(item.followUpPolicy ? [item.followUpPolicy.delayMinutes] : [])
+    ])].sort((left, right) => left - right);
     return `<div class="scrim" data-action="close"><form class="modal" data-modal data-editor data-schedule-mode="${schedule}">
       <h2>${state.modal.item ? "Edit item" : "New item"}</h2>
       <label class="field">Title<input name="title" required maxlength="120" value="${escapeHTML(item.title || "")}" autofocus></label>
@@ -1238,6 +1332,20 @@
           ${[["everyDay","Every day"],["weekdays","Weekdays"],["weekends","Weekends"],["custom","Selected weekdays"],["interval","Every N days or weeks"],["monthlyDay","Day of month"],["monthlyOrdinal","Ordinal weekday"]].map(([value,label]) => `<option value="${value}" ${schedule === value ? "selected" : ""}>${label}</option>`).join("")}
         </select></label>
         <label class="field">Reminder<input name="reminder" type="time" value="${item.time}"></label>
+      </div>
+      <div class="follow-up-settings" data-follow-up-settings ${item.time ? "" : "hidden"}>
+        <label class="carryover-option">
+          <input type="checkbox" name="followUpEnabled" ${item.followUpPolicy ? "checked" : ""}>
+          <span><strong>Follow up if unfinished</strong><small>Repeat this reminder only while the occurrence still needs attention.</small></span>
+        </label>
+        <div class="field-row" data-follow-up-controls ${item.followUpPolicy ? "" : "hidden"}>
+          <label class="field">Remind again after<select name="followUpDelay">
+            ${followUpDelays.map((value) => `<option value="${value}" ${(item.followUpPolicy?.delayMinutes ?? 60) === value ? "selected" : ""}>${followUpDelayText(value)}</option>`).join("")}
+          </select></label>
+          <label class="field">Maximum follow-ups<select name="followUpCount">
+            ${[1,2,3,4,5].map((value) => `<option value="${value}" ${(item.followUpPolicy?.maximumCount ?? 2) === value ? "selected" : ""}>${value}</option>`).join("")}
+          </select></label>
+        </div>
       </div>
       <div class="field" data-custom-days ${schedule === "custom" ? "" : "hidden"}>
         Days
@@ -1441,6 +1549,7 @@
     });
     state.items = normalizeChecklistItems(result.items || []);
     state.groups = result.groups || [];
+    state.notificationQuietHours = normalizedQuietHours(result.notificationQuietHours);
     state.pending = [];
     state.modal = null;
     persistData();
@@ -2187,6 +2296,7 @@
         customWeekdays: [],
         recurrence: null,
         reminderMinutes: null,
+        followUpPolicy: null,
         quantity: 1,
         completedDates: [],
         completionCounts: {},
@@ -2207,7 +2317,7 @@
       state.items.push(item);
       state.pending.push(mutation("upsert", {
         itemID: item.id,
-        changedFields: ["title","notes","schedule","customWeekdays","recurrence","reminderMinutes","quantity","skippedDates","openDates","createdAt","startDate","endedAt","groupID","sortOrder","pauseWindows","scheduleRevision","missedBehavior","carryoverStartDate","carryoverResolvedThroughDate"],
+        changedFields: ["title","notes","schedule","customWeekdays","recurrence","reminderMinutes","followUpPolicy","quantity","skippedDates","openDates","createdAt","startDate","endedAt","groupID","sortOrder","pauseWindows","scheduleRevision","missedBehavior","carryoverStartDate","carryoverResolvedThroughDate"],
         item
       }));
     }
@@ -2351,6 +2461,12 @@
     }
     const reminder = String(data.get("reminder") || "");
     const [hours, minutes] = reminder ? reminder.split(":").map(Number) : [null, null];
+    const followUpPolicy = reminder && data.get("followUpEnabled") === "on"
+      ? normalizedFollowUpPolicy({
+        delayMinutes: Number(data.get("followUpDelay")),
+        maximumCount: Number(data.get("followUpCount")),
+      })
+      : null;
     const scheduleMode = String(data.get("schedule"));
     const advancedSchedule = ["interval", "monthlyDay", "monthlyOrdinal"].includes(scheduleMode);
     const schedule = advancedSchedule ? "custom" : scheduleMode;
@@ -2390,6 +2506,7 @@
       customWeekdays,
       recurrence,
       reminderMinutes: reminder ? hours * 60 + minutes : null,
+      followUpPolicy,
       quantity: Number.isInteger(parsedQuantity) ? Math.min(Math.max(1, parsedQuantity), 99) : 1,
       completedDates: existing?.completedDates || [],
       completionCounts: existing?.completionCounts || {},
@@ -2415,11 +2532,11 @@
     state.modal = null;
     queue(mutation("upsert", {
       itemID: item.id,
-      changedFields: ["title","notes","schedule","customWeekdays","recurrence","reminderMinutes","quantity","skippedDates","openDates","createdAt","startDate","endedAt","groupID","sortOrder","pauseWindows","scheduleRevision","missedBehavior","carryoverStartDate","carryoverResolvedThroughDate"],
+      changedFields: ["title","notes","schedule","customWeekdays","recurrence","reminderMinutes","followUpPolicy","quantity","skippedDates","openDates","createdAt","startDate","endedAt","groupID","sortOrder","pauseWindows","scheduleRevision","missedBehavior","carryoverStartDate","carryoverResolvedThroughDate"],
       item: {
         title: item.title, notes: item.notes, schedule: item.schedule,
         customWeekdays: item.customWeekdays, recurrence: item.recurrence,
-        reminderMinutes: item.reminderMinutes, quantity: item.quantity,
+        reminderMinutes: item.reminderMinutes, followUpPolicy: item.followUpPolicy, quantity: item.quantity,
         skippedDates: item.skippedDates, openDates: item.openDates,
         createdAt: item.createdAt, startDate: item.startDate, endedAt: item.endedAt,
         groupID: item.groupID, sortOrder: item.sortOrder, pauseWindows: item.pauseWindows,
@@ -2540,6 +2657,17 @@
       setHistoryState(event.target.dataset.id, event.target.dataset.date, event.target.value);
       return;
     }
+    if (event.target.closest("[data-quiet-hours-form]")) {
+      const form = event.target.closest("[data-quiet-hours-form]");
+      const controls = form.querySelector("[data-quiet-hours-controls]");
+      if (controls) controls.hidden = !form.elements.quietHoursEnabled.checked;
+      saveQuietHoursFromAccount(form);
+      return;
+    }
+    if (["reminder", "followUpEnabled"].includes(event.target.name)) {
+      updateFollowUpControls(event.target.closest("form"));
+      return;
+    }
     if (event.target.name === "keepUntilDone") {
       event.target.dataset.carryoverManual = "true";
       return;
@@ -2566,6 +2694,10 @@
   });
 
   app.addEventListener("input", (event) => {
+    if (event.target.name === "reminder") {
+      updateFollowUpControls(event.target.closest("form"));
+      return;
+    }
     if (event.target.matches("[data-recurrence-control]")) {
       updateEditorScheduleControls(event.target.closest("form"));
       return;

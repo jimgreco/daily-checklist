@@ -420,6 +420,136 @@ final class ChecklistStateTests: XCTestCase {
         XCTAssertEqual(normalized.groupIDs, [mustDoGroup])
     }
 
+    func testFollowUpPlannerHonorsDelayMaximumAndDailyQuietHoursCutoff() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try XCTUnwrap(TimeZone(identifier: "America/New_York"))
+        let reminder = try XCTUnwrap(calendar.date(from: DateComponents(
+            timeZone: calendar.timeZone,
+            year: 2026,
+            month: 7,
+            day: 20,
+            hour: 20,
+            minute: 30
+        )))
+
+        let dates = NotificationPlanner.followUpDates(
+            after: reminder,
+            policy: ReminderFollowUpPolicy(delayMinutes: 30, maximumCount: 5),
+            quietHours: NotificationQuietHours(startMinutes: 22 * 60, endMinutes: 7 * 60),
+            calendar: calendar
+        )
+
+        XCTAssertEqual(dates.count, 2)
+        XCTAssertEqual(calendar.component(.hour, from: dates[0]), 21)
+        XCTAssertEqual(calendar.component(.minute, from: dates[0]), 0)
+        XCTAssertEqual(calendar.component(.hour, from: dates[1]), 21)
+        XCTAssertEqual(calendar.component(.minute, from: dates[1]), 30)
+    }
+
+    func testFollowUpPlannerUsesCalendarAcrossDaylightSavingTime() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try XCTUnwrap(TimeZone(identifier: "America/New_York"))
+        let reminder = try XCTUnwrap(calendar.date(from: DateComponents(
+            timeZone: calendar.timeZone,
+            year: 2026,
+            month: 3,
+            day: 8,
+            hour: 1,
+            minute: 30
+        )))
+
+        let dates = NotificationPlanner.followUpDates(
+            after: reminder,
+            policy: ReminderFollowUpPolicy(delayMinutes: 30, maximumCount: 2),
+            quietHours: nil,
+            calendar: calendar
+        )
+
+        XCTAssertEqual(dates.count, 2)
+        XCTAssertEqual(calendar.component(.hour, from: dates[0]), 3)
+        XCTAssertEqual(calendar.component(.minute, from: dates[0]), 0)
+        XCTAssertEqual(calendar.component(.hour, from: dates[1]), 3)
+        XCTAssertEqual(calendar.component(.minute, from: dates[1]), 30)
+    }
+
+    func testSnoozeMovesToQuietHoursEnd() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try XCTUnwrap(TimeZone(identifier: "America/New_York"))
+        let now = try XCTUnwrap(calendar.date(from: DateComponents(
+            timeZone: calendar.timeZone,
+            year: 2026,
+            month: 7,
+            day: 20,
+            hour: 21,
+            minute: 50
+        )))
+
+        let snoozed = NotificationPlanner.snoozeDate(
+            for: .fifteenMinutes,
+            now: now,
+            quietHours: NotificationQuietHours(startMinutes: 22 * 60, endMinutes: 7 * 60),
+            calendar: calendar
+        )
+
+        let components = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: snoozed)
+        XCTAssertEqual(components.year, 2026)
+        XCTAssertEqual(components.month, 7)
+        XCTAssertEqual(components.day, 21)
+        XCTAssertEqual(components.hour, 7)
+        XCTAssertEqual(components.minute, 0)
+    }
+
+    func testMatchingQuietHoursBoundariesDoNotCreateAnAccidentalCutoff() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try XCTUnwrap(TimeZone(identifier: "America/New_York"))
+        let reminder = try XCTUnwrap(calendar.date(from: DateComponents(
+            timeZone: calendar.timeZone,
+            year: 2026,
+            month: 7,
+            day: 20,
+            hour: 20
+        )))
+        let quietHours = NotificationQuietHours(startMinutes: 22 * 60, endMinutes: 22 * 60)
+
+        XCTAssertFalse(quietHours.contains(reminder, calendar: calendar))
+        XCTAssertEqual(NotificationPlanner.followUpDates(
+            after: reminder,
+            policy: ReminderFollowUpPolicy(delayMinutes: 120, maximumCount: 2),
+            quietHours: quietHours,
+            calendar: calendar
+        ).count, 2)
+    }
+
+    func testReminderFollowUpAndQuietHoursCodableCompatibility() throws {
+        let itemID = UUID()
+        let legacyData = try XCTUnwrap("""
+        {"id":"\(itemID.uuidString)","title":"Legacy reminder","reminderMinutes":540}
+        """.data(using: .utf8))
+        let legacyItem = try JSONDecoder().decode(ChecklistItem.self, from: legacyData)
+        XCTAssertNil(legacyItem.followUpPolicy)
+
+        let policy = ReminderFollowUpPolicy(delayMinutes: 45, maximumCount: 4)
+        let item = ChecklistItem(
+            id: itemID,
+            title: "Medication",
+            reminderMinutes: 540,
+            followUpPolicy: policy
+        )
+        let decodedItem = try JSONDecoder().decode(
+            ChecklistItem.self,
+            from: JSONEncoder().encode(item)
+        )
+        XCTAssertEqual(decodedItem.followUpPolicy, policy)
+
+        let quietHours = NotificationQuietHours(startMinutes: 21 * 60, endMinutes: 6 * 60)
+        let mutation = SyncMutation.quietHours(quietHours)
+        let decodedMutation = try JSONDecoder().decode(
+            SyncMutation.self,
+            from: JSONEncoder().encode(mutation)
+        )
+        XCTAssertEqual(decodedMutation.notificationQuietHours, quietHours)
+    }
+
     @MainActor
     func testPausedGroupIsHiddenFromTodayButVisibleInAllItems() throws {
         let accountID = "pause-group-test-\(UUID().uuidString)"
@@ -1408,6 +1538,8 @@ final class ChecklistStateTests: XCTestCase {
                 ordinal: -1,
                 weekday: 6
             ),
+            reminderMinutes: 540,
+            followUpPolicy: ReminderFollowUpPolicy(delayMinutes: 30, maximumCount: 3),
             quantity: 3,
             missedBehavior: .keepUntilDone,
             carryoverStartDate: "2026-07-01",
@@ -1422,6 +1554,7 @@ final class ChecklistStateTests: XCTestCase {
 
         XCTAssertEqual(mutation.item?.missedBehavior, .keepUntilDone)
         XCTAssertEqual(mutation.item?.recurrence, item.recurrence)
+        XCTAssertEqual(mutation.item?.followUpPolicy, item.followUpPolicy)
         XCTAssertEqual(mutation.item?.carryoverStartDate, "2026-07-01")
         XCTAssertEqual(mutation.item?.carryoverResolvedThroughDate, "2026-07-07")
         XCTAssertEqual(
@@ -1434,6 +1567,7 @@ final class ChecklistStateTests: XCTestCase {
             from: JSONEncoder().encode(mutation)
         )
         XCTAssertEqual(decoded?.item?.recurrence, item.recurrence)
+        XCTAssertEqual(decoded?.item?.followUpPolicy, item.followUpPolicy)
     }
 
     func testOccurrenceIdentifierParsesRevisionedAndLegacyForms() throws {

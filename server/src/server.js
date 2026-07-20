@@ -471,7 +471,8 @@ function mergeAccount(database, targetUserID, sourceUserID) {
       groups: {},
       appliedMutations: {},
       eveningReminder: null,
-      notificationGroupFilter: null
+      notificationGroupFilter: null,
+      notificationQuietHours: null
     };
     target.items ||= {};
     target.groups ||= {};
@@ -493,6 +494,9 @@ function mergeAccount(database, targetUserID, sourceUserID) {
     }
     if (source.notificationGroupFilter && stampWins(source.notificationGroupFilter, target.notificationGroupFilter)) {
       target.notificationGroupFilter = source.notificationGroupFilter;
+    }
+    if (source.notificationQuietHours && stampWins(source.notificationQuietHours, target.notificationQuietHours)) {
+      target.notificationQuietHours = source.notificationQuietHours;
     }
     delete database.accounts[sourceUserID];
   }
@@ -619,6 +623,8 @@ function accountSummary(account = {}) {
 
   for (const stamp of Object.values(account.appliedMutations || {})) lastActivityAt = maxISO(lastActivityAt, stamp);
   lastActivityAt = maxISO(lastActivityAt, account.eveningReminder?.stamp);
+  lastActivityAt = maxISO(lastActivityAt, account.notificationGroupFilter?.stamp);
+  lastActivityAt = maxISO(lastActivityAt, account.notificationQuietHours?.stamp);
 
   return {
     totalItems,
@@ -950,7 +956,7 @@ function stampWins(incoming, current) {
   return incoming.deviceID > current.deviceID;
 }
 
-const itemFields = ["title", "notes", "schedule", "customWeekdays", "recurrence", "reminderMinutes", "quantity", "skippedDates", "openDates", "createdAt", "startDate", "endedAt", "groupID", "sortOrder", "pauseWindows", "scheduleRevision", "missedBehavior", "carryoverStartDate", "carryoverResolvedThroughDate"];
+const itemFields = ["title", "notes", "schedule", "customWeekdays", "recurrence", "reminderMinutes", "followUpPolicy", "quantity", "skippedDates", "openDates", "createdAt", "startDate", "endedAt", "groupID", "sortOrder", "pauseWindows", "scheduleRevision", "missedBehavior", "carryoverStartDate", "carryoverResolvedThroughDate"];
 const groupFields = ["name", "sortOrder", "isCollapsed", "pauseWindows"];
 const notificationGroupFilterModes = ["all", "include", "exclude"];
 const missedBehaviors = ["markMissed", "keepUntilDone"];
@@ -977,6 +983,42 @@ function normalizedNotificationGroupFilter(filter) {
   return {
     mode: filter.mode,
     groupIDs: filter.mode === "all" ? [] : groupIDs
+  };
+}
+
+function validFollowUpPolicy(policy) {
+  return policy == null || (policy && typeof policy === "object" && !Array.isArray(policy)
+    && Number.isInteger(policy.delayMinutes)
+    && policy.delayMinutes >= 5
+    && policy.delayMinutes <= 720
+    && Number.isInteger(policy.maximumCount)
+    && policy.maximumCount >= 1
+    && policy.maximumCount <= 5);
+}
+
+function normalizedFollowUpPolicy(policy) {
+  if (!validFollowUpPolicy(policy) || policy == null) return null;
+  return {
+    delayMinutes: policy.delayMinutes,
+    maximumCount: policy.maximumCount
+  };
+}
+
+function validNotificationQuietHours(quietHours) {
+  return quietHours == null || (quietHours && typeof quietHours === "object" && !Array.isArray(quietHours)
+    && Number.isInteger(quietHours.startMinutes)
+    && quietHours.startMinutes >= 0
+    && quietHours.startMinutes <= 1439
+    && Number.isInteger(quietHours.endMinutes)
+    && quietHours.endMinutes >= 0
+    && quietHours.endMinutes <= 1439);
+}
+
+function normalizedNotificationQuietHours(quietHours) {
+  if (!validNotificationQuietHours(quietHours) || quietHours == null) return null;
+  return {
+    startMinutes: quietHours.startMinutes,
+    endMinutes: quietHours.endMinutes
   };
 }
 
@@ -1235,6 +1277,7 @@ function validItemPayload(item = {}) {
     && (item.customWeekdays == null || validWeekdays(item.customWeekdays))
     && validRecurrence(item.recurrence)
     && validFiniteNumber(item.reminderMinutes, { nullable: true, min: 0, max: 1439 })
+    && validFollowUpPolicy(item.followUpPolicy)
     && (item.quantity == null || (Number.isInteger(item.quantity) && item.quantity >= 1 && item.quantity <= 99))
     && (item.skippedDates == null || (
       Array.isArray(item.skippedDates)
@@ -1321,7 +1364,8 @@ function validImportedChecklist(checklist) {
     && (
       checklist.notificationGroupFilter == null
       || validNotificationGroupFilter(checklist.notificationGroupFilter)
-    );
+    )
+    && validNotificationQuietHours(checklist.notificationQuietHours);
 }
 
 function uniqueDateKeys(value = []) {
@@ -1408,6 +1452,7 @@ function accountFromImportedChecklist(checklist, previousAccount = emptyAccount(
         customWeekdays: importedField(item.customWeekdays || [], stamp, deviceID),
         recurrence: importedField(normalizedRecurrence(item.recurrence), stamp, deviceID),
         reminderMinutes: importedField(item.reminderMinutes, stamp, deviceID),
+        followUpPolicy: importedField(normalizedFollowUpPolicy(item.followUpPolicy), stamp, deviceID),
         quantity: importedField(quantity, stamp, deviceID),
         skippedDates: importedField(uniqueDateKeys(item.skippedDates || []), stamp, deviceID),
         openDates: importedField(uniqueDateKeys(item.openDates || []), stamp, deviceID),
@@ -1433,6 +1478,11 @@ function accountFromImportedChecklist(checklist, previousAccount = emptyAccount(
     stamp,
     deviceID
   );
+  account.notificationQuietHours = importedField(
+    normalizedNotificationQuietHours(checklist.notificationQuietHours),
+    stamp,
+    deviceID
+  );
   return account;
 }
 
@@ -1447,6 +1497,9 @@ function validMutation(mutation) {
   }
   if (mutation.kind === "notificationGroupFilter") {
     return validNotificationGroupFilter(mutation.notificationGroupFilter);
+  }
+  if (mutation.kind === "notificationQuietHours") {
+    return validNotificationQuietHours(mutation.notificationQuietHours);
   }
   if (mutation.kind === "groupUpsert") {
     return validID(mutation.groupID)
@@ -1508,6 +1561,16 @@ function applyMutation(account, mutation, deviceID) {
       deviceID
     };
     if (stampWins(incoming, account.notificationGroupFilter)) account.notificationGroupFilter = incoming;
+    return true;
+  }
+
+  if (mutation.kind === "notificationQuietHours") {
+    const incoming = {
+      value: normalizedNotificationQuietHours(mutation.notificationQuietHours),
+      stamp: mutation.stamp,
+      deviceID
+    };
+    if (stampWins(incoming, account.notificationQuietHours)) account.notificationQuietHours = incoming;
     return true;
   }
 
@@ -1689,6 +1752,7 @@ function materializeAccount(account) {
         customWeekdays: value.customWeekdays || [],
         ...(normalizedRecurrence(value.recurrence) ? { recurrence: normalizedRecurrence(value.recurrence) } : {}),
         reminderMinutes: value.reminderMinutes,
+        followUpPolicy: normalizedFollowUpPolicy(value.followUpPolicy),
         quantity,
         skippedDates: legacyDayState.skippedDates,
         openDates: legacyDayState.openDates,
@@ -1731,7 +1795,8 @@ function materializeAccount(account) {
     items,
     groups,
     eveningReminderMinutes: account.eveningReminder?.value ?? 1200,
-    notificationGroupFilter: normalizedNotificationGroupFilter(account.notificationGroupFilter?.value)
+    notificationGroupFilter: normalizedNotificationGroupFilter(account.notificationGroupFilter?.value),
+    notificationQuietHours: normalizedNotificationQuietHours(account.notificationQuietHours?.value)
   };
 }
 
@@ -1741,7 +1806,8 @@ function emptyAccount() {
     groups: {},
     appliedMutations: {},
     eveningReminder: null,
-    notificationGroupFilter: null
+    notificationGroupFilter: null,
+    notificationQuietHours: null
   };
 }
 

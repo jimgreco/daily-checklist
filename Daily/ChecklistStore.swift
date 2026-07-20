@@ -282,6 +282,8 @@ final class ChecklistStore: ObservableObject {
     @Published var selectedDate = Calendar.current.startOfDay(for: .now)
     @Published var eveningReminderMinutes: Int? = 20 * 60
     @Published var notificationGroupFilter: NotificationGroupFilter = .all
+    @Published var notificationQuietHours: NotificationQuietHours? = nil
+    @Published private(set) var notificationSchedulingStatus: NotificationSchedulingStatus = .unknown
     @Published private(set) var syncState = "Saved locally"
     @Published private(set) var hasLoaded = false
     @Published var sortMode: ChecklistSort {
@@ -292,6 +294,7 @@ final class ChecklistStore: ObservableObject {
     private let notifications = NotificationManager()
     private var hasStarted = false
     private var syncTask: Task<Void, Never>?
+    private var notificationTask: Task<Void, Never>?
     private weak var authStore: AuthStore?
     private var activeAccountID: String = UserDefaults.standard.string(forKey: "activeAccountID") ?? "anonymous"
 
@@ -458,13 +461,27 @@ final class ChecklistStore: ObservableObject {
         loadCache()
         hasLoaded = true
         persistWidgetSnapshot(reloadTimelines: true)
-        await notifications.requestAuthorization()
-        await notifications.reschedule(
+        let permission = await notifications.requestAuthorization()
+        notificationSchedulingStatus.permission = permission
+        notificationSchedulingStatus = await notifications.reschedule(
             items: items,
             groups: groups,
             eveningMinutes: eveningReminderMinutes,
-            groupFilter: notificationFilterForScheduling
+            groupFilter: notificationFilterForScheduling,
+            quietHours: notificationQuietHours
         )
+    }
+
+    func refreshNotificationSchedule() async {
+        let status = await notifications.reschedule(
+            items: items,
+            groups: groups,
+            eveningMinutes: eveningReminderMinutes,
+            groupFilter: notificationFilterForScheduling,
+            quietHours: notificationQuietHours
+        )
+        guard !Task.isCancelled else { return }
+        notificationSchedulingStatus = status
     }
 
     func connect(to authStore: AuthStore) {
@@ -1057,16 +1074,41 @@ final class ChecklistStore: ObservableObject {
         occurrenceDate: Date = .now,
         occurrenceID: String? = nil,
         isCarryover: Bool = false,
-        minutes: Int = 60
+        preset: ReminderSnoozePreset = .oneHour
     ) {
         guard let item = items.first(where: { $0.id == itemID }) else { return }
+        if let occurrenceID {
+            if isCarryover {
+                guard CarryoverResolver.entries(
+                    items: items,
+                    groups: groups,
+                    includeHidden: true
+                ).contains(where: {
+                    $0.item.id == itemID
+                        && $0.occurrences.contains(where: { $0.id == occurrenceID })
+                }) else { return }
+            } else {
+                guard canActOnCurrentOccurrence(
+                    itemID: itemID,
+                    occurrenceID: occurrenceID,
+                    occurrenceDate: occurrenceDate
+                ) else { return }
+            }
+        } else {
+            guard item.isActive(on: occurrenceDate),
+                  !item.isComplete(on: occurrenceDate),
+                  !item.isSkipped(on: occurrenceDate),
+                  !isPaused(item, on: occurrenceDate),
+                  item.occurs(on: occurrenceDate) || item.isExplicitlyOpen(on: occurrenceDate) else { return }
+        }
         Task {
-            await notifications.snooze(
+            _ = await notifications.snooze(
                 item: item,
                 occurrenceDate: occurrenceDate,
                 occurrenceID: occurrenceID,
                 isCarryover: isCarryover,
-                minutes: minutes
+                preset: preset,
+                quietHours: notificationQuietHours
             )
         }
     }
@@ -1502,6 +1544,7 @@ final class ChecklistStore: ObservableObject {
                 customWeekdays: item.customWeekdays,
                 recurrence: item.recurrence,
                 reminderMinutes: item.reminderMinutes,
+                followUpPolicy: item.followUpPolicy,
                 quantity: item.quantity,
                 createdAt: .now,
                 startDate: item.startDate,
@@ -1690,6 +1733,13 @@ final class ChecklistStore: ObservableObject {
         persistAndSchedule()
     }
 
+    func updateNotificationQuietHours(_ quietHours: NotificationQuietHours?) {
+        guard notificationQuietHours != quietHours else { return }
+        notificationQuietHours = quietHours
+        pendingMutations.append(.quietHours(quietHours))
+        persistAndSchedule()
+    }
+
     @discardableResult
     func sync(using authStore: AuthStore) async -> Bool {
         guard let token = await authStore.validAccessToken() else {
@@ -1713,6 +1763,7 @@ final class ChecklistStore: ObservableObject {
             groups = response.groups ?? groups
             eveningReminderMinutes = response.eveningReminderMinutes
             notificationGroupFilter = response.notificationGroupFilter ?? .all
+            notificationQuietHours = response.notificationQuietHours
             persistAndSchedule()
             let didFinishSyncing = pendingMutations.isEmpty
             syncState = didFinishSyncing ? "Synced" : "Changes pending"
@@ -1730,6 +1781,7 @@ final class ChecklistStore: ObservableObject {
         groups = response.groups ?? []
         eveningReminderMinutes = response.eveningReminderMinutes
         notificationGroupFilter = response.notificationGroupFilter ?? .all
+        notificationQuietHours = response.notificationQuietHours
         persistAndSchedule()
         syncState = "Restored from export"
     }
@@ -1799,6 +1851,7 @@ final class ChecklistStore: ObservableObject {
             groups = envelope.groups ?? []
             eveningReminderMinutes = envelope.eveningReminderMinutes
             notificationGroupFilter = envelope.notificationGroupFilter ?? .all
+            notificationQuietHours = envelope.notificationQuietHours
             pendingMutations = envelope.pendingMutations
             return
         }
@@ -1807,6 +1860,7 @@ final class ChecklistStore: ObservableObject {
             groups = []
             eveningReminderMinutes = legacy.eveningReminderMinutes
             notificationGroupFilter = .all
+            notificationQuietHours = nil
             pendingMutations = legacy.items.map { .upsert(item: $0, changedFields: Self.allFields) }
             if let minutes = legacy.eveningReminderMinutes {
                 pendingMutations.append(.evening(minutes: minutes))
@@ -1820,6 +1874,7 @@ final class ChecklistStore: ObservableObject {
             groups: groups,
             eveningReminderMinutes: eveningReminderMinutes,
             notificationGroupFilter: notificationGroupFilter,
+            notificationQuietHours: notificationQuietHours,
             pendingMutations: pendingMutations
         )
         let encoder = JSONEncoder()
@@ -1829,13 +1884,9 @@ final class ChecklistStore: ObservableObject {
         }
         persistWidgetSnapshot(reloadTimelines: true)
 
-        Task {
-            await notifications.reschedule(
-                items: items,
-                groups: groups,
-                eveningMinutes: eveningReminderMinutes,
-                groupFilter: notificationFilterForScheduling
-            )
+        notificationTask?.cancel()
+        notificationTask = Task {
+            await refreshNotificationSchedule()
         }
         if !pendingMutations.isEmpty {
             syncState = "Changes pending"
@@ -1858,6 +1909,7 @@ final class ChecklistStore: ObservableObject {
         pendingMutations = []
         eveningReminderMinutes = 20 * 60
         notificationGroupFilter = .all
+        notificationQuietHours = nil
         loadCache()
         persistAndSchedule()
     }
@@ -1868,6 +1920,7 @@ final class ChecklistStore: ObservableObject {
             groups: [],
             eveningReminderMinutes: 20 * 60,
             notificationGroupFilter: .all,
+            notificationQuietHours: nil,
             pendingMutations: []
         )
         let encoder = JSONEncoder()
@@ -1915,7 +1968,7 @@ final class ChecklistStore: ObservableObject {
     }
 
     static let allFields: Set<String> = [
-        "title", "notes", "schedule", "customWeekdays", "recurrence", "reminderMinutes", "quantity", "skippedDates", "openDates", "createdAt", "startDate", "endedAt", "groupID", "sortOrder", "pauseWindows", "scheduleRevision", "missedBehavior", "carryoverStartDate", "carryoverResolvedThroughDate"
+        "title", "notes", "schedule", "customWeekdays", "recurrence", "reminderMinutes", "followUpPolicy", "quantity", "skippedDates", "openDates", "createdAt", "startDate", "endedAt", "groupID", "sortOrder", "pauseWindows", "scheduleRevision", "missedBehavior", "carryoverStartDate", "carryoverResolvedThroughDate"
     ]
     static let allGroupFields: Set<String> = ["name", "sortOrder", "isCollapsed", "pauseWindows"]
 
@@ -1927,6 +1980,7 @@ final class ChecklistStore: ObservableObject {
         if old.customWeekdays != new.customWeekdays { changed.insert("customWeekdays") }
         if old.recurrence != new.recurrence { changed.insert("recurrence") }
         if old.reminderMinutes != new.reminderMinutes { changed.insert("reminderMinutes") }
+        if old.followUpPolicy != new.followUpPolicy { changed.insert("followUpPolicy") }
         if old.quantity != new.quantity { changed.insert("quantity") }
         if old.skippedDates != new.skippedDates { changed.insert("skippedDates") }
         if old.openDates != new.openDates { changed.insert("openDates") }

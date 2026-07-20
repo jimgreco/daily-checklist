@@ -418,6 +418,94 @@ struct NotificationGroupFilter: Codable, Equatable {
     }
 }
 
+struct ReminderFollowUpPolicy: Codable, Equatable, Hashable {
+    private enum CodingKeys: String, CodingKey {
+        case delayMinutes
+        case maximumCount
+    }
+
+    static let standard = ReminderFollowUpPolicy(delayMinutes: 60, maximumCount: 2)
+
+    var delayMinutes: Int
+    var maximumCount: Int
+
+    init(delayMinutes: Int = 60, maximumCount: Int = 2) {
+        self.delayMinutes = min(max(5, delayMinutes), 720)
+        self.maximumCount = min(max(1, maximumCount), 5)
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            delayMinutes: try container.decodeIfPresent(Int.self, forKey: .delayMinutes) ?? 60,
+            maximumCount: try container.decodeIfPresent(Int.self, forKey: .maximumCount) ?? 2
+        )
+    }
+}
+
+struct NotificationQuietHours: Codable, Equatable, Hashable {
+    private enum CodingKeys: String, CodingKey {
+        case startMinutes
+        case endMinutes
+    }
+
+    static let standard = NotificationQuietHours(startMinutes: 22 * 60, endMinutes: 7 * 60)
+
+    var startMinutes: Int
+    var endMinutes: Int
+
+    init(startMinutes: Int = 22 * 60, endMinutes: Int = 7 * 60) {
+        self.startMinutes = min(max(0, startMinutes), 1439)
+        self.endMinutes = min(max(0, endMinutes), 1439)
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            startMinutes: try container.decodeIfPresent(Int.self, forKey: .startMinutes) ?? 22 * 60,
+            endMinutes: try container.decodeIfPresent(Int.self, forKey: .endMinutes) ?? 7 * 60
+        )
+    }
+
+    func contains(minutes: Int) -> Bool {
+        guard startMinutes != endMinutes else { return false }
+        let value = min(max(0, minutes), 1439)
+        if startMinutes < endMinutes {
+            return value >= startMinutes && value < endMinutes
+        }
+        return value >= startMinutes || value < endMinutes
+    }
+
+    func contains(_ date: Date, calendar: Calendar = .current) -> Bool {
+        contains(minutes: calendar.component(.hour, from: date) * 60 + calendar.component(.minute, from: date))
+    }
+
+    func nextStart(after date: Date, calendar: Calendar = .current) -> Date? {
+        guard startMinutes != endMinutes else { return nil }
+        return nextBoundary(after: date, minutes: startMinutes, calendar: calendar)
+    }
+
+    func nextEnd(after date: Date, calendar: Calendar = .current) -> Date? {
+        guard startMinutes != endMinutes else { return nil }
+        return nextBoundary(after: date, minutes: endMinutes, calendar: calendar)
+    }
+
+    func nextAllowedDate(atOrAfter date: Date, calendar: Calendar = .current) -> Date {
+        guard contains(date, calendar: calendar) else { return date }
+        return nextEnd(after: date.addingTimeInterval(-1), calendar: calendar) ?? date
+    }
+
+    private func nextBoundary(after date: Date, minutes: Int, calendar: Calendar) -> Date? {
+        calendar.nextDate(
+            after: date,
+            matching: DateComponents(hour: minutes / 60, minute: minutes % 60),
+            matchingPolicy: .nextTime,
+            repeatedTimePolicy: .first,
+            direction: .forward
+        )
+    }
+}
+
 struct PauseWindow: Codable, Hashable {
     private enum CodingKeys: String, CodingKey {
         case startDate
@@ -577,6 +665,7 @@ struct ChecklistItem: Identifiable, Codable, Hashable {
         case customWeekdays
         case recurrence
         case reminderMinutes
+        case followUpPolicy
         case quantity
         case completedDates
         case completionCounts
@@ -602,6 +691,7 @@ struct ChecklistItem: Identifiable, Codable, Hashable {
     var customWeekdays: Set<Int>
     var recurrence: RecurrenceRule?
     var reminderMinutes: Int?
+    var followUpPolicy: ReminderFollowUpPolicy?
     var quantity: Int
     var completedDates: Set<String>
     var completionCounts: [String: Int]
@@ -627,6 +717,7 @@ struct ChecklistItem: Identifiable, Codable, Hashable {
         customWeekdays: Set<Int> = [],
         recurrence: RecurrenceRule? = nil,
         reminderMinutes: Int? = nil,
+        followUpPolicy: ReminderFollowUpPolicy? = nil,
         quantity: Int = 1,
         completedDates: Set<String> = [],
         completionCounts: [String: Int] = [:],
@@ -651,6 +742,7 @@ struct ChecklistItem: Identifiable, Codable, Hashable {
         self.customWeekdays = customWeekdays
         self.recurrence = recurrence
         self.reminderMinutes = reminderMinutes
+        self.followUpPolicy = followUpPolicy
         self.quantity = Self.normalizedQuantity(quantity)
         self.completedDates = completedDates
         self.completionCounts = Self.normalizedCompletionCounts(completionCounts)
@@ -678,6 +770,7 @@ struct ChecklistItem: Identifiable, Codable, Hashable {
         customWeekdays = try container.decodeIfPresent(Set<Int>.self, forKey: .customWeekdays) ?? []
         recurrence = try container.decodeIfPresent(RecurrenceRule.self, forKey: .recurrence)
         reminderMinutes = try container.decodeIfPresent(Int.self, forKey: .reminderMinutes)
+        followUpPolicy = try container.decodeIfPresent(ReminderFollowUpPolicy.self, forKey: .followUpPolicy)
         quantity = Self.normalizedQuantity(try container.decodeIfPresent(Int.self, forKey: .quantity) ?? 1)
         completedDates = try container.decodeIfPresent(Set<String>.self, forKey: .completedDates) ?? []
         completionCounts = Self.normalizedCompletionCounts(
@@ -1198,6 +1291,7 @@ struct LocalEnvelope: Codable {
     var groups: [ChecklistGroup]?
     var eveningReminderMinutes: Int?
     var notificationGroupFilter: NotificationGroupFilter?
+    var notificationQuietHours: NotificationQuietHours?
     var pendingMutations: [SyncMutation]
 }
 
@@ -1215,6 +1309,7 @@ struct ItemPayload: Codable {
         case customWeekdays
         case recurrence
         case reminderMinutes
+        case followUpPolicy
         case quantity
         case skippedDates
         case openDates
@@ -1237,6 +1332,7 @@ struct ItemPayload: Codable {
     var customWeekdays: Set<Int>
     var recurrence: RecurrenceRule?
     var reminderMinutes: Int?
+    var followUpPolicy: ReminderFollowUpPolicy?
     var quantity: Int
     var skippedDates: Set<String>
     var openDates: Set<String>
@@ -1259,6 +1355,7 @@ struct ItemPayload: Codable {
         customWeekdays: Set<Int>,
         recurrence: RecurrenceRule? = nil,
         reminderMinutes: Int?,
+        followUpPolicy: ReminderFollowUpPolicy? = nil,
         quantity: Int,
         skippedDates: Set<String>,
         openDates: Set<String>,
@@ -1280,6 +1377,7 @@ struct ItemPayload: Codable {
         self.customWeekdays = customWeekdays
         self.recurrence = recurrence
         self.reminderMinutes = reminderMinutes
+        self.followUpPolicy = followUpPolicy
         self.quantity = min(max(1, quantity), 99)
         self.skippedDates = skippedDates
         self.openDates = openDates
@@ -1304,6 +1402,7 @@ struct ItemPayload: Codable {
         customWeekdays = try container.decodeIfPresent(Set<Int>.self, forKey: .customWeekdays) ?? []
         recurrence = try container.decodeIfPresent(RecurrenceRule.self, forKey: .recurrence)
         reminderMinutes = try container.decodeIfPresent(Int.self, forKey: .reminderMinutes)
+        followUpPolicy = try container.decodeIfPresent(ReminderFollowUpPolicy.self, forKey: .followUpPolicy)
         quantity = min(max(1, try container.decodeIfPresent(Int.self, forKey: .quantity) ?? 1), 99)
         skippedDates = try container.decodeIfPresent(Set<String>.self, forKey: .skippedDates) ?? []
         openDates = try container.decodeIfPresent(Set<String>.self, forKey: .openDates) ?? []
@@ -1357,6 +1456,7 @@ struct SyncMutation: Identifiable, Codable {
         case completion
         case eveningReminder
         case notificationGroupFilter
+        case notificationQuietHours
         case groupUpsert
         case groupDelete
         case occurrence
@@ -1378,6 +1478,7 @@ struct SyncMutation: Identifiable, Codable {
     var occurrence: ChecklistOccurrence?
     var eveningReminderMinutes: Int?
     var notificationGroupFilter: NotificationGroupFilter?
+    var notificationQuietHours: NotificationQuietHours?
 
     static func upsert(item: ChecklistItem, changedFields: Set<String>) -> SyncMutation {
         return SyncMutation(
@@ -1393,6 +1494,7 @@ struct SyncMutation: Identifiable, Codable {
                 customWeekdays: item.customWeekdays,
                 recurrence: item.recurrence,
                 reminderMinutes: item.reminderMinutes,
+                followUpPolicy: item.followUpPolicy,
                 quantity: item.quantity,
                 skippedDates: item.skippedDates,
                 openDates: item.openDates,
@@ -1507,6 +1609,15 @@ struct SyncMutation: Identifiable, Codable {
             notificationGroupFilter: filter
         )
     }
+
+    static func quietHours(_ quietHours: NotificationQuietHours?) -> SyncMutation {
+        SyncMutation(
+            id: UUID(),
+            kind: .notificationQuietHours,
+            stamp: SyncStamp.now,
+            notificationQuietHours: quietHours
+        )
+    }
 }
 
 struct SyncRequest: Codable {
@@ -1519,6 +1630,7 @@ struct SyncResponse: Codable {
     var groups: [ChecklistGroup]?
     var eveningReminderMinutes: Int?
     var notificationGroupFilter: NotificationGroupFilter?
+    var notificationQuietHours: NotificationQuietHours?
     var acceptedMutationIDs: [UUID]
 }
 

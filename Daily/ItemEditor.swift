@@ -46,6 +46,9 @@ struct ItemEditor: View {
     @State private var item: ChecklistItem
     @State private var reminderEnabled: Bool
     @State private var reminderTime: Date
+    @State private var followUpEnabled: Bool
+    @State private var followUpDelayMinutes: Int
+    @State private var maximumFollowUpCount: Int
     @State private var scheduleMode: ScheduleEditorMode
     @State private var startDateEnabled: Bool
     @State private var startDate: Date
@@ -70,6 +73,9 @@ struct ItemEditor: View {
         let calendar = Calendar.current
         _item = State(initialValue: item)
         _reminderEnabled = State(initialValue: item.reminderMinutes != nil)
+        _followUpEnabled = State(initialValue: item.followUpPolicy != nil)
+        _followUpDelayMinutes = State(initialValue: item.followUpPolicy?.delayMinutes ?? 60)
+        _maximumFollowUpCount = State(initialValue: item.followUpPolicy?.maximumCount ?? 2)
         _scheduleMode = State(initialValue: ScheduleEditorMode(item: item))
         var components = DateComponents()
         components.hour = (item.reminderMinutes ?? 9 * 60) / 60
@@ -197,10 +203,30 @@ struct ItemEditor: View {
                     Text("The task appears from its start date through its end date. Leave either date off when there is no limit.")
                 }
 
-                Section("Reminder") {
+                Section {
                     Toggle("Remind me", isOn: $reminderEnabled)
                     if reminderEnabled {
                         DatePicker("Time", selection: $reminderTime, displayedComponents: .hourAndMinute)
+                        Toggle("Follow up if unfinished", isOn: $followUpEnabled)
+                        if followUpEnabled {
+                            Stepper(
+                                "Remind again after: \(followUpDelayText)",
+                                value: $followUpDelayMinutes,
+                                in: 5...720,
+                                step: 5
+                            )
+                            Stepper(
+                                "Maximum follow-ups: \(maximumFollowUpCount)",
+                                value: $maximumFollowUpCount,
+                                in: 1...5
+                            )
+                        }
+                    }
+                } header: {
+                    Text("Reminder")
+                } footer: {
+                    if reminderEnabled && followUpEnabled {
+                        Text("Follow-ups stop when this occurrence is handled and never continue past your account quiet-hours cutoff.")
                     }
                 }
 
@@ -226,8 +252,15 @@ struct ItemEditor: View {
                         if reminderEnabled {
                             let parts = Calendar.current.dateComponents([.hour, .minute], from: reminderTime)
                             item.reminderMinutes = (parts.hour ?? 0) * 60 + (parts.minute ?? 0)
+                            item.followUpPolicy = followUpEnabled
+                                ? ReminderFollowUpPolicy(
+                                    delayMinutes: followUpDelayMinutes,
+                                    maximumCount: maximumFollowUpCount
+                                )
+                                : nil
                         } else {
                             item.reminderMinutes = nil
+                            item.followUpPolicy = nil
                         }
                         if item.schedule == .custom,
                            item.recurrence == nil,
@@ -295,6 +328,17 @@ struct ItemEditor: View {
                 Text("Create a group and assign this task to it.")
             }
         }
+    }
+
+    private var followUpDelayText: String {
+        if followUpDelayMinutes < 60 {
+            return "\(followUpDelayMinutes) minutes"
+        }
+        if followUpDelayMinutes.isMultiple(of: 60) {
+            let hours = followUpDelayMinutes / 60
+            return "\(hours) \(hours == 1 ? "hour" : "hours")"
+        }
+        return "\(followUpDelayMinutes / 60)h \(followUpDelayMinutes % 60)m"
     }
 
     private var selectedGroupName: String {

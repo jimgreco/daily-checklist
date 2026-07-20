@@ -1,6 +1,6 @@
 # Ritual Cue
 
-A native iPhone and mobile web checklist for repeatable tasks, with offline caching, server sync, per-item reminders, and an evening unfinished-task alert.
+A native iPhone and mobile web checklist for repeatable tasks, with offline caching, server sync, optional unfinished-task follow-ups, quiet hours, snooze presets, and a filtered evening check-in.
 
 ## Run
 
@@ -80,7 +80,9 @@ Add `DAILY_MONITOR_WEBHOOK_URL` as a repository secret to send failure notificat
 
 ## Offline and conflict behavior
 
-The local cache is authoritative while offline. Every add, edit, completion, deletion, and evening-alert change is appended to a durable mutation queue. After authentication and whenever connectivity returns, queued mutations are uploaded.
+The local cache is authoritative while offline. Every add, edit, completion, deletion, and account-level reminder-setting change is appended to a durable mutation queue. After authentication and whenever connectivity returns, queued mutations are uploaded.
+
+Per-item follow-up policies and account quiet hours sync through the same field-level conflict model and are included in exports and restores. Notification delivery remains native to iOS; the web app can configure and cache the synced policy.
 
 The server merges item fields independently using timestamp plus device-ID ordering, merges completion state separately for each calendar date, deduplicates mutations, and keeps deletion tombstones so a stale device cannot recreate deleted tasks.
 
