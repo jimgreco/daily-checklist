@@ -45,99 +45,102 @@ struct ChecklistView: View {
     @State private var showingTutorial = false
     @AppStorage("hasSeenChecklistTutorial") private var hasSeenChecklistTutorial = false
     @FocusState private var searchIsFocused: Bool
-    @Namespace private var searchGlassNamespace
 
     var body: some View {
+        let snapshot = makeRenderSnapshot()
+
         NavigationStack {
-            GlassEffectContainer(spacing: 10) {
-                ZStack(alignment: .bottomTrailing) {
-                    canvas.ignoresSafeArea()
-                    ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 0) {
-                            header
-                            filter
-                                .padding(.top, 22)
-                            if store.scope == .archive {
+            ZStack(alignment: .bottomTrailing) {
+                canvas.ignoresSafeArea()
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        header(snapshot: snapshot)
+                        filter
+                            .padding(.top, 22)
+                        if store.scope == .archive {
+                            section(
+                                title: "ARCHIVE",
+                                items: snapshot.archiveItems,
+                                emptyText: "No ended tasks",
+                                showsCompleteAll: false,
+                                isCompletedSection: false,
+                                completeGroupIDs: snapshot.completeGroupIDs,
+                                allowsPermanentDelete: true
+                            )
+                                .padding(.top, 28)
+                        } else {
+                            if snapshot.showsStillOpenSection {
+                                stillOpenSection(entries: snapshot.carryoverEntries)
+                                    .padding(.top, 28)
+                            }
+                            section(
+                                title: "TO DO",
+                                items: snapshot.todoSectionItems,
+                                emptyText: "Nothing left for now",
+                                showsCompleteAll: store.scope == .today && snapshot.filteredTodoCount > 0,
+                                isCompletedSection: false,
+                                completeGroupIDs: snapshot.completeGroupIDs,
+                                displayCount: store.scope == .today
+                                    ? snapshot.filteredTodoCount
+                                    : snapshot.todoSectionItems.count
+                            )
+                                .padding(.top, snapshot.showsStillOpenSection ? 24 : 28)
+                            if store.scope == .today {
                                 section(
-                                    title: "ARCHIVE",
-                                    items: filtered(store.visibleItems),
-                                    emptyText: "No ended tasks",
+                                    title: "SKIPPED",
+                                    items: snapshot.skippedItems,
+                                    emptyText: nil,
                                     showsCompleteAll: false,
                                     isCompletedSection: false,
-                                    allowsPermanentDelete: true
-                                )
-                                    .padding(.top, 28)
-                            } else {
-                                if showsStillOpenSection {
-                                    stillOpenSection
-                                        .padding(.top, 28)
-                                }
-                                section(
-                                    title: "TO DO",
-                                    items: filtered(todoSectionItems),
-                                    emptyText: "Nothing left for now",
-                                    showsCompleteAll: store.scope == .today && !filtered(store.todoItems).isEmpty,
-                                    isCompletedSection: false,
-                                    displayCount: store.scope == .today
-                                        ? filtered(store.todoItems).count
-                                        : filtered(todoSectionItems).count
-                                )
-                                    .padding(.top, showsStillOpenSection ? 24 : 28)
-                                if store.scope == .today {
-                                    section(
-                                        title: "SKIPPED",
-                                        items: filtered(store.skippedItems),
-                                        emptyText: nil,
-                                        showsCompleteAll: false,
-                                        isCompletedSection: false
-                                    )
-                                        .padding(.top, 32)
-                                        .opacity(filtered(store.skippedItems).isEmpty ? 0 : 1)
-                                }
-                                section(
-                                    title: "COMPLETED",
-                                    items: filtered(completedSectionItems),
-                                    emptyText: nil,
-                                    isCompletedSection: true
+                                    completeGroupIDs: snapshot.completeGroupIDs
                                 )
                                     .padding(.top, 32)
-                                    .opacity(filtered(completedSectionItems).isEmpty ? 0 : 1)
+                                    .opacity(snapshot.skippedItems.isEmpty ? 0 : 1)
                             }
-                            Spacer(minLength: 120)
+                            section(
+                                title: "COMPLETED",
+                                items: snapshot.completedSectionItems,
+                                emptyText: nil,
+                                isCompletedSection: true,
+                                completeGroupIDs: snapshot.completeGroupIDs
+                            )
+                                .padding(.top, 32)
+                                .opacity(snapshot.completedSectionItems.isEmpty ? 0 : 1)
                         }
-                        .padding(.horizontal, 20)
+                        Spacer(minLength: 120)
                     }
+                    .padding(.horizontal, 20)
+                }
 
-                    Button {
-                        showingNewItem = true
-                    } label: {
-                        Image(systemName: "plus")
-                            .font(.system(size: 25, weight: .semibold))
-                            .foregroundStyle(.white)
-                            .frame(width: 64, height: 64)
-                            .background(accent, in: Circle())
-                            .shadow(color: accent.opacity(0.3), radius: 18, y: 8)
-                    }
-                    .accessibilityLabel("Add item")
-                    .padding(24)
+                Button {
+                    showingNewItem = true
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 25, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .frame(width: 64, height: 64)
+                        .background(accent, in: Circle())
+                        .shadow(color: accent.opacity(0.3), radius: 18, y: 8)
                 }
-                .overlay {
-                    if isSearchPresented {
-                        Color.clear
-                            .contentShape(Rectangle())
-                            .ignoresSafeArea()
-                            .onTapGesture {
-                                dismissSearch()
-                            }
-                            .zIndex(4)
-                    }
+                .accessibilityLabel("Add item")
+                .padding(24)
+            }
+            .overlay {
+                if isSearchPresented {
+                    Color.clear
+                        .contentShape(Rectangle())
+                        .ignoresSafeArea()
+                        .onTapGesture {
+                            dismissSearch()
+                        }
+                        .zIndex(4)
                 }
-                .overlay(alignment: .top) {
-                    if isSearchPresented {
-                        expandedSearchOverlay
-                            .transition(.move(edge: .top).combined(with: .opacity))
-                            .zIndex(5)
-                    }
+            }
+            .overlay(alignment: .top) {
+                if isSearchPresented {
+                    expandedSearchOverlay
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                        .zIndex(5)
                 }
             }
             .toolbar(.hidden, for: .navigationBar)
@@ -373,7 +376,7 @@ struct ChecklistView: View {
         }
     }
 
-    private var header: some View {
+    private func header(snapshot: ChecklistRenderSnapshot) -> some View {
         VStack(spacing: 14) {
             HStack {
                 Button {
@@ -420,7 +423,7 @@ struct ChecklistView: View {
                         .minimumScaleFactor(0.58)
                         .allowsTightening(true)
                         .layoutPriority(1)
-                    Text(summary)
+                    Text(summary(for: snapshot))
                         .font(.system(size: 16))
                         .foregroundStyle(.secondary)
                 }
@@ -447,16 +450,14 @@ struct ChecklistView: View {
         .padding(.top, 18)
     }
 
-    private var summary: String {
+    private func summary(for snapshot: ChecklistRenderSnapshot) -> String {
         if store.scope == .archive {
-            let count = store.visibleItems.count
+            let count = snapshot.archiveTotalCount
             if count == 0 { return "No archived items." }
             return count == 1 ? "One archived item." : "\(count) archived items."
         }
-        let count = store.todoItems.count
-        let stillOpenCount = store.scope == .today && store.isSelectedDateToday
-            ? store.carryoverEntries.count
-            : 0
+        let count = snapshot.todoCount
+        let stillOpenCount = snapshot.carryoverCount
         if stillOpenCount > 0 {
             let todayText = count == 1 ? "1 today" : "\(count) today"
             let openText = stillOpenCount == 1 ? "1 still open" : "\(stillOpenCount) still open"
@@ -481,43 +482,82 @@ struct ChecklistView: View {
         return merged
     }
 
-    private var knownGroupIDs: Set<UUID> {
-        Set(store.groups.map(\.id))
-    }
-
-    private var activeVisibleItems: [ChecklistItem] {
-        let groupedCarryoverIDs = store.scope == .today && store.isSelectedDateToday
-            ? store.carryoverItemIDsIncludingHidden
+    private func makeRenderSnapshot() -> ChecklistRenderSnapshot {
+        let visibleItems = store.visibleItems
+        let isShowingCurrentToday = store.scope == .today && store.isSelectedDateToday
+        let now = Date.now
+        let allCarryoverEntries = isShowingCurrentToday
+            ? CarryoverResolver.entries(
+                items: store.items,
+                groups: store.groups,
+                asOf: now,
+                includeHidden: true
+            )
             : []
-        return store.visibleItems.filter {
-            !groupedCarryoverIDs.contains($0.id)
+        let hiddenCarryoverIDs = Set(allCarryoverEntries.map(\.item.id))
+        let todayKey = DateKey.string(from: now)
+        let carryoverEntries = allCarryoverEntries.filter { entry in
+            let isHidden = entry.occurrences.last?.state?.hiddenUntil.map { $0 > todayKey } ?? false
+            return !store.isPaused(entry.item, on: now) && !isHidden
+        }
+        let pausedItemIDs = Set(visibleItems.lazy.filter {
+            store.isPaused($0, on: store.selectedDate)
+        }.map(\.id))
+        let activeVisibleItems = visibleItems.filter {
+            !hiddenCarryoverIDs.contains($0.id)
                 && (store.scope == .all
                     || (!$0.isSkipped(on: store.selectedDate)
-                        && !store.isPaused($0, on: store.selectedDate)))
+                        && !pausedItemIDs.contains($0.id)))
         }
-    }
-
-    private var todoSectionItems: [ChecklistItem] {
-        activeVisibleItems.filter { item in
+        let knownGroupIDs = Set(store.groups.map(\.id))
+        let itemsByGroup = Dictionary(grouping: activeVisibleItems.compactMap { item in
+            item.groupID.map { ($0, item) }
+        }, by: \.0)
+        let completeGroupIDs = Set(itemsByGroup.compactMap { groupID, entries in
+            entries.allSatisfy { $0.1.isComplete(on: store.selectedDate) } ? groupID : nil
+        })
+        let todoSectionItems = activeVisibleItems.filter { item in
             guard let groupID = item.groupID, knownGroupIDs.contains(groupID) else {
                 return !item.isComplete(on: store.selectedDate)
             }
-            return !groupIsComplete(groupID)
+            return !completeGroupIDs.contains(groupID)
         }
-    }
-
-    private var completedSectionItems: [ChecklistItem] {
-        activeVisibleItems.filter { item in
+        let completedSectionItems = activeVisibleItems.filter { item in
             guard let groupID = item.groupID, knownGroupIDs.contains(groupID) else {
                 return item.isComplete(on: store.selectedDate)
             }
-            return groupIsComplete(groupID)
+            return completeGroupIDs.contains(groupID)
         }
-    }
+        let todoItems = visibleItems.filter {
+            !hiddenCarryoverIDs.contains($0.id)
+                && !$0.isComplete(on: store.selectedDate)
+                && !$0.isSkipped(on: store.selectedDate)
+                && !pausedItemIDs.contains($0.id)
+        }
+        let skippedItems = visibleItems.filter {
+            $0.isSkipped(on: store.selectedDate) && !$0.isComplete(on: store.selectedDate)
+        }
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let matchesSearch: (ChecklistItem) -> Bool = { item in
+            query.isEmpty
+                || item.title.localizedCaseInsensitiveContains(query)
+                || item.notes.localizedCaseInsensitiveContains(query)
+        }
+        let matchingCarryoverEntries = carryoverEntries.filter { matchesSearch($0.item) }
 
-    private func groupIsComplete(_ groupID: UUID) -> Bool {
-        let items = activeVisibleItems.filter { $0.groupID == groupID }
-        return !items.isEmpty && items.allSatisfy { $0.isComplete(on: store.selectedDate) }
+        return ChecklistRenderSnapshot(
+            archiveItems: visibleItems.filter(matchesSearch),
+            archiveTotalCount: visibleItems.count,
+            todoSectionItems: todoSectionItems.filter(matchesSearch),
+            completedSectionItems: completedSectionItems.filter(matchesSearch),
+            skippedItems: skippedItems.filter(matchesSearch),
+            carryoverEntries: matchingCarryoverEntries,
+            completeGroupIDs: completeGroupIDs,
+            todoCount: todoItems.count,
+            filteredTodoCount: todoItems.filter(matchesSearch).count,
+            carryoverCount: carryoverEntries.count,
+            showsStillOpenSection: isShowingCurrentToday && !matchingCarryoverEntries.isEmpty
+        )
     }
 
     private var filter: some View {
@@ -549,8 +589,6 @@ struct ChecklistView: View {
                 .foregroundStyle(searchText.isEmpty ? ink : accent)
                 .frame(width: 35, height: 35)
                 .glassEffect(.regular.interactive(), in: Circle())
-                .glassEffectID("checklist-search", in: searchGlassNamespace)
-                .glassEffectTransition(.matchedGeometry)
         }
         .accessibilityLabel("Search checklist")
         .accessibilityValue(searchText.isEmpty ? "No search" : searchText)
@@ -582,8 +620,6 @@ struct ChecklistView: View {
                 .frame(height: 46)
                 .frame(maxWidth: .infinity)
                 .glassEffect(.regular.interactive(), in: Capsule())
-                .glassEffectID("checklist-search", in: searchGlassNamespace)
-                .glassEffectTransition(.matchedGeometry)
             }
             .padding(.horizontal, 20)
             .padding(.top, 12)
@@ -642,24 +678,6 @@ struct ChecklistView: View {
         }
         #endif
         return item
-    }
-
-    private func filtered(_ items: [ChecklistItem]) -> [ChecklistItem] {
-        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else { return items }
-        return items.filter {
-            $0.title.localizedCaseInsensitiveContains(query)
-                || $0.notes.localizedCaseInsensitiveContains(query)
-        }
-    }
-
-    private var filteredCarryoverEntries: [CarryoverEntry] {
-        let matchingIDs = Set(filtered(store.carryoverEntries.map(\.item)).map(\.id))
-        return store.carryoverEntries.filter { matchingIDs.contains($0.item.id) }
-    }
-
-    private var showsStillOpenSection: Bool {
-        store.scope == .today && store.isSelectedDateToday && !filteredCarryoverEntries.isEmpty
     }
 
     private var sortControl: some View {
@@ -722,6 +740,7 @@ struct ChecklistView: View {
         emptyText: String?,
         showsCompleteAll: Bool = false,
         isCompletedSection: Bool,
+        completeGroupIDs: Set<UUID>,
         allowsPermanentDelete: Bool = false,
         displayCount: Int? = nil
     ) -> some View {
@@ -766,6 +785,7 @@ struct ChecklistView: View {
                 groupedItems(
                     items,
                     isCompletedSection: isCompletedSection,
+                    completeGroupIDs: completeGroupIDs,
                     allowsGroupActions: showsCompleteAll,
                     allowsPermanentDelete: allowsPermanentDelete
                 )
@@ -773,7 +793,7 @@ struct ChecklistView: View {
         }
     }
 
-    private var stillOpenSection: some View {
+    private func stillOpenSection(entries: [CarryoverEntry]) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Text("STILL OPEN")
@@ -781,13 +801,13 @@ struct ChecklistView: View {
                     .tracking(1.4)
                     .foregroundStyle(delayed)
                 Spacer()
-                Text("\(filteredCarryoverEntries.count)")
+                Text("\(entries.count)")
                     .font(.system(size: 12, weight: .bold, design: .rounded))
                     .foregroundStyle(.secondary)
             }
 
-            VStack(spacing: 10) {
-                ForEach(filteredCarryoverEntries) { entry in
+            LazyVStack(spacing: 10) {
+                ForEach(entries) { entry in
                     CarryoverRow(
                         entry: entry,
                         showsEditButton: isEditingChecklist,
@@ -824,6 +844,7 @@ struct ChecklistView: View {
     private func groupedItems(
         _ items: [ChecklistItem],
         isCompletedSection: Bool,
+        completeGroupIDs: Set<UUID>,
         allowsGroupActions: Bool,
         allowsPermanentDelete: Bool
     ) -> some View {
@@ -846,7 +867,7 @@ struct ChecklistView: View {
                 }
                 ForEach(store.orderedGroups) { group in
                     let groupItems = items.filter { $0.groupID == group.id }
-                    let isCompleteGroup = groupIsComplete(group.id)
+                    let isCompleteGroup = completeGroupIDs.contains(group.id)
                     let groupPaused = store.isGroupPaused(group.id, on: store.selectedDate)
                     if !groupItems.isEmpty && isCompleteGroup == isCompletedSection {
                         groupBlock(
@@ -1126,7 +1147,7 @@ struct ChecklistView: View {
     }
 
     private func itemStack(_ items: [ChecklistItem], groupID: UUID?, allowsPermanentDelete: Bool) -> some View {
-        VStack(spacing: 10) {
+        LazyVStack(spacing: 10) {
             ForEach(items) { item in
                 if isEditingChecklist && store.sortMode == .manual {
                     ItemRow(
@@ -1316,6 +1337,20 @@ private struct ChecklistTutorialView: View {
         .presentationDetents([.large])
         .presentationDragIndicator(.hidden)
     }
+}
+
+private struct ChecklistRenderSnapshot {
+    let archiveItems: [ChecklistItem]
+    let archiveTotalCount: Int
+    let todoSectionItems: [ChecklistItem]
+    let completedSectionItems: [ChecklistItem]
+    let skippedItems: [ChecklistItem]
+    let carryoverEntries: [CarryoverEntry]
+    let completeGroupIDs: Set<UUID>
+    let todoCount: Int
+    let filteredTodoCount: Int
+    let carryoverCount: Int
+    let showsStillOpenSection: Bool
 }
 
 private struct TutorialPage: Identifiable {
