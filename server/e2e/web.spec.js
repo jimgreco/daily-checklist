@@ -196,6 +196,13 @@ test("groups today with missed irregular work and resolves only the latest occur
   const twoDaysAgoOccurrenceID = occurrenceIDFor("carryover-item", 0, twoDaysAgoDate);
   const yesterdayOccurrenceID = occurrenceIDFor("carryover-item", 0, yesterdayDate);
   const todayOccurrenceID = occurrenceIDFor("carryover-item", 0, todayDate);
+  const carryoverGroup = {
+    id: "carryover-group",
+    name: "Outdoor chores",
+    sortOrder: 0,
+    isCollapsed: false,
+    pauseWindows: []
+  };
   const carryoverItem = {
     id: "carryover-item",
     title: "Refill the bird feeder",
@@ -211,7 +218,7 @@ test("groups today with missed irregular work and resolves only the latest occur
     createdAt: twoDaysAgo.toISOString(),
     startDate: twoDaysAgo.toISOString(),
     endedAt: null,
-    groupID: null,
+    groupID: carryoverGroup.id,
     sortOrder: 0,
     pauseWindows: [],
     scheduleRevision: 0,
@@ -233,7 +240,7 @@ test("groups today with missed irregular work and resolves only the latest occur
     contentType: "application/json",
     body: JSON.stringify({ error: "Offline for local carryover test" })
   }));
-  await page.evaluate(({ items }) => {
+  await page.evaluate(({ items, groups }) => {
     window.name = "preserve-e2e-storage";
     localStorage.setItem("dailyWeb.user", JSON.stringify({
       id: "carryover-test-user",
@@ -241,14 +248,15 @@ test("groups today with missed irregular work and resolves only the latest occur
       name: "Carryover Test"
     }));
     localStorage.setItem("dailyWeb.accountID", "carryover-test-user");
-    localStorage.setItem("dailyWeb.cache", JSON.stringify({ items, groups: [] }));
+    localStorage.setItem("dailyWeb.cache", JSON.stringify({ items, groups }));
     localStorage.setItem("dailyWeb.pending", "[]");
-  }, { items: [carryoverItem] });
+  }, { items: [carryoverItem], groups: [carryoverGroup] });
   await page.reload();
 
   await expect(page.getByRole("heading", { name: "Ritual Cue" })).toBeVisible();
   const carryover = page.locator(".carryover-task").filter({ hasText: carryoverItem.title });
   await expect(page.getByText("Still open", { exact: true })).toBeVisible();
+  await expect(carryover.getByText(carryoverGroup.name, { exact: true })).toBeVisible();
   await expect(carryover.getByText("3 occurrences", { exact: true })).toBeVisible();
   await expect(carryover.getByText("2 days late", { exact: true })).toBeVisible();
   await expect(carryover.getByText("0/2", { exact: true })).toBeVisible();

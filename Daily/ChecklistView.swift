@@ -810,6 +810,9 @@ struct ChecklistView: View {
                 ForEach(entries) { entry in
                     CarryoverRow(
                         entry: entry,
+                        groupName: entry.item.groupID.flatMap { groupID in
+                            store.groups.first(where: { $0.id == groupID })?.name
+                        },
                         showsEditButton: isEditingChecklist,
                         onAdvance: {
                             withAnimation(.snappy) { store.advanceCarryover(entry) }
@@ -1414,6 +1417,7 @@ private struct AccountToolbarImage: View {
 
 private struct CarryoverRow: View {
     let entry: CarryoverEntry
+    let groupName: String?
     let showsEditButton: Bool
     let onAdvance: () -> Void
     let onTomorrow: () -> Void
@@ -1477,6 +1481,12 @@ private struct CarryoverRow: View {
                             .padding(.vertical, 4)
                             .background(delayed.opacity(0.12), in: Capsule())
                     }
+                }
+                if let groupName {
+                    Label(groupName, systemImage: "folder")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
                 }
                 Label(dueText, systemImage: "clock.badge.exclamationmark")
                     .font(.system(size: 12, weight: .semibold))

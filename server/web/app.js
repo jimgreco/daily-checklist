@@ -914,6 +914,7 @@
 
   function renderCarryoverTask(entry) {
     const { item, occurrences, oldestDate, latestDate, latestID } = entry;
+    const group = groupByID(item.groupID);
     const oldest = dateFromInput(oldestDate);
     const lateDays = calendarDayDistance(oldest, startOfDay(new Date()));
     const oldestLabel = oldest.toLocaleDateString([], { month: "short", day: "numeric" });
@@ -930,6 +931,7 @@
           <span class="status-badge carryover-count">${occurrenceCount} ${occurrenceCount === 1 ? "occurrence" : "occurrences"}</span>
         </div>
         <div class="task-meta carryover-meta">
+          ${group ? `<span>${icon("folderClosed", "meta-icon")} ${escapeHTML(group.name)}</span>` : ""}
           <span>${icon("clock", "meta-icon")} Due ${escapeHTML(oldestLabel)}</span>
           <span>${escapeHTML(lateText)}</span>
         </div>
