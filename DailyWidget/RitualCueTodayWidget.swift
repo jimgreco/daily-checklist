@@ -50,21 +50,27 @@ struct RitualCueTodayWidget: Widget {
 
 private struct RitualCueWidgetView: View {
     @Environment(\.widgetFamily) private var family
+    @Environment(\.colorScheme) private var colorScheme
 
     let entry: RitualCueTodayEntry
 
+    @ViewBuilder
     var body: some View {
-        switch family {
-        case .accessoryInline:
-            accessoryInline
-        case .accessoryCircular:
-            accessoryCircular
-        case .accessoryRectangular:
-            accessoryRectangular
-        case .systemMedium:
-            systemMedium
-        default:
-            systemSmall
+        if !snapshot.hasChecklist {
+            noChecklist
+        } else {
+            switch family {
+            case .accessoryInline:
+                accessoryInline
+            case .accessoryCircular:
+                accessoryCircular
+            case .accessoryRectangular:
+                accessoryRectangular
+            case .systemMedium:
+                systemMedium
+            default:
+                systemSmall
+            }
         }
     }
 
@@ -109,11 +115,46 @@ private struct RitualCueWidgetView: View {
         return Double(completedTotal) / Double(snapshot.scheduledCount)
     }
 
+    private var widgetInk: Color {
+        colorScheme == .dark
+            ? Color(red: 0.95, green: 0.94, blue: 0.99)
+            : Color(red: 0.11, green: 0.10, blue: 0.16)
+    }
+
+    private var widgetSecondary: Color {
+        colorScheme == .dark
+            ? Color(red: 0.72, green: 0.70, blue: 0.80)
+            : Color(red: 0.36, green: 0.34, blue: 0.42)
+    }
+
+    private var widgetPurple: Color {
+        colorScheme == .dark
+            ? Color(red: 0.65, green: 0.59, blue: 1.00)
+            : Color(red: 0.39, green: 0.30, blue: 0.87)
+    }
+
+    private var widgetMint: Color {
+        colorScheme == .dark
+            ? Color(red: 0.34, green: 0.87, blue: 0.61)
+            : Color(red: 0.10, green: 0.53, blue: 0.34)
+    }
+
+    private var widgetAmber: Color {
+        colorScheme == .dark
+            ? Color(red: 1.00, green: 0.73, blue: 0.31)
+            : Color(red: 0.72, green: 0.43, blue: 0.05)
+    }
+
+    private var progressTint: Color {
+        snapshot.remainingCount == 0 ? widgetMint : widgetPurple
+    }
+
     private var systemSmall: some View {
         VStack(alignment: .leading, spacing: 10) {
             Label("Ritual Cue", systemImage: "checklist")
                 .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(widgetPurple)
+                .symbolRenderingMode(.hierarchical)
                 .lineLimit(1)
 
             Spacer(minLength: 0)
@@ -121,12 +162,13 @@ private struct RitualCueWidgetView: View {
             HStack(alignment: .firstTextBaseline, spacing: 5) {
                 Text(countText)
                     .font(.system(size: 46, weight: .bold, design: .rounded))
+                    .foregroundStyle(widgetInk)
                     .monospacedDigit()
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
                 Text(taskLabel)
                     .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(widgetSecondary)
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -135,13 +177,13 @@ private struct RitualCueWidgetView: View {
             if snapshot.carryoverCount > 0 {
                 Text(remainingBreakdown)
                     .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(widgetAmber)
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
             }
             Text(nextReminderText)
                 .font(.caption2.weight(.medium))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(widgetSecondary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.75)
         }
@@ -154,18 +196,20 @@ private struct RitualCueWidgetView: View {
             VStack(alignment: .leading, spacing: 8) {
                 Label("Ritual Cue", systemImage: "checklist")
                     .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(widgetPurple)
+                    .symbolRenderingMode(.hierarchical)
                     .lineLimit(1)
 
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Text(countText)
                         .font(.system(size: 52, weight: .bold, design: .rounded))
+                        .foregroundStyle(widgetInk)
                         .monospacedDigit()
                         .lineLimit(1)
                         .minimumScaleFactor(0.7)
                     Text(taskLabel)
                         .font(.headline.weight(.semibold))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(widgetSecondary)
                         .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -176,18 +220,18 @@ private struct RitualCueWidgetView: View {
                 progressBar
                 Text("\(completedTotal.formatted()) of \(snapshot.scheduledCount.formatted()) handled")
                     .font(.caption.weight(.semibold))
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(widgetInk)
                     .lineLimit(1)
                 if snapshot.carryoverCount > 0 {
                     Text(remainingBreakdown)
                         .font(.caption.weight(.semibold))
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(widgetAmber)
                         .lineLimit(1)
                         .minimumScaleFactor(0.8)
                 }
                 Text(nextReminderText)
                     .font(.caption.weight(.medium))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(widgetSecondary)
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
             }
@@ -220,7 +264,7 @@ private struct RitualCueWidgetView: View {
             }
             Gauge(value: progress) { EmptyView() }
                 .gaugeStyle(.accessoryCircularCapacity)
-                .tint(.green)
+                .tint(progressTint)
         }
     }
 
@@ -234,19 +278,79 @@ private struct RitualCueWidgetView: View {
                 .minimumScaleFactor(0.8)
             Text(snapshot.carryoverCount > 0 ? remainingBreakdown : nextReminderText)
                 .font(.caption2)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(widgetSecondary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
+        }
+    }
+
+    @ViewBuilder
+    private var noChecklist: some View {
+        switch family {
+        case .accessoryInline:
+            Text("Open Ritual Cue")
+        case .accessoryCircular:
+            ZStack {
+                AccessoryWidgetBackground()
+                Image(systemName: "checklist")
+                    .font(.system(size: 20, weight: .semibold))
+            }
+        case .accessoryRectangular:
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Ritual Cue")
+                    .font(.caption.weight(.semibold))
+                Text("Open the app to begin")
+                    .font(.headline.weight(.bold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+            }
+        case .systemMedium:
+            HStack(spacing: 18) {
+                Image(systemName: "checklist")
+                    .font(.system(size: 34, weight: .semibold))
+                    .foregroundStyle(widgetPurple)
+                    .frame(width: 62, height: 62)
+                    .background(widgetPurple.opacity(0.12), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("Ritual Cue")
+                        .font(.headline.weight(.bold))
+                        .foregroundStyle(widgetInk)
+                    Text("Open the app to add your first routine.")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(widgetSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(18)
+            .containerBackground(widgetBackground, for: .widget)
+        default:
+            VStack(alignment: .leading, spacing: 8) {
+                Label("Ritual Cue", systemImage: "checklist")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(widgetPurple)
+                Spacer(minLength: 0)
+                Image(systemName: "plus.circle.fill")
+                    .font(.system(size: 30, weight: .semibold))
+                    .foregroundStyle(widgetPurple)
+                Text("Open the app to begin")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(widgetInk)
+                    .lineLimit(2)
+            }
+            .padding(14)
+            .containerBackground(widgetBackground, for: .widget)
         }
     }
 
     private var progressBar: some View {
         GeometryReader { proxy in
             ZStack(alignment: .leading) {
-                Capsule().fill(Color.black.opacity(0.10))
+                Capsule().fill(widgetInk.opacity(0.10))
                 Capsule()
-                    .fill(Color.green)
-                    .frame(width: max(6, proxy.size.width * progress))
+                    .fill(progressTint)
+                    .frame(width: max(0, proxy.size.width * progress))
+                    .widgetAccentable()
             }
         }
         .frame(height: 7)
@@ -255,10 +359,15 @@ private struct RitualCueWidgetView: View {
 
     private var widgetBackground: some ShapeStyle {
         LinearGradient(
-            colors: [
-                Color(red: 0.95, green: 0.98, blue: 0.96),
-                Color(red: 0.86, green: 0.93, blue: 1.00)
-            ],
+            colors: colorScheme == .dark
+                ? [
+                    Color(red: 0.10, green: 0.085, blue: 0.15),
+                    Color(red: 0.075, green: 0.105, blue: 0.12)
+                ]
+                : [
+                    Color(red: 0.99, green: 0.975, blue: 0.94),
+                    Color(red: 0.92, green: 0.89, blue: 0.99)
+                ],
             startPoint: .topLeading,
             endPoint: .bottomTrailing
         )

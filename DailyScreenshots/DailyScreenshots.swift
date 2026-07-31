@@ -34,20 +34,33 @@ final class RitualCueScreenshots: XCTestCase {
         let allFilter = app.buttons["All"].firstMatch
         XCTAssertTrue(allFilter.waitForExistence(timeout: 5))
         allFilter.tap()
-        XCTAssertTrue(app.staticTexts["Plan weekly reset"].waitForExistence(timeout: 5))
+        let planningItem = app.staticTexts["Plan weekly reset"]
+        XCTAssertTrue(scrollToExistence(planningItem))
         snapshot("02-Groups")
 
         app.buttons["Add item"].tap()
         XCTAssertTrue(app.navigationBars["New item"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.textFields["Title"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.switches["Remind me"].waitForExistence(timeout: 5))
+        XCTAssertTrue(scrollToExistence(app.switches["Remind me"]))
         snapshot("03-Reminders")
 
         app.buttons["Cancel"].tap()
+        for _ in 0..<4 {
+            app.swipeDown()
+        }
         XCTAssertTrue(app.staticTexts["Ritual Cue"].waitForExistence(timeout: 5))
         app.buttons["Account and notification settings"].tap()
         XCTAssertTrue(app.navigationBars["Account"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["Keep routines backed up"].waitForExistence(timeout: 5))
+        XCTAssertTrue(scrollToExistence(app.staticTexts["Keep routines backed up"]))
         snapshot("04-Sync")
+    }
+
+    private func scrollToExistence(_ element: XCUIElement, maxSwipes: Int = 5) -> Bool {
+        if element.waitForExistence(timeout: 1) { return true }
+        for _ in 0..<maxSwipes {
+            app.swipeUp()
+            if element.waitForExistence(timeout: 1) { return true }
+        }
+        return element.exists
     }
 }

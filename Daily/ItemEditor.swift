@@ -99,7 +99,7 @@ struct ItemEditor: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("Task") {
+                Section {
                     TextField("Title", text: $item.title)
                         .font(.headline)
                     TextField("Notes (optional)", text: $item.notes, axis: .vertical)
@@ -133,9 +133,11 @@ struct ItemEditor: View {
                     } label: {
                         LabeledContent("Group", value: selectedGroupName)
                     }
+                } header: {
+                    RitualFormSectionHeader(title: "Task", systemImage: "checklist")
                 }
 
-                Section("Repeats") {
+                Section {
                     Picker("Schedule", selection: $scheduleMode) {
                         ForEach(ScheduleEditorMode.allCases) { mode in
                             Text(mode.title).tag(mode)
@@ -145,6 +147,8 @@ struct ItemEditor: View {
                         weekdayPicker
                     }
                     recurrenceControls
+                } header: {
+                    RitualFormSectionHeader(title: "Repeats", systemImage: "repeat")
                 }
 
                 if scheduleMode != .everyDay {
@@ -160,13 +164,13 @@ struct ItemEditor: View {
                             }
                         ))
                     } header: {
-                        Text("If missed")
+                        RitualFormSectionHeader(title: "If missed", systemImage: "clock.badge.exclamationmark")
                     } footer: {
                         Text("Missed occurrences stay in Still Open until completed, skipped, or deferred. Turn this off to count them as missed normally.")
                     }
                 }
 
-                Section("Upcoming") {
+                Section {
                     Text(previewItem.scheduleSummary)
                         .font(.subheadline.weight(.semibold))
                     let dates = previewItem.nextScheduledDates(startingAt: .now, count: 5)
@@ -176,11 +180,18 @@ struct ItemEditor: View {
                             .foregroundStyle(.secondary)
                     } else {
                         ForEach(Array(dates.enumerated()), id: \.offset) { entry in
-                            Text(entry.element.formatted(date: .abbreviated, time: .omitted))
-                                .font(.footnote)
-                                .foregroundStyle(.secondary)
+                            Label {
+                                Text(entry.element.formatted(date: .abbreviated, time: .omitted))
+                                    .font(.footnote.weight(.medium))
+                                    .foregroundStyle(.secondary)
+                            } icon: {
+                                Image(systemName: entry.offset == 0 ? "calendar.badge.clock" : "calendar")
+                                    .foregroundStyle(entry.offset == 0 ? accent : .secondary)
+                            }
                         }
                     }
+                } header: {
+                    RitualFormSectionHeader(title: "Upcoming", systemImage: "calendar")
                 }
 
                 Section {
@@ -198,7 +209,7 @@ struct ItemEditor: View {
                         )
                     }
                 } header: {
-                    Text("Active dates")
+                    RitualFormSectionHeader(title: "Active dates", systemImage: "calendar.badge.checkmark")
                 } footer: {
                     Text("The task appears from its start date through its end date. Leave either date off when there is no limit.")
                 }
@@ -223,7 +234,7 @@ struct ItemEditor: View {
                         }
                     }
                 } header: {
-                    Text("Reminder")
+                    RitualFormSectionHeader(title: "Reminder", systemImage: "bell")
                 } footer: {
                     if reminderEnabled && followUpEnabled {
                         Text("Follow-ups stop when this occurrence is handled and never continue past your account quiet-hours cutoff.")
@@ -241,6 +252,12 @@ struct ItemEditor: View {
                     }
                 }
             }
+            .scrollContentBackground(.hidden)
+            .background {
+                RitualBackdrop()
+                    .ignoresSafeArea()
+            }
+            .listSectionSpacing(18)
             .navigationTitle(onDelete == nil ? "New item" : "Edit item")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -328,6 +345,7 @@ struct ItemEditor: View {
                 Text("Create a group and assign this task to it.")
             }
         }
+        .tint(accent)
     }
 
     private var followUpDelayText: String {
@@ -536,7 +554,7 @@ struct ItemEditor: View {
     }
 
     private var weekdayPicker: some View {
-        HStack {
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 7), spacing: 6) {
             ForEach(1...7, id: \.self) { day in
                 let selected = item.customWeekdays.contains(day)
                 Button {
@@ -548,9 +566,14 @@ struct ItemEditor: View {
                 } label: {
                     Text(WeekdayAbbreviation.twoLetter[day - 1])
                         .font(.system(size: 13, weight: .bold))
-                        .foregroundStyle(selected ? .white : .secondary)
-                        .frame(width: 34, height: 34)
-                        .background(selected ? accent : Color.secondary.opacity(0.12), in: Circle())
+                        .foregroundStyle(selected ? .white : ink.opacity(0.66))
+                        .frame(width: 36, height: 36)
+                        .background(selected ? accent : accentSoft.opacity(0.72), in: Circle())
+                        .overlay {
+                            Circle()
+                                .stroke(selected ? accent : ritualLine.opacity(0.7), lineWidth: 1)
+                        }
+                        .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.plain)
             }
@@ -573,17 +596,27 @@ struct EveningReminderView: View {
                     if enabled {
                         DatePicker("Alert time", selection: $time, displayedComponents: .hourAndMinute)
                     }
+                } header: {
+                    RitualFormSectionHeader(title: "Notifications", systemImage: "bell")
                 } footer: {
                     Text("Ritual Cue will tell you how many scheduled tasks are still unfinished.")
                 }
 
-                Section("Sync") {
+                Section {
                     LabeledContent("Status", value: store.syncState)
                     Text("Your checklist is cached on this iPhone and synced to the Ritual Cue server.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
+                } header: {
+                    RitualFormSectionHeader(title: "Sync", systemImage: "arrow.triangle.2.circlepath")
                 }
             }
+            .scrollContentBackground(.hidden)
+            .background {
+                RitualBackdrop()
+                    .ignoresSafeArea()
+            }
+            .listSectionSpacing(18)
             .navigationTitle("Notifications")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -606,5 +639,6 @@ struct EveningReminderView: View {
                 time = Calendar.current.date(from: DateComponents(hour: minutes / 60, minute: minutes % 60)) ?? .now
             }
         }
+        .tint(accent)
     }
 }

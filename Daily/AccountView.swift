@@ -25,50 +25,58 @@ struct AccountView: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(spacing: 18) {
-                    if let user = authStore.user {
-                        signedInHeader(user)
-                        notificationCard
-                        syncCard
-                        insightsCard
-                        accountActions
-                    } else {
-                        signedOutContent
-                        insightsCard
-                        tutorialCard
-                    }
+            ZStack {
+                RitualBackdrop()
+                    .ignoresSafeArea()
 
-                    if let error = authStore.errorMessage {
-                        Text(error)
-                            .font(.footnote)
-                            .foregroundStyle(.red)
-                            .multilineTextAlignment(.center)
-                            .padding(.horizontal)
-                    }
-                    if let accountMessage {
-                        Text(accountMessage)
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                            .multilineTextAlignment(.center)
-                            .padding(.horizontal)
-                    }
+                ScrollView {
+                    VStack(spacing: 18) {
+                        if let user = authStore.user {
+                            signedInHeader(user)
+                            notificationCard
+                            syncCard
+                            insightsCard
+                            accountActions
+                        } else {
+                            signedOutContent
+                            insightsCard
+                            tutorialCard
+                        }
 
-                    Text(BuildInformation.displayText)
-                        .font(.caption2.monospaced())
-                        .foregroundStyle(.tertiary)
-                        .multilineTextAlignment(.center)
-                        .padding(.top, 8)
+                        if let error = authStore.errorMessage {
+                            RitualInlineMessage(text: error, tone: .danger)
+                        }
+                        if let accountMessage {
+                            RitualInlineMessage(text: accountMessage, tone: .success)
+                        }
+
+                        Text(BuildInformation.displayText)
+                            .font(.caption2.monospaced())
+                            .foregroundStyle(.tertiary)
+                            .multilineTextAlignment(.center)
+                            .padding(.top, 8)
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.top, 12)
+                    .padding(.bottom, 32)
                 }
-                .padding(20)
-            }
-            .background(canvas.ignoresSafeArea())
-            .padding()
-            .overlay {
+
                 if authStore.isLoading {
-                    ProgressView()
-                        .padding(24)
-                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+                    Color.black.opacity(0.12)
+                        .ignoresSafeArea()
+                        .accessibilityHidden(true)
+
+                    VStack(spacing: 12) {
+                        ProgressView()
+                            .controlSize(.large)
+                        Text("Working…")
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.horizontal, 28)
+                    .padding(.vertical, 22)
+                    .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+                    .accessibilityElement(children: .combine)
                 }
             }
             .navigationTitle("Account")
@@ -121,6 +129,7 @@ struct AccountView: View {
                 Text("This replaces the synced checklist data on this account with the selected Ritual Cue export.")
             }
         }
+        .tint(accent)
     }
 
     private func signedInHeader(_ user: AppUser) -> some View {
@@ -136,15 +145,17 @@ struct AccountView: View {
             }
         }
         .frame(maxWidth: .infinity)
-        .padding(.top, 8)
-        .padding(.bottom, 6)
+        .padding(.vertical, 22)
+        .background(accentSoft.opacity(0.62), in: RoundedRectangle(cornerRadius: 30, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 30, style: .continuous)
+                .stroke(accent.opacity(0.16), lineWidth: 1)
+        }
     }
 
     private var notificationCard: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Label("Notifications", systemImage: "bell.fill")
-                .font(.system(size: 15, weight: .bold))
-                .foregroundStyle(ink)
+            RitualSectionLabel(title: "Notifications", systemImage: "bell.fill")
             Toggle("Evening check-in", isOn: Binding(
                 get: { reminderEnabled },
                 set: { enabled in
@@ -198,8 +209,8 @@ struct AccountView: View {
                 .font(.footnote)
                 .foregroundStyle(.secondary)
         }
-        .padding(16)
-        .background(surface, in: RoundedRectangle(cornerRadius: 18))
+        .padding(18)
+        .ritualCard()
     }
 
     private var notificationGroupFilterControls: some View {
@@ -233,6 +244,8 @@ struct AccountView: View {
                             }
                         }
                     }
+                    .padding(.horizontal, 12)
+                    .background(softSurface.opacity(0.72), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                 }
             }
         }
@@ -243,7 +256,8 @@ struct AccountView: View {
             AccountActionRow(
                 title: "Sync now",
                 subtitle: store.syncState,
-                systemImage: "arrow.triangle.2.circlepath"
+                systemImage: "arrow.triangle.2.circlepath",
+                showsChevron: false
             ) {
                 Task { await store.sync(using: authStore) }
             }
@@ -251,7 +265,8 @@ struct AccountView: View {
             AccountActionRow(
                 title: "Copy data export",
                 subtitle: "Copy a JSON backup to the clipboard",
-                systemImage: "square.and.arrow.down"
+                systemImage: "square.and.arrow.down",
+                showsChevron: false
             ) {
                 Task {
                     if let export = await authStore.exportData() {
@@ -269,7 +284,7 @@ struct AccountView: View {
                 showingImportPicker = true
             }
         }
-        .background(surface, in: RoundedRectangle(cornerRadius: 18))
+        .ritualCard()
     }
 
     private var accountActions: some View {
@@ -278,7 +293,7 @@ struct AccountView: View {
                 onShowTutorial()
             }
             Divider().padding(.leading, 48)
-            AccountActionRow(title: "Copy diagnostics", subtitle: "Copy build and sync details for support", systemImage: "doc.on.clipboard") {
+            AccountActionRow(title: "Copy diagnostics", subtitle: "Copy build and sync details for support", systemImage: "doc.on.clipboard", showsChevron: false) {
                 copyDiagnostics()
             }
             Divider().padding(.leading, 48)
@@ -294,16 +309,16 @@ struct AccountView: View {
                 }
             }
             Divider().padding(.leading, 48)
-            AccountActionRow(title: "Sign out", subtitle: nil, systemImage: "rectangle.portrait.and.arrow.right", role: .destructive) {
+            AccountActionRow(title: "Sign out", subtitle: nil, systemImage: "rectangle.portrait.and.arrow.right", role: .destructive, showsChevron: false) {
                 authStore.signOut()
                 store.activateAnonymousAccount()
             }
             Divider().padding(.leading, 48)
-            AccountActionRow(title: "Delete account", subtitle: "Remove synced account data", systemImage: "trash", role: .destructive) {
+            AccountActionRow(title: "Delete account", subtitle: "Remove synced account data", systemImage: "trash", role: .destructive, showsChevron: false) {
                 showingDeleteConfirmation = true
             }
         }
-        .background(surface, in: RoundedRectangle(cornerRadius: 18))
+        .ritualCard()
     }
 
     private var insightsCard: some View {
@@ -316,7 +331,7 @@ struct AccountView: View {
                 showingRoutineInsights = true
             }
         }
-        .background(surface, in: RoundedRectangle(cornerRadius: 18))
+        .ritualCard()
     }
 
     private var tutorialCard: some View {
@@ -325,7 +340,7 @@ struct AccountView: View {
                 onShowTutorial()
             }
             Divider().padding(.leading, 48)
-            AccountActionRow(title: "Copy diagnostics", subtitle: "Copy build and device details for support", systemImage: "doc.on.clipboard") {
+            AccountActionRow(title: "Copy diagnostics", subtitle: "Copy build and device details for support", systemImage: "doc.on.clipboard", showsChevron: false) {
                 copyDiagnostics()
             }
             Divider().padding(.leading, 48)
@@ -335,17 +350,23 @@ struct AccountView: View {
                 }
             }
         }
-        .background(surface, in: RoundedRectangle(cornerRadius: 18))
+        .ritualCard()
     }
 
     private var signedOutContent: some View {
         VStack(spacing: 22) {
             Image(systemName: "icloud")
-                .font(.system(size: 58, weight: .medium))
+                .font(.system(size: 44, weight: .semibold))
                 .foregroundStyle(accent)
+                .frame(width: 92, height: 92)
+                .background(accentSoft, in: Circle())
+                .overlay {
+                    Circle().stroke(accent.opacity(0.18), lineWidth: 1)
+                }
             VStack(spacing: 8) {
                 Text("Keep routines backed up")
-                    .font(.title2.bold())
+                    .font(.title2.weight(.bold))
+                    .foregroundStyle(ink)
                 Text("Ritual Cue works offline first. Sign in when you want routine changes backed up and shared across devices.")
                     .multilineTextAlignment(.center)
                     .foregroundStyle(.secondary)
@@ -376,8 +397,8 @@ struct AccountView: View {
                 }
                 .signInWithAppleButtonStyle(.black)
                 .frame(maxWidth: .infinity)
-                .frame(height: 50)
-                .clipShape(RoundedRectangle(cornerRadius: 7))
+                .frame(height: 52)
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                 .accessibilityLabel("Continue with Apple")
 
                 #if DEBUG
@@ -391,9 +412,9 @@ struct AccountView: View {
                 .font(.footnote.weight(.semibold))
                 #endif
             }
-            .padding(.horizontal, 10)
         }
-        .padding(.top, 48)
+        .padding(24)
+        .ritualCard(cornerRadius: 30, elevated: true)
     }
 
     private func loadReminderState() {
@@ -419,7 +440,7 @@ struct AccountView: View {
             VStack(alignment: .leading, spacing: 8) {
                 Label("Notifications are disabled for Ritual Cue.", systemImage: "bell.slash.fill")
                     .font(.footnote.weight(.semibold))
-                    .foregroundStyle(.red)
+                    .foregroundStyle(dangerColor)
                 Button("Open Settings") {
                     if let url = URL(string: UIApplication.openSettingsURLString) {
                         openURL(url)
@@ -427,14 +448,19 @@ struct AccountView: View {
                 }
                 .font(.footnote.weight(.semibold))
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(14)
+            .background(dangerColor.opacity(0.09), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .stroke(dangerColor.opacity(0.18), lineWidth: 1)
+            }
         case .authorized, .provisional, .ephemeral:
             if store.notificationSchedulingStatus.isCapacityConstrained {
-                Label(
-                    "The iOS pending-notification limit left \(store.notificationSchedulingStatus.droppedCount) later reminder(s) unscheduled. Nearer reminders were kept first.",
-                    systemImage: "exclamationmark.triangle.fill"
+                RitualInlineMessage(
+                    text: "The iOS pending-notification limit left \(store.notificationSchedulingStatus.droppedCount) later reminder(s) unscheduled. Nearer reminders were kept first.",
+                    tone: .warning
                 )
-                .font(.footnote)
-                .foregroundStyle(.orange)
             }
         case .unknown, .notDetermined:
             EmptyView()
@@ -587,24 +613,30 @@ struct AccountView: View {
 
 private struct RoutineInsightsView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @EnvironmentObject private var store: ChecklistStore
 
     private var summary: RoutineInsightSummary {
         store.routineInsights()
     }
 
-    private let columns = [
-        GridItem(.flexible(), spacing: 12),
-        GridItem(.flexible(), spacing: 12)
-    ]
+    private var columns: [GridItem] {
+        if dynamicTypeSize.isAccessibilitySize {
+            return [GridItem(.flexible())]
+        }
+        return [
+            GridItem(.flexible(), spacing: 12),
+            GridItem(.flexible(), spacing: 12)
+        ]
+    }
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    Text("Calculated on this device from your last 21 days, excluding today. Nothing is sent to an analytics service.")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                    RitualInlineMessage(
+                        text: "Calculated on this device from your last 21 days, excluding today. Nothing is sent to an analytics service."
+                    )
 
                     if summary.hasEnoughData {
                         completionCard
@@ -628,7 +660,7 @@ private struct RoutineInsightsView: View {
                                 value: missedValue,
                                 detail: missedDetail,
                                 systemImage: "calendar.badge.exclamationmark",
-                                color: Color(red: 0.72, green: 0.22, blue: 0.20)
+                                color: dangerColor
                             )
                             InsightCard(
                                 title: "Longest delay",
@@ -644,7 +676,10 @@ private struct RoutineInsightsView: View {
                 }
                 .padding(20)
             }
-            .background(canvas.ignoresSafeArea())
+            .background {
+                RitualBackdrop()
+                    .ignoresSafeArea()
+            }
             .navigationTitle("Routine insights")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -653,6 +688,7 @@ private struct RoutineInsightsView: View {
                 }
             }
         }
+        .tint(accent)
     }
 
     private var completionCard: some View {
@@ -688,7 +724,7 @@ private struct RoutineInsightsView: View {
             Spacer(minLength: 0)
         }
         .padding(18)
-        .background(surface, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .ritualCard(elevated: true)
     }
 
     private var lowDataCard: some View {
@@ -707,7 +743,7 @@ private struct RoutineInsightsView: View {
         .frame(maxWidth: .infinity)
         .padding(.horizontal, 24)
         .padding(.vertical, 42)
-        .background(surface, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .ritualCard(elevated: true)
     }
 
     private var streakValue: String {
@@ -762,6 +798,8 @@ private struct InsightCard: View {
             Image(systemName: systemImage)
                 .font(.system(size: 18, weight: .semibold))
                 .foregroundStyle(color)
+                .frame(width: 38, height: 38)
+                .background(color.opacity(0.11), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
             Text(title)
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
@@ -778,7 +816,7 @@ private struct InsightCard: View {
         }
         .frame(maxWidth: .infinity, minHeight: 148, alignment: .topLeading)
         .padding(15)
-        .background(surface, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .ritualCard(cornerRadius: 20)
     }
 }
 
@@ -806,9 +844,13 @@ private struct AccountProfileImage: View {
         .frame(width: 88, height: 88)
         .clipShape(Circle())
         .overlay {
-            Circle().stroke(.white.opacity(0.8), lineWidth: 3)
+            Circle()
+                .strokeBorder(surface, lineWidth: 4)
+                .overlay {
+                    Circle().stroke(accent.opacity(0.26), lineWidth: 1)
+                }
         }
-        .shadow(color: .black.opacity(0.08), radius: 18, y: 8)
+        .shadow(color: accent.opacity(0.14), radius: 18, y: 8)
     }
 
     private var fallback: some View {
@@ -823,20 +865,27 @@ private struct AccountActionRow: View {
     let subtitle: String?
     let systemImage: String
     var role: ButtonRole?
+    var showsChevron = true
     let action: () -> Void
 
     var body: some View {
+        let rowColor = role == .destructive ? dangerColor : accent
+
         Button(role: role, action: action) {
             HStack(spacing: 12) {
                 Image(systemName: systemImage)
                     .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(role == .destructive ? Color.red : accent)
-                    .frame(width: 36, height: 36)
-                    .background((role == .destructive ? Color.red : accent).opacity(0.10), in: Circle())
+                    .foregroundStyle(rowColor)
+                    .frame(width: 38, height: 38)
+                    .background(rowColor.opacity(0.10), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .stroke(rowColor.opacity(0.14), lineWidth: 1)
+                    }
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title)
                         .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(role == .destructive ? Color.red : ink)
+                        .foregroundStyle(role == .destructive ? dangerColor : ink)
                     if let subtitle, !subtitle.isEmpty {
                         Text(subtitle)
                             .font(.system(size: 13, weight: .medium))
@@ -844,12 +893,14 @@ private struct AccountActionRow: View {
                     }
                 }
                 Spacer()
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 12, weight: .bold))
-                    .foregroundStyle(.tertiary)
+                if showsChevron {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(.tertiary)
+                }
             }
             .padding(.horizontal, 14)
-            .padding(.vertical, 12)
+            .padding(.vertical, 13)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -905,10 +956,10 @@ private struct ProviderSignInButton: View {
                     .frame(maxWidth: .infinity)
             }
             .frame(maxWidth: .infinity)
-            .frame(height: 50)
-            .background(provider.background, in: RoundedRectangle(cornerRadius: 7))
+            .frame(height: 52)
+            .background(provider.background, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
             .overlay {
-                RoundedRectangle(cornerRadius: 7)
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
                     .stroke(provider.border, lineWidth: 1)
             }
         }

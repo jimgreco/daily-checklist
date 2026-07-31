@@ -11,6 +11,7 @@
 		0A48FA099729AE1C4FD897A4 /* DailyApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 662D254436332CA222BB53DA /* DailyApp.swift */; };
 		2E15F5B24FA39D0B30EC8BD4 /* AccountView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4162467A71517BA6F53716B1 /* AccountView.swift */; };
 		2FFC471A6EE71358BDF7E534 /* ChecklistStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5249D5CADB178F98244A2F6C /* ChecklistStore.swift */; };
+		39E6742BD18686D67A9E4500 /* AppVisualSystem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 85166A3795BCA17FC315F2DC /* AppVisualSystem.swift */; };
 		3DE80678325E1D0817A04EA7 /* ItemEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5451BA5CFBB1BB1D77988B59 /* ItemEditor.swift */; };
 		41CF4360EFA4DAFA43763646 /* SnapshotHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E6ABFE737D6699849E75E01 /* SnapshotHelper.swift */; };
 		4403380735BDEBE57A870733 /* ChecklistView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CEEFE571E0BAFE77D62FD109 /* ChecklistView.swift */; };
@@ -86,6 +87,7 @@
 		662D254436332CA222BB53DA /* DailyApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DailyApp.swift; sourceTree = "<group>"; };
 		6F795026AC3D729773F4B309 /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
 		82DF1E4640EF266665AFDB26 /* DailyWidget.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = DailyWidget.entitlements; sourceTree = "<group>"; };
+		85166A3795BCA17FC315F2DC /* AppVisualSystem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppVisualSystem.swift; sourceTree = "<group>"; };
 		8E6ABFE737D6699849E75E01 /* SnapshotHelper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SnapshotHelper.swift; sourceTree = "<group>"; };
 		9224F7E2196FA2D3D19C2740 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		99D7B2CA7FB82847776BFE18 /* RitualWidgetSnapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RitualWidgetSnapshot.swift; sourceTree = "<group>"; };
@@ -135,6 +137,7 @@
 				4162467A71517BA6F53716B1 /* AccountView.swift */,
 				6F795026AC3D729773F4B309 /* APIClient.swift */,
 				B9FD2567CD66DF3B64A11ACF /* AppIcon.icon */,
+				85166A3795BCA17FC315F2DC /* AppVisualSystem.swift */,
 				C0BF8AD72B19D5F262801193 /* Assets.xcassets */,
 				6296E6DE360FB5DBF00638A4 /* AuthStore.swift */,
 				5249D5CADB178F98244A2F6C /* ChecklistStore.swift */,
@@ -342,6 +345,7 @@
 			files = (
 				FF5727462EEE699A4E91792F /* APIClient.swift in Sources */,
 				2E15F5B24FA39D0B30EC8BD4 /* AccountView.swift in Sources */,
+				39E6742BD18686D67A9E4500 /* AppVisualSystem.swift in Sources */,
 				8935C1F6072250846C42A8E8 /* AuthStore.swift in Sources */,
 				2FFC471A6EE71358BDF7E534 /* ChecklistStore.swift in Sources */,
 				4403380735BDEBE57A870733 /* ChecklistView.swift in Sources */,

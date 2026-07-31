@@ -1,26 +1,5 @@
 import SwiftUI
-import UIKit
 import UniformTypeIdentifiers
-
-private func adaptiveColor(
-    light: (Double, Double, Double),
-    dark: (Double, Double, Double)
-) -> Color {
-    Color(uiColor: UIColor { traits in
-        let values = traits.userInterfaceStyle == .dark ? dark : light
-        return UIColor(red: values.0, green: values.1, blue: values.2, alpha: 1)
-    })
-}
-
-let ink = adaptiveColor(light: (0.10, 0.12, 0.16), dark: (0.94, 0.95, 0.98))
-let accent = adaptiveColor(light: (0.38, 0.33, 0.92), dark: (0.56, 0.51, 1.00))
-let canvas = adaptiveColor(light: (0.965, 0.958, 0.94), dark: (0.055, 0.060, 0.072))
-let surface = adaptiveColor(light: (1.00, 1.00, 1.00), dark: (0.13, 0.14, 0.16))
-let softSurface = adaptiveColor(light: (0.985, 0.982, 0.965), dark: (0.10, 0.11, 0.13))
-let controlSurface = adaptiveColor(light: (1.00, 1.00, 1.00), dark: (0.18, 0.19, 0.22))
-let subtleFill = adaptiveColor(light: (0.91, 0.90, 0.87), dark: (0.19, 0.20, 0.23))
-let success = adaptiveColor(light: (0.12, 0.52, 0.29), dark: (0.34, 0.84, 0.50))
-let delayed = adaptiveColor(light: (0.72, 0.43, 0.05), dark: (1.00, 0.72, 0.28))
 
 struct ChecklistView: View {
     @EnvironmentObject private var store: ChecklistStore
@@ -51,79 +30,100 @@ struct ChecklistView: View {
 
         NavigationStack {
             ZStack(alignment: .bottomTrailing) {
-                canvas.ignoresSafeArea()
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 0) {
-                        header(snapshot: snapshot)
-                        filter
-                            .padding(.top, 22)
-                        if store.scope == .archive {
-                            section(
-                                title: "ARCHIVE",
-                                items: snapshot.archiveItems,
-                                emptyText: "No ended tasks",
-                                showsCompleteAll: false,
-                                isCompletedSection: false,
-                                completeGroupIDs: snapshot.completeGroupIDs,
-                                allowsPermanentDelete: true
-                            )
-                                .padding(.top, 28)
-                        } else {
-                            if snapshot.showsStillOpenSection {
-                                stillOpenSection(entries: snapshot.carryoverEntries)
-                                    .padding(.top, 28)
-                            }
-                            section(
-                                title: "TO DO",
-                                items: snapshot.todoSectionItems,
-                                emptyText: "Nothing left for now",
-                                showsCompleteAll: store.scope == .today && snapshot.filteredTodoCount > 0,
-                                isCompletedSection: false,
-                                completeGroupIDs: snapshot.completeGroupIDs,
-                                displayCount: store.scope == .today
-                                    ? snapshot.filteredTodoCount
-                                    : snapshot.todoSectionItems.count
-                            )
-                                .padding(.top, snapshot.showsStillOpenSection ? 24 : 28)
-                            if store.scope == .today {
+                RitualBackdrop()
+                    .ignoresSafeArea()
+
+                if store.hasLoaded {
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 0) {
+                            header(snapshot: snapshot)
+                            filter
+                                .padding(.top, 18)
+
+                            if snapshot.searchHasNoMatches {
+                                searchEmptyState
+                                    .padding(.top, 32)
+                            } else if store.scope == .archive {
                                 section(
-                                    title: "SKIPPED",
-                                    items: snapshot.skippedItems,
-                                    emptyText: nil,
+                                    title: "ARCHIVE",
+                                    items: snapshot.archiveItems,
+                                    emptyText: "No ended tasks",
                                     showsCompleteAll: false,
                                     isCompletedSection: false,
-                                    completeGroupIDs: snapshot.completeGroupIDs
+                                    completeGroupIDs: snapshot.completeGroupIDs,
+                                    allowsPermanentDelete: true
                                 )
-                                    .padding(.top, 32)
-                                    .opacity(snapshot.skippedItems.isEmpty ? 0 : 1)
+                                    .padding(.top, 28)
+                            } else {
+                                if snapshot.showsStillOpenSection {
+                                    stillOpenSection(entries: snapshot.carryoverEntries)
+                                        .padding(.top, 28)
+                                }
+                                section(
+                                    title: "TO DO",
+                                    items: snapshot.todoSectionItems,
+                                    emptyText: "Nothing left for now",
+                                    showsCompleteAll: store.scope == .today && snapshot.filteredTodoCount > 0,
+                                    isCompletedSection: false,
+                                    completeGroupIDs: snapshot.completeGroupIDs,
+                                    displayCount: store.scope == .today
+                                        ? snapshot.filteredTodoCount
+                                        : snapshot.todoSectionItems.count
+                                )
+                                    .padding(.top, snapshot.showsStillOpenSection ? 24 : 28)
+                                if store.scope == .today, !snapshot.skippedItems.isEmpty {
+                                    section(
+                                        title: "SKIPPED",
+                                        items: snapshot.skippedItems,
+                                        emptyText: nil,
+                                        showsCompleteAll: false,
+                                        isCompletedSection: false,
+                                        completeGroupIDs: snapshot.completeGroupIDs
+                                    )
+                                        .padding(.top, 32)
+                                }
+                                if !snapshot.completedSectionItems.isEmpty {
+                                    section(
+                                        title: "COMPLETED",
+                                        items: snapshot.completedSectionItems,
+                                        emptyText: nil,
+                                        isCompletedSection: true,
+                                        completeGroupIDs: snapshot.completeGroupIDs
+                                    )
+                                        .padding(.top, 32)
+                                }
                             }
-                            section(
-                                title: "COMPLETED",
-                                items: snapshot.completedSectionItems,
-                                emptyText: nil,
-                                isCompletedSection: true,
-                                completeGroupIDs: snapshot.completeGroupIDs
-                            )
-                                .padding(.top, 32)
-                                .opacity(snapshot.completedSectionItems.isEmpty ? 0 : 1)
+                            Spacer(minLength: 120)
                         }
-                        Spacer(minLength: 120)
+                        .padding(.horizontal, 20)
                     }
-                    .padding(.horizontal, 20)
-                }
 
-                Button {
-                    showingNewItem = true
-                } label: {
-                    Image(systemName: "plus")
-                        .font(.system(size: 25, weight: .semibold))
-                        .foregroundStyle(.white)
-                        .frame(width: 64, height: 64)
-                        .background(accent, in: Circle())
-                        .shadow(color: accent.opacity(0.3), radius: 18, y: 8)
+                    Button {
+                        showingNewItem = true
+                    } label: {
+                        Image(systemName: "plus")
+                            .font(.system(size: 24, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .frame(width: 62, height: 62)
+                            .background(
+                                LinearGradient(
+                                    colors: [accent, accent.opacity(0.78)],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                ),
+                                in: Circle()
+                            )
+                            .overlay {
+                                Circle().stroke(.white.opacity(0.26), lineWidth: 1)
+                            }
+                            .shadow(color: accent.opacity(0.28), radius: 18, y: 10)
+                    }
+                    .accessibilityLabel("Add item")
+                    .padding(24)
+                } else {
+                    RitualLoadingView()
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
-                .accessibilityLabel("Add item")
-                .padding(24)
             }
             .overlay {
                 if isSearchPresented {
@@ -377,77 +377,125 @@ struct ChecklistView: View {
     }
 
     private func header(snapshot: ChecklistRenderSnapshot) -> some View {
-        VStack(spacing: 14) {
-            HStack {
-                Button {
-                    withAnimation(.snappy) { store.moveSelectedDate(by: -1) }
-                } label: {
-                    Image(systemName: "chevron.left")
-                        .frame(width: 42, height: 42)
-                        .background(controlSurface, in: Circle())
-                }
-                .accessibilityLabel("Previous day")
-
-                Spacer()
-
-                Button {
-                    withAnimation(.snappy) { store.moveSelectedDate(by: 1) }
-                } label: {
-                    Image(systemName: "chevron.right")
-                        .frame(width: 42, height: 42)
-                        .background(controlSurface, in: Circle())
-                }
-                .accessibilityLabel("Next day")
-            }
-
-            HStack(alignment: .bottom) {
-                VStack(alignment: .leading, spacing: 5) {
-                    Text(store.selectedDate.formatted(.dateTime.weekday(.wide).month(.wide).day()))
-                        .font(.system(size: 14, weight: .semibold))
+        VStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 22) {
+                HStack(spacing: 10) {
+                    VStack(alignment: .leading, spacing: 5) {
+                        Label(
+                            store.scope == .archive
+                                ? "Archived routines"
+                                : store.selectedDate.formatted(.dateTime.weekday(.wide).month(.wide).day()),
+                            systemImage: store.scope == .archive ? "archivebox.fill" : "calendar"
+                        )
+                        .font(.system(size: 12, weight: .bold))
                         .foregroundStyle(accent)
                         .textCase(.uppercase)
-                        .tracking(1.2)
+                        .tracking(1.25)
                         .lineLimit(1)
-                        .minimumScaleFactor(0.75)
-                        .allowsTightening(true)
-                    if !store.isSelectedDateToday {
-                        Button("Back to today") {
-                            withAnimation(.snappy) { store.selectToday() }
+                        .minimumScaleFactor(0.78)
+
+                        if store.scope != .archive, !store.isSelectedDateToday {
+                            Button("Back to today") {
+                                withAnimation(.snappy) { store.selectToday() }
+                            }
+                            .font(.system(size: 12, weight: .bold))
                         }
-                        .font(.system(size: 13, weight: .semibold))
                     }
-                    Text("Ritual Cue")
-                        .font(.system(size: 42, weight: .bold, design: .rounded))
-                        .foregroundStyle(ink)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.58)
-                        .allowsTightening(true)
-                        .layoutPriority(1)
-                    Text(summary(for: snapshot))
-                        .font(.system(size: 16))
-                        .foregroundStyle(.secondary)
+
+                    Spacer(minLength: 8)
+
+                    if store.scope != .archive {
+                        dateNavigationButton(systemImage: "chevron.left", label: "Previous day") {
+                            withAnimation(.snappy) { store.moveSelectedDate(by: -1) }
+                        }
+                        dateNavigationButton(systemImage: "chevron.right", label: "Next day") {
+                            withAnimation(.snappy) { store.moveSelectedDate(by: 1) }
+                        }
+                    }
+
+                    Button { showingAccount = true } label: {
+                        AccountToolbarImage(url: authStore.user?.profileImageURL)
+                    }
+                    .accessibilityLabel("Account and notification settings")
                 }
-                Spacer()
-                VStack(alignment: .trailing) {
-                    HStack(spacing: 10) {
-                        Button { showingAccount = true } label: {
-                            AccountToolbarImage(url: authStore.user?.profileImageURL)
-                        }
-                        .accessibilityLabel("Account and notification settings")
+
+                HStack(alignment: .bottom, spacing: 14) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Ritual Cue")
+                            .font(.system(size: 40, weight: .bold, design: .rounded))
+                            .foregroundStyle(ink)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.72)
+                            .allowsTightening(true)
+                            .layoutPriority(1)
+                        Text(summary(for: snapshot))
+                            .font(.system(size: 16, weight: .medium))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
                     }
-                    Spacer(minLength: 10)
-                    HStack(spacing: 8) {
-                        if !isSearchPresented {
-                            searchButton
-                                .transition(.scale(scale: 0.85).combined(with: .opacity))
+
+                    Spacer(minLength: 4)
+
+                    if store.scope != .archive {
+                        ZStack {
+                            Circle()
+                                .fill(snapshot.todoCount == 0 ? success.opacity(0.14) : accentSoft)
+                            if snapshot.todoCount == 0 {
+                                Image(systemName: "checkmark")
+                                    .font(.system(size: 19, weight: .bold))
+                                    .foregroundStyle(success)
+                            } else {
+                                Text(snapshot.todoCount.formatted())
+                                    .font(.system(size: 19, weight: .bold, design: .rounded))
+                                    .foregroundStyle(accent)
+                            }
                         }
-                        sortControl
-                        editModeButton
+                        .frame(width: 48, height: 48)
+                        .accessibilityHidden(true)
                     }
                 }
             }
+            .padding(20)
+            .background(
+                LinearGradient(
+                    colors: [surface.opacity(0.98), accent.opacity(0.075)],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                ),
+                in: RoundedRectangle(cornerRadius: 28, style: .continuous)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 28, style: .continuous)
+                    .stroke(ritualLine, lineWidth: 1)
+            }
+
+            HStack(spacing: 8) {
+                if !isSearchPresented {
+                    searchButton
+                        .transition(.scale(scale: 0.85).combined(with: .opacity))
+                }
+                Spacer()
+                sortControl
+                editModeButton
+            }
+            .padding(.horizontal, 2)
         }
-        .padding(.top, 18)
+        .padding(.top, 12)
+    }
+
+    private func dateNavigationButton(
+        systemImage: String,
+        label: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.system(size: 13, weight: .bold))
+                .foregroundStyle(accent)
+                .frame(width: 44, height: 44)
+                .glassEffect(.regular.interactive(), in: Circle())
+        }
+        .accessibilityLabel(label)
     }
 
     private func summary(for snapshot: ChecklistRenderSnapshot) -> String {
@@ -543,21 +591,54 @@ struct ChecklistView: View {
                 || item.title.localizedCaseInsensitiveContains(query)
                 || item.notes.localizedCaseInsensitiveContains(query)
         }
+        let archiveMatches = visibleItems.filter(matchesSearch)
+        let todoMatches = todoSectionItems.filter(matchesSearch)
+        let completedMatches = completedSectionItems.filter(matchesSearch)
+        let skippedMatches = skippedItems.filter(matchesSearch)
         let matchingCarryoverEntries = carryoverEntries.filter { matchesSearch($0.item) }
+        let searchResultCount = store.scope == .archive
+            ? archiveMatches.count
+            : todoMatches.count + completedMatches.count + skippedMatches.count + matchingCarryoverEntries.count
 
         return ChecklistRenderSnapshot(
-            archiveItems: visibleItems.filter(matchesSearch),
+            archiveItems: archiveMatches,
             archiveTotalCount: visibleItems.count,
-            todoSectionItems: todoSectionItems.filter(matchesSearch),
-            completedSectionItems: completedSectionItems.filter(matchesSearch),
-            skippedItems: skippedItems.filter(matchesSearch),
+            todoSectionItems: todoMatches,
+            completedSectionItems: completedMatches,
+            skippedItems: skippedMatches,
             carryoverEntries: matchingCarryoverEntries,
             completeGroupIDs: completeGroupIDs,
             todoCount: todoItems.count,
             filteredTodoCount: todoItems.filter(matchesSearch).count,
             carryoverCount: carryoverEntries.count,
-            showsStillOpenSection: isShowingCurrentToday && !matchingCarryoverEntries.isEmpty
+            showsStillOpenSection: isShowingCurrentToday && !matchingCarryoverEntries.isEmpty,
+            searchHasNoMatches: !query.isEmpty && searchResultCount == 0
         )
+    }
+
+    private var searchEmptyState: some View {
+        VStack(spacing: 14) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 24, weight: .semibold))
+                .foregroundStyle(accent)
+                .frame(width: 54, height: 54)
+                .background(accentSoft, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            VStack(spacing: 5) {
+                Text("No matching rituals")
+                    .font(.system(size: 19, weight: .bold, design: .rounded))
+                    .foregroundStyle(ink)
+                Text("Try a different task name or note.")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(.secondary)
+            }
+            Button("Clear search") {
+                dismissSearch()
+            }
+            .font(.system(size: 14, weight: .semibold))
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 34)
+        .ritualCard(cornerRadius: 24)
     }
 
     private var filter: some View {
@@ -571,8 +652,11 @@ struct ChecklistView: View {
                 }
             }
         }
-        .padding(4)
-        .background(subtleFill, in: Capsule())
+        .padding(5)
+        .background(controlSurface.opacity(0.72), in: Capsule())
+        .overlay {
+            Capsule().stroke(ritualLine, lineWidth: 1)
+        }
     }
 
     private var searchButton: some View {
@@ -587,7 +671,7 @@ struct ChecklistView: View {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 13, weight: .bold))
                 .foregroundStyle(searchText.isEmpty ? ink : accent)
-                .frame(width: 35, height: 35)
+                .frame(width: 44, height: 44)
                 .glassEffect(.regular.interactive(), in: Circle())
         }
         .accessibilityLabel("Search checklist")
@@ -697,8 +781,8 @@ struct ChecklistView: View {
             Image(systemName: store.sortMode.icon)
                 .font(.system(size: 13, weight: .bold))
                 .foregroundStyle(ink)
-                .frame(width: 35, height: 35)
-                .background(controlSurface, in: Circle())
+                .frame(width: 44, height: 44)
+                .glassEffect(.regular.interactive(), in: Circle())
         }
         .accessibilityLabel("Sort checklist")
         .accessibilityValue(store.sortMode.title)
@@ -715,8 +799,9 @@ struct ChecklistView: View {
             Image(systemName: isEditingChecklist ? "checkmark" : "pencil")
                 .font(.system(size: 13, weight: .bold))
                 .foregroundStyle(isEditingChecklist ? .white : ink)
-                .frame(width: 35, height: 35)
-                .background(isEditingChecklist ? accent : controlSurface, in: Circle())
+                .frame(width: 44, height: 44)
+                .background(isEditingChecklist ? accent : Color.clear, in: Circle())
+                .glassEffect(isEditingChecklist ? .clear : .regular.interactive(), in: Circle())
         }
         .accessibilityLabel(isEditingChecklist ? "Done editing checklist" : "Edit checklist")
         .accessibilityHint("Shows or hides reorder handles and item edit buttons")
@@ -725,12 +810,11 @@ struct ChecklistView: View {
     private func filterButton(_ title: String, selected: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(title)
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(selected ? ink : .secondary)
+                .font(.system(size: 14, weight: .bold))
+                .foregroundStyle(selected ? .white : .secondary)
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 10)
-                .background(selected ? controlSurface : Color.clear, in: Capsule())
-                .shadow(color: selected ? .black.opacity(0.06) : .clear, radius: 8, y: 3)
+                .padding(.vertical, 11)
+                .background(selected ? accent : Color.clear, in: Capsule())
         }
     }
 
@@ -745,11 +829,16 @@ struct ChecklistView: View {
         displayCount: Int? = nil
     ) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack {
+            HStack(spacing: 8) {
+                Image(systemName: sectionSymbol(for: title))
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(sectionColor(for: title))
+                    .frame(width: 26, height: 26)
+                    .background(sectionColor(for: title).opacity(0.11), in: RoundedRectangle(cornerRadius: 9))
                 Text(title)
                     .font(.system(size: 12, weight: .bold))
-                    .tracking(1.4)
-                    .foregroundStyle(.secondary)
+                    .tracking(1.35)
+                    .foregroundStyle(ink.opacity(0.62))
                 Spacer()
                 if showsCompleteAll {
                     Button {
@@ -762,25 +851,36 @@ struct ChecklistView: View {
                     }
                     .buttonStyle(.plain)
                     .foregroundStyle(accent)
+                    .accessibilityLabel("Complete all tasks")
                     .accessibilityHint("Marks every task scheduled for today as complete")
                 }
                 Text("\(displayCount ?? items.count)")
                     .font(.system(size: 12, weight: .bold, design: .rounded))
                     .foregroundStyle(.secondary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(subtleFill.opacity(0.74), in: Capsule())
             }
 
             if items.isEmpty, let emptyText {
-                VStack(spacing: 10) {
-                    Image(systemName: "checkmark")
+                VStack(spacing: 12) {
+                    Image(systemName: store.scope == .archive ? "archivebox" : "checkmark")
                         .font(.system(size: 22, weight: .bold))
                         .foregroundStyle(accent)
+                        .frame(width: 48, height: 48)
+                        .background(accentSoft, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                     Text(emptyText)
-                        .font(.system(size: 16, weight: .medium))
-                        .foregroundStyle(.secondary)
+                        .font(.system(size: 17, weight: .semibold, design: .rounded))
+                        .foregroundStyle(ink)
+                    if store.scope != .archive {
+                        Text("A little more room in your day.")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(.secondary)
+                    }
                 }
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 30)
-                .background(softSurface, in: RoundedRectangle(cornerRadius: 22))
+                .padding(.vertical, 28)
+                .ritualCard(cornerRadius: 24)
             } else {
                 groupedItems(
                     items,
@@ -795,15 +895,23 @@ struct ChecklistView: View {
 
     private func stillOpenSection(entries: [CarryoverEntry]) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack {
+            HStack(spacing: 8) {
+                Image(systemName: "clock.badge.exclamationmark")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(delayed)
+                    .frame(width: 26, height: 26)
+                    .background(delayed.opacity(0.11), in: RoundedRectangle(cornerRadius: 9))
                 Text("STILL OPEN")
                     .font(.system(size: 12, weight: .bold))
-                    .tracking(1.4)
+                    .tracking(1.35)
                     .foregroundStyle(delayed)
                 Spacer()
                 Text("\(entries.count)")
                     .font(.system(size: 12, weight: .bold, design: .rounded))
                     .foregroundStyle(.secondary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(delayed.opacity(0.10), in: Capsule())
             }
 
             LazyVStack(spacing: 10) {
@@ -840,6 +948,23 @@ struct ChecklistView: View {
                     )
                 }
             }
+        }
+    }
+
+    private func sectionSymbol(for title: String) -> String {
+        switch title {
+        case "ARCHIVE": "archivebox.fill"
+        case "SKIPPED": "forward.end.fill"
+        case "COMPLETED": "checkmark.seal.fill"
+        default: "sparkles"
+        }
+    }
+
+    private func sectionColor(for title: String) -> Color {
+        switch title {
+        case "SKIPPED": .secondary
+        case "COMPLETED": success
+        default: accent
         }
     }
 
@@ -1029,12 +1154,13 @@ struct ChecklistView: View {
                 Button(action: toggleCollapsed) {
                     HStack(spacing: 8) {
                         Image(systemName: isCollapsed ? "folder.fill" : "folder")
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(accent.opacity(0.78))
-                            .frame(width: 24, height: 24)
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundStyle(accent)
+                            .frame(width: 28, height: 28)
+                            .background(accentSoft, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
                         Text(title)
-                            .font(.system(size: 13, weight: .bold))
-                            .foregroundStyle(ink.opacity(0.78))
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundStyle(ink.opacity(0.84))
                     }
                     .contentShape(Rectangle())
                 }
@@ -1042,15 +1168,20 @@ struct ChecklistView: View {
                 .accessibilityLabel(isCollapsed ? "Open \(title)" : "Close \(title)")
             } else {
                 Image(systemName: "tray.fill")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(accent.opacity(0.75))
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(accent)
+                    .frame(width: 28, height: 28)
+                    .background(accentSoft, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
                 Text(title)
-                    .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle(ink.opacity(0.78))
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundStyle(ink.opacity(0.84))
             }
             Text(completedCount == totalCount ? "\(totalCount)" : "\(completedCount)/\(totalCount)")
                 .font(.system(size: 11, weight: .bold, design: .rounded))
                 .foregroundStyle(.secondary)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 4)
+                .background(subtleFill.opacity(0.72), in: Capsule())
             if isPaused {
                 Label("Paused", systemImage: "pause.circle.fill")
                     .font(.system(size: 11, weight: .bold))
@@ -1105,6 +1236,7 @@ struct ChecklistView: View {
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(accent)
+                .accessibilityLabel("Complete all tasks in \(title)")
                 .accessibilityHint("Marks every task in \(title) as complete")
             }
             if isRealGroup, isEditingChecklist, store.sortMode == .manual {
@@ -1113,7 +1245,7 @@ struct ChecklistView: View {
                     .foregroundStyle(.secondary)
             }
         }
-        .padding(.horizontal, 4)
+        .padding(.horizontal, 2)
 
         if isRealGroup, isEditingChecklist, store.sortMode == .manual, let groupID {
             header
@@ -1280,12 +1412,22 @@ private struct ChecklistTutorialView: View {
             VStack(spacing: 18) {
                 TabView(selection: $selection) {
                     ForEach(Array(pages.enumerated()), id: \.element.id) { index, page in
-                        VStack(spacing: 22) {
-                            Image(systemName: page.systemImage)
-                                .font(.system(size: 46, weight: .semibold))
-                                .foregroundStyle(accent)
-                                .frame(width: 96, height: 96)
-                                .background(accent.opacity(0.12), in: Circle())
+                        VStack(spacing: 24) {
+                            ZStack {
+                                RoundedRectangle(cornerRadius: 30, style: .continuous)
+                                    .fill(
+                                        LinearGradient(
+                                            colors: [accent, accent.opacity(0.70)],
+                                            startPoint: .topLeading,
+                                            endPoint: .bottomTrailing
+                                        )
+                                    )
+                                Image(systemName: page.systemImage)
+                                    .font(.system(size: 40, weight: .semibold))
+                                    .foregroundStyle(.white)
+                            }
+                            .frame(width: 94, height: 94)
+                            .shadow(color: accent.opacity(0.22), radius: 18, y: 10)
                             VStack(spacing: 10) {
                                 Text(page.title)
                                     .font(.system(size: 26, weight: .bold, design: .rounded))
@@ -1298,7 +1440,10 @@ private struct ChecklistTutorialView: View {
                                     .lineSpacing(3)
                             }
                         }
-                        .padding(.horizontal, 28)
+                        .padding(28)
+                        .frame(maxWidth: .infinity)
+                        .ritualCard(cornerRadius: 30, elevated: true)
+                        .padding(.horizontal, 22)
                         .tag(index)
                     }
                 }
@@ -1333,7 +1478,10 @@ private struct ChecklistTutorialView: View {
                 .padding(.horizontal, 24)
             }
             .padding(.vertical, 22)
-            .background(canvas.ignoresSafeArea())
+            .background {
+                RitualBackdrop()
+                    .ignoresSafeArea()
+            }
             .navigationTitle("Welcome to Ritual Cue")
             .navigationBarTitleDisplayMode(.inline)
         }
@@ -1354,6 +1502,44 @@ private struct ChecklistRenderSnapshot {
     let filteredTodoCount: Int
     let carryoverCount: Int
     let showsStillOpenSection: Bool
+    let searchHasNoMatches: Bool
+}
+
+private struct RitualLoadingView: View {
+    var body: some View {
+        VStack(spacing: 18) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 24, style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            colors: [accent, accent.opacity(0.72)],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                Image(systemName: "checkmark")
+                    .font(.system(size: 30, weight: .bold))
+                    .foregroundStyle(.white)
+            }
+            .frame(width: 76, height: 76)
+            .shadow(color: accent.opacity(0.22), radius: 18, y: 10)
+
+            VStack(spacing: 6) {
+                Text("Ritual Cue")
+                    .font(.system(size: 25, weight: .bold, design: .rounded))
+                    .foregroundStyle(ink)
+                Text("Preparing today’s rituals…")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(.secondary)
+            }
+
+            ProgressView()
+                .tint(accent)
+        }
+        .padding(30)
+        .ritualCard(cornerRadius: 30, elevated: true)
+        .padding(28)
+    }
 }
 
 private struct TutorialPage: Identifiable {
@@ -1545,10 +1731,17 @@ private struct CarryoverRow: View {
             .accessibilityLabel("More actions for \(entry.item.title)")
         }
         .padding(16)
-        .background(surface, in: RoundedRectangle(cornerRadius: 20))
+        .background(
+            LinearGradient(
+                colors: [surface, delayed.opacity(0.055)],
+                startPoint: .leading,
+                endPoint: .trailing
+            ),
+            in: RoundedRectangle(cornerRadius: 22, style: .continuous)
+        )
         .overlay {
-            RoundedRectangle(cornerRadius: 20)
-                .stroke(delayed.opacity(0.24), lineWidth: 1)
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .stroke(delayed.opacity(0.28), lineWidth: 1)
         }
         .contextMenu {
             Button(action: onTomorrow) { Label("Tomorrow", systemImage: "sunrise") }
@@ -1607,6 +1800,9 @@ private struct ItemRow: View {
     private var canSnooze: Bool {
         item.reminderMinutes != nil && Calendar.current.isDateInToday(date)
     }
+    private var hasStatusBadges: Bool {
+        completionStreak > 0 || missedDays > 0 || delayedDays > 0 || paused
+    }
 
     var body: some View {
         HStack(spacing: 14) {
@@ -1641,37 +1837,41 @@ private struct ItemRow: View {
                     if item.quantity > 1 {
                         quantityChip
                     }
-                    if completionStreak > 0 {
-                        statusBadge(
-                            "\(completionStreak) \(completionStreak == 1 ? "day" : "days")",
-                            systemImage: "checkmark.seal.fill",
-                            color: success,
-                            accessibilityLabel: "\(completionStreak) day completion streak"
-                        )
-                        .transition(.scale(scale: 0.86).combined(with: .opacity))
-                    } else if missedDays > 0 {
-                        statusBadge(
-                            "\(missedDays) \(missedDays == 1 ? "day" : "days")",
-                            systemImage: "calendar.badge.exclamationmark",
-                            color: Color(red: 0.72, green: 0.22, blue: 0.20),
-                            accessibilityLabel: "\(missedDays) consecutive missed \(missedDays == 1 ? "day" : "days")"
-                        )
-                    }
-                    if delayedDays > 0 {
-                        statusBadge(
-                            "\(delayedDays) \(delayedDays == 1 ? "day" : "days")",
-                            systemImage: "arrow.right.circle.fill",
-                            color: delayed,
-                            accessibilityLabel: "Delayed \(delayedDays) \(delayedDays == 1 ? "day" : "days")"
-                        )
-                    }
-                    if paused {
-                        statusBadge(
-                            "Paused",
-                            systemImage: "pause.circle.fill",
-                            color: delayed,
-                            accessibilityLabel: "Paused"
-                        )
+                }
+                if hasStatusBadges {
+                    HStack(spacing: 6) {
+                        if completionStreak > 0 {
+                            statusBadge(
+                                "\(completionStreak) \(completionStreak == 1 ? "day" : "days")",
+                                systemImage: "checkmark.seal.fill",
+                                color: success,
+                                accessibilityLabel: "\(completionStreak) day completion streak"
+                            )
+                            .transition(.scale(scale: 0.86).combined(with: .opacity))
+                        } else if missedDays > 0 {
+                            statusBadge(
+                                "\(missedDays) \(missedDays == 1 ? "day" : "days")",
+                                systemImage: "calendar.badge.exclamationmark",
+                                color: dangerColor,
+                                accessibilityLabel: "\(missedDays) consecutive missed \(missedDays == 1 ? "day" : "days")"
+                            )
+                        }
+                        if delayedDays > 0 {
+                            statusBadge(
+                                "\(delayedDays) \(delayedDays == 1 ? "day" : "days")",
+                                systemImage: "arrow.right.circle.fill",
+                                color: delayed,
+                                accessibilityLabel: "Delayed \(delayedDays) \(delayedDays == 1 ? "day" : "days")"
+                            )
+                        }
+                        if paused {
+                            statusBadge(
+                                "Paused",
+                                systemImage: "pause.circle.fill",
+                                color: delayed,
+                                accessibilityLabel: "Paused"
+                            )
+                        }
                     }
                 }
                 HStack(spacing: 8) {
@@ -1724,8 +1924,12 @@ private struct ItemRow: View {
         .padding(16)
         .background(
             (completed ? softSurface : surface),
-            in: RoundedRectangle(cornerRadius: 20)
+            in: RoundedRectangle(cornerRadius: 22, style: .continuous)
         )
+        .overlay {
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .stroke(completed ? ritualLine.opacity(0.72) : ritualLine, lineWidth: 1)
+        }
         .contextMenu {
             Button(action: onEdit) {
                 Label("Edit", systemImage: "pencil")
@@ -1828,6 +2032,7 @@ private struct HistoryCalendarCell: Identifiable {
 }
 
 private struct ItemHistoryView: View {
+    @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var store: ChecklistStore
     let item: ChecklistItem
     @State private var actionErrorMessage: String?
@@ -1918,10 +2123,24 @@ private struct ItemHistoryView: View {
                         .accessibilityLabel("Change \(entry.date.formatted(.dateTime.month(.wide).day())) state")
                         .accessibilityValue(entry.state.rawValue)
                     }
+                    .listRowBackground(surface)
+                    .listRowSeparatorTint(ritualLine)
                 }
+                .listStyle(.plain)
+                .scrollContentBackground(.hidden)
+            }
+            .background {
+                RitualBackdrop()
+                    .ignoresSafeArea()
             }
             .navigationTitle(currentItem.title)
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                        .fontWeight(.semibold)
+                }
+            }
             .alert("Action unavailable", isPresented: Binding(
                 get: { actionErrorMessage != nil },
                 set: { if !$0 { actionErrorMessage = nil } }
@@ -1954,7 +2173,7 @@ private struct ItemHistoryView: View {
             }
         }
         .padding(14)
-        .background(surface, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .ritualCard(cornerRadius: 22)
     }
 
     private var calendarTitle: String {
@@ -2077,8 +2296,8 @@ private struct ItemHistoryView: View {
         switch state {
         case .done: success
         case .skipped, .off: .secondary
-        case .missed: Color(red: 0.72, green: 0.22, blue: 0.20)
-        case .open: Color(red: 0.13, green: 0.48, blue: 0.34)
+        case .missed: dangerColor
+        case .open: openState
         case .paused: delayed
         }
     }
