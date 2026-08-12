@@ -610,6 +610,88 @@ final class ChecklistStateTests: XCTestCase {
     }
 
     @MainActor
+    func testChecklistToggleDoesNotBlockOnMaintenanceWork() throws {
+        let accountID = "interaction-latency-test-\(UUID().uuidString)"
+        let today = calendar.startOfDay(for: .now)
+        let oneYearAgo = try XCTUnwrap(calendar.date(byAdding: .day, value: -365, to: today))
+        let carryoverStartKey = DateKey.string(from: oneYearAgo)
+        cleanCaches(for: [accountID, "anonymous"])
+        defer {
+            cleanCaches(for: [accountID, "anonymous"])
+            UserDefaults.standard.removeObject(forKey: "activeAccountID")
+        }
+
+        let items = (0..<24).map { index in
+            ChecklistItem(
+                title: "Long-running ritual \(index)",
+                schedule: .custom,
+                customWeekdays: [calendar.component(.weekday, from: oneYearAgo)],
+                createdAt: oneYearAgo,
+                startDate: oneYearAgo,
+                missedBehavior: .keepUntilDone,
+                carryoverStartDate: carryoverStartKey
+            )
+        }
+        let envelope = LocalEnvelope(
+            items: items,
+            groups: [],
+            eveningReminderMinutes: nil,
+            notificationGroupFilter: .all,
+            pendingMutations: []
+        )
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let data = try encoder.encode(envelope)
+        let cacheURL = URL.documentsDirectory.appending(path: "daily-checklist-\(accountID).json")
+        try data.write(to: cacheURL, options: .atomic)
+
+        UserDefaults.standard.set("anonymous", forKey: "activeAccountID")
+        let store = ChecklistStore()
+        store.activateAuthenticatedAccount(accountID)
+        let item = try XCTUnwrap(store.items.first)
+
+        let start = ContinuousClock.now
+        store.toggle(item)
+        let elapsed = start.duration(to: .now)
+        store.flushPendingPersistence()
+
+        XCTAssertLessThan(
+            elapsed,
+            .milliseconds(16),
+            "A tap must return within one frame; maintenance work belongs off the main actor"
+        )
+    }
+
+    @MainActor
+    func testBackgroundMaintenancePersistsLatestRapidMutation() throws {
+        let accountID = "maintenance-coalescing-test-\(UUID().uuidString)"
+        let today = calendar.startOfDay(for: .now)
+        cleanCaches(for: [accountID])
+        defer {
+            cleanCaches(for: [accountID])
+            UserDefaults.standard.removeObject(forKey: "activeAccountID")
+        }
+
+        UserDefaults.standard.set(accountID, forKey: "activeAccountID")
+        let store = ChecklistStore()
+        let item = ChecklistItem(title: "Fast repeated taps", quantity: 10, createdAt: today)
+        store.save(item)
+        for _ in 0..<7 {
+            store.toggle(item)
+        }
+        store.flushPendingPersistence()
+
+        let cacheURL = URL.documentsDirectory.appending(path: "daily-checklist-\(accountID).json")
+        let data = try Data(contentsOf: cacheURL)
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let envelope = try decoder.decode(LocalEnvelope.self, from: data)
+
+        XCTAssertEqual(envelope.items.first?.completionCount(on: today), 7)
+        XCTAssertEqual(envelope.pendingMutations.last?.completionCount, 7)
+    }
+
+    @MainActor
     func testGroupCollapsedStateTogglesInStore() throws {
         let accountID = "group-collapse-test-\(UUID().uuidString)"
         cleanCaches(for: [accountID])

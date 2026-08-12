@@ -96,6 +96,9 @@ struct ChecklistView: View {
                             Spacer(minLength: 120)
                         }
                         .padding(.horizontal, 20)
+                        .transaction { transaction in
+                            transaction.animation = nil
+                        }
                     }
 
                     Button {
@@ -493,7 +496,7 @@ struct ChecklistView: View {
                 .font(.system(size: 13, weight: .bold))
                 .foregroundStyle(accent)
                 .frame(width: 44, height: 44)
-                .glassEffect(.regular.interactive(), in: Circle())
+                .ritualCircularControlSurface()
         }
         .accessibilityLabel(label)
     }
@@ -672,7 +675,7 @@ struct ChecklistView: View {
                 .font(.system(size: 13, weight: .bold))
                 .foregroundStyle(searchText.isEmpty ? ink : accent)
                 .frame(width: 44, height: 44)
-                .glassEffect(.regular.interactive(), in: Circle())
+                .ritualCircularControlSurface()
         }
         .accessibilityLabel("Search checklist")
         .accessibilityValue(searchText.isEmpty ? "No search" : searchText)
@@ -782,7 +785,7 @@ struct ChecklistView: View {
                 .font(.system(size: 13, weight: .bold))
                 .foregroundStyle(ink)
                 .frame(width: 44, height: 44)
-                .glassEffect(.regular.interactive(), in: Circle())
+                .ritualCircularControlSurface()
         }
         .accessibilityLabel("Sort checklist")
         .accessibilityValue(store.sortMode.title)
@@ -800,8 +803,13 @@ struct ChecklistView: View {
                 .font(.system(size: 13, weight: .bold))
                 .foregroundStyle(isEditingChecklist ? .white : ink)
                 .frame(width: 44, height: 44)
-                .background(isEditingChecklist ? accent : Color.clear, in: Circle())
-                .glassEffect(isEditingChecklist ? .clear : .regular.interactive(), in: Circle())
+                .background(isEditingChecklist ? accent : controlSurface.opacity(0.96), in: Circle())
+                .overlay {
+                    Circle().stroke(
+                        isEditingChecklist ? Color.white.opacity(0.20) : ritualLine.opacity(0.82),
+                        lineWidth: 1
+                    )
+                }
         }
         .accessibilityLabel(isEditingChecklist ? "Done editing checklist" : "Edit checklist")
         .accessibilityHint("Shows or hides reorder handles and item edit buttons")
@@ -982,7 +990,7 @@ struct ChecklistView: View {
         if store.groups.isEmpty {
             itemStack(ungrouped, groupID: nil, allowsPermanentDelete: allowsPermanentDelete)
         } else {
-            VStack(alignment: .leading, spacing: 18) {
+            LazyVStack(alignment: .leading, spacing: 18) {
                 if !ungrouped.isEmpty {
                     groupBlock(
                         title: "Ungrouped",
@@ -1788,29 +1796,20 @@ private struct ItemRow: View {
     let allowsPermanentDelete: Bool
     let onPermanentDelete: () -> Void
 
-    private var completed: Bool { item.isComplete(on: date) }
-    private var skipped: Bool { item.isSkipped(on: date) }
-    private var completionCount: Int { item.completionCount(on: date) }
-    private var missedDays: Int { paused ? 0 : item.consecutiveMissedDays(asOf: date) }
-    private var completionStreak: Int { paused ? 0 : item.consecutiveCompletedDays(asOf: date) }
-    private var delayedDays: Int { item.delayedDays(asOf: date) }
-    private var canBringForward: Bool {
-        Calendar.current.startOfDay(for: date) > Calendar.current.startOfDay(for: .now)
-    }
-    private var canSnooze: Bool {
-        item.reminderMinutes != nil && Calendar.current.isDateInToday(date)
-    }
-    private var hasStatusBadges: Bool {
-        completionStreak > 0 || missedDays > 0 || delayedDays > 0 || paused
-    }
-
     var body: some View {
+        let calendar = Calendar.current
+        let completed = item.isComplete(on: date)
+        let skipped = item.isSkipped(on: date)
+        let completionCount = item.completionCount(on: date)
+        let missedDays = paused ? 0 : item.consecutiveMissedDays(asOf: date, calendar: calendar)
+        let completionStreak = paused ? 0 : item.consecutiveCompletedDays(asOf: date, calendar: calendar)
+        let delayedDays = item.delayedDays(asOf: date, calendar: calendar)
+        let hasStatusBadges = completionStreak > 0 || missedDays > 0 || delayedDays > 0 || paused
+        let canBringForward = calendar.startOfDay(for: date) > calendar.startOfDay(for: .now)
+        let canSnooze = item.reminderMinutes != nil && calendar.isDateInToday(date)
+
         HStack(spacing: 14) {
-            Button {
-                withAnimation(.snappy) {
-                    onToggle()
-                }
-            } label: {
+            Button(action: onToggle) {
                 ZStack {
                     Circle()
                         .stroke(completed ? accent : Color.primary.opacity(0.22), lineWidth: 2)
@@ -1835,7 +1834,7 @@ private struct ItemRow: View {
                         .lineLimit(1)
                         .layoutPriority(1)
                     if item.quantity > 1 {
-                        quantityChip
+                        quantityChip(completionCount: completionCount, completed: completed)
                     }
                 }
                 if hasStatusBadges {
@@ -2005,7 +2004,7 @@ private struct ItemRow: View {
         .accessibilityLabel(accessibilityLabel)
     }
 
-    private var quantityChip: some View {
+    private func quantityChip(completionCount: Int, completed: Bool) -> some View {
         Text("\(completionCount)/\(item.quantity)")
             .font(.system(size: 11, weight: .bold))
             .foregroundStyle(completed ? success : accent)

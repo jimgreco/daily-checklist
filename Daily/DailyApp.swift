@@ -41,10 +41,13 @@ struct RitualCueApp: App {
                     GIDSignIn.sharedInstance.handle(url)
                 }
                 .onChange(of: scenePhase) { _, phase in
-                    guard phase == .active else { return }
-                    Task {
-                        await store.sync(using: authStore)
-                        await store.refreshNotificationSchedule()
+                    if phase == .active {
+                        Task {
+                            await store.sync(using: authStore)
+                            await store.refreshNotificationSchedule()
+                        }
+                    } else {
+                        store.flushPendingPersistence()
                     }
                 }
                 .onReceive(NotificationCenter.default.publisher(for: .ritualNotificationAction)) { notification in

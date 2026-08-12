@@ -271,6 +271,215 @@ enum CarryoverResolver {
     }
 }
 
+private struct ChecklistMaintenanceSnapshot {
+    let items: [ChecklistItem]
+    let groups: [ChecklistGroup]
+    let eveningReminderMinutes: Int?
+    let notificationGroupFilter: NotificationGroupFilter
+
+    func widgetSnapshots(now: Date = .now, days: Int = 7) -> [RitualWidgetSnapshot] {
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: now)
+        return (0..<max(1, days)).compactMap { offset in
+            guard let date = calendar.date(byAdding: .day, value: offset, to: today) else { return nil }
+            return widgetSnapshot(for: date, now: now, calendar: calendar)
+        }
+    }
+
+    private func widgetSnapshot(
+        for date: Date,
+        now: Date,
+        calendar: Calendar
+    ) -> RitualWidgetSnapshot {
+        let day = calendar.startOfDay(for: date)
+        let dayKey = DateKey.string(from: day)
+        let groupsByID = Dictionary(uniqueKeysWithValues: groups.map { ($0.id, $0) })
+
+        func isPaused(_ item: ChecklistItem) -> Bool {
+            if item.isPaused(on: day) { return true }
+            guard let groupID = item.groupID else { return false }
+            return groupsByID[groupID]?.isPaused(on: day) == true
+        }
+
+        func isTracked(_ item: ChecklistItem) -> Bool {
+            isPaused(item) || item.occurs(on: day, calendar: calendar) || item.hasRecordedState(on: day)
+        }
+
+        let allCarryovers = CarryoverResolver.entries(
+            items: items,
+            groups: groups,
+            asOf: day,
+            includeHidden: true,
+            calendar: calendar
+        )
+        let carryoverItemIDs = Set(allCarryovers.map(\.item.id))
+        let carryovers = allCarryovers.filter { entry in
+            let isHidden = entry.occurrences.last?.state?.hiddenUntil.map { $0 > dayKey } ?? false
+            return !isPaused(entry.item) && !isHidden
+        }
+        let visibleItems = items.filter { item in
+            let paused = isPaused(item)
+            return !carryoverItemIDs.contains(item.id)
+                && isTracked(item)
+                && (!paused || item.hasRecordedState(on: day))
+        }
+        let remainingItems = visibleItems.filter {
+            !$0.isComplete(on: day) && !$0.isSkipped(on: day) && !isPaused($0)
+        }
+        let completedCount = visibleItems.filter { $0.isComplete(on: day) }.count
+        let skippedCount = visibleItems.filter { $0.isSkipped(on: day) && !$0.isComplete(on: day) }.count
+        let reminderMinutes = widgetReminderMinutes(
+            remainingItems: remainingItems,
+            carryoverItems: carryovers.map(\.item)
+        )
+
+        return RitualWidgetSnapshot(
+            remainingCount: remainingItems.count + carryovers.count,
+            scheduledCount: visibleItems.count + carryovers.count,
+            completedCount: completedCount,
+            skippedCount: skippedCount,
+            carryoverCount: carryovers.count,
+            reminderMinutes: reminderMinutes,
+            nextReminderMinutes: nextWidgetReminderMinutes(
+                on: day,
+                now: now,
+                reminderMinutes: reminderMinutes,
+                calendar: calendar
+            ),
+            dateKey: dayKey,
+            updatedAt: now,
+            hasChecklist: !items.isEmpty
+        )
+    }
+
+    private func widgetReminderMinutes(
+        remainingItems: [ChecklistItem],
+        carryoverItems: [ChecklistItem]
+    ) -> [Int] {
+        var candidates = remainingItems.compactMap(\.reminderMinutes)
+        if let eveningReminderMinutes {
+            let eveningRemainingCount = (remainingItems + carryoverItems)
+                .filter { notificationGroupFilter.includes(item: $0) }
+                .count
+            if eveningRemainingCount > 0 {
+                candidates.append(eveningReminderMinutes)
+            }
+        }
+        return Array(Set(candidates)).sorted()
+    }
+
+    private func nextWidgetReminderMinutes(
+        on date: Date,
+        now: Date,
+        reminderMinutes: [Int],
+        calendar: Calendar
+    ) -> Int? {
+        reminderMinutes.filter { minutes in
+            var components = calendar.dateComponents([.year, .month, .day], from: date)
+            components.hour = minutes / 60
+            components.minute = minutes % 60
+            guard let reminderDate = calendar.date(from: components) else { return false }
+            return reminderDate > now
+        }.min()
+    }
+}
+
+private final class ChecklistMaintenanceWorker {
+    private typealias WidgetJob = (snapshot: ChecklistMaintenanceSnapshot, reloadTimelines: Bool)
+
+    private let persistenceQueue = DispatchQueue(
+        label: "com.jimgreco.ritualcue.persistence",
+        qos: .utility,
+        autoreleaseFrequency: .workItem
+    )
+    private let widgetQueue = DispatchQueue(
+        label: "com.jimgreco.ritualcue.widget-snapshots",
+        qos: .utility,
+        autoreleaseFrequency: .workItem
+    )
+    private let persistenceLock = NSLock()
+    private let widgetLock = NSLock()
+    private var pendingPersistence: [URL: LocalEnvelope] = [:]
+    private var isDrainingPersistence = false
+    private var pendingWidget: WidgetJob?
+    private var isDrainingWidgets = false
+
+    func persist(_ envelope: LocalEnvelope, to url: URL) {
+        persistenceLock.lock()
+        pendingPersistence[url] = envelope
+        let shouldStart = !isDrainingPersistence
+        if shouldStart { isDrainingPersistence = true }
+        persistenceLock.unlock()
+
+        guard shouldStart else { return }
+        persistenceQueue.async { [weak self] in
+            self?.drainPersistence()
+        }
+    }
+
+    func scheduleWidgetUpdate(
+        _ snapshot: ChecklistMaintenanceSnapshot,
+        reloadTimelines: Bool
+    ) {
+        widgetLock.lock()
+        pendingWidget = (snapshot, reloadTimelines)
+        let shouldStart = !isDrainingWidgets
+        if shouldStart { isDrainingWidgets = true }
+        widgetLock.unlock()
+
+        guard shouldStart else { return }
+        widgetQueue.async { [weak self] in
+            self?.drainWidgets()
+        }
+    }
+
+    func flushPersistence() {
+        persistenceQueue.sync {}
+    }
+
+    private func drainPersistence() {
+        while true {
+            persistenceLock.lock()
+            guard let job = pendingPersistence.first else {
+                isDrainingPersistence = false
+                persistenceLock.unlock()
+                return
+            }
+            pendingPersistence.removeValue(forKey: job.key)
+            persistenceLock.unlock()
+
+            let encoder = JSONEncoder()
+            encoder.dateEncodingStrategy = .iso8601
+            if let data = try? encoder.encode(job.value) {
+                try? data.write(to: job.key, options: .atomic)
+            }
+        }
+    }
+
+    private func drainWidgets() {
+        while true {
+            widgetLock.lock()
+            guard let job = pendingWidget else {
+                isDrainingWidgets = false
+                widgetLock.unlock()
+                return
+            }
+            pendingWidget = nil
+            widgetLock.unlock()
+
+            let snapshots = job.snapshot.widgetSnapshots()
+
+            widgetLock.lock()
+            let hasNewerJob = pendingWidget != nil
+            widgetLock.unlock()
+            guard !hasNewerJob,
+                  RitualWidgetSnapshotStore.save(snapshots),
+                  job.reloadTimelines else { continue }
+            WidgetCenter.shared.reloadTimelines(ofKind: RitualWidgetSnapshotStore.kind)
+        }
+    }
+}
+
 @MainActor
 final class ChecklistStore: ObservableObject {
     @Published private(set) var items: [ChecklistItem] = []
@@ -292,6 +501,7 @@ final class ChecklistStore: ObservableObject {
 
     private let api = APIClient()
     private let notifications = NotificationManager()
+    private let maintenanceWorker = ChecklistMaintenanceWorker()
     private var hasStarted = false
     private var syncTask: Task<Void, Never>?
     private var notificationTask: Task<Void, Never>?
@@ -460,7 +670,7 @@ final class ChecklistStore: ObservableObject {
         hasStarted = true
         loadCache()
         hasLoaded = true
-        persistWidgetSnapshot(reloadTimelines: true)
+        scheduleWidgetSnapshot(reloadTimelines: true)
         let permission = await notifications.requestAuthorization()
         notificationSchedulingStatus.permission = permission
         notificationSchedulingStatus = await notifications.reschedule(
@@ -482,6 +692,10 @@ final class ChecklistStore: ObservableObject {
         )
         guard !Task.isCancelled else { return }
         notificationSchedulingStatus = status
+    }
+
+    func flushPendingPersistence() {
+        maintenanceWorker.flushPersistence()
     }
 
     func connect(to authStore: AuthStore) {
@@ -1787,57 +2001,12 @@ final class ChecklistStore: ObservableObject {
     }
 
     func widgetSnapshot(now: Date = .now) -> RitualWidgetSnapshot {
-        widgetSnapshot(for: Calendar.current.startOfDay(for: now), now: now)
-    }
-
-    private func widgetSnapshots(now: Date = .now, days: Int = 7) -> [RitualWidgetSnapshot] {
-        let today = Calendar.current.startOfDay(for: now)
-        return (0..<max(1, days)).compactMap { offset in
-            guard let date = Calendar.current.date(byAdding: .day, value: offset, to: today) else { return nil }
-            return widgetSnapshot(for: date, now: now)
-        }
-    }
-
-    private func widgetSnapshot(for date: Date, now: Date) -> RitualWidgetSnapshot {
-        let today = Calendar.current.startOfDay(for: date)
-        let carryovers = CarryoverResolver.entries(items: items, groups: groups, asOf: today)
-        let carryoverItemIDs = Set(CarryoverResolver.entries(
-            items: items,
-            groups: groups,
-            asOf: today,
-            includeHidden: true
-        ).map(\.item.id))
-        let visibleTodayItems = items.filter { item in
-            let paused = isPaused(item, on: today)
-            return !carryoverItemIDs.contains(item.id)
-                && isTracked(item, on: today)
-                && (!paused || item.hasRecordedState(on: today))
-        }
-        let remainingItems = visibleTodayItems.filter {
-            !$0.isComplete(on: today) && !$0.isSkipped(on: today) && !isPaused($0, on: today)
-        }
-        let completedCount = visibleTodayItems.filter { $0.isComplete(on: today) }.count
-        let skippedCount = visibleTodayItems.filter { $0.isSkipped(on: today) && !$0.isComplete(on: today) }.count
-        let reminderMinutes = widgetReminderMinutes(
-            remainingItems: remainingItems,
-            carryoverItems: carryovers.map(\.item)
-        )
-
-        return RitualWidgetSnapshot(
-            remainingCount: remainingItems.count + carryovers.count,
-            scheduledCount: visibleTodayItems.count + carryovers.count,
-            completedCount: completedCount,
-            skippedCount: skippedCount,
-            carryoverCount: carryovers.count,
-            reminderMinutes: reminderMinutes,
-            nextReminderMinutes: nextWidgetReminderMinutes(on: today, now: now, reminderMinutes: reminderMinutes),
-            dateKey: DateKey.string(from: today),
-            updatedAt: now,
-            hasChecklist: !items.isEmpty
-        )
+        maintenanceSnapshot.widgetSnapshots(now: now, days: 1).first
+            ?? RitualWidgetSnapshot.empty(for: now)
     }
 
     private func loadCache() {
+        maintenanceWorker.flushPersistence()
         var sourceURL = cacheURL
         if activeAccountID == "anonymous", !FileManager.default.fileExists(atPath: sourceURL.path) {
             let legacyURL = URL.documentsDirectory.appending(path: "daily-checklist.json")
@@ -1877,15 +2046,17 @@ final class ChecklistStore: ObservableObject {
             notificationQuietHours: notificationQuietHours,
             pendingMutations: pendingMutations
         )
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        if let data = try? encoder.encode(envelope) {
-            try? data.write(to: cacheURL, options: .atomic)
-        }
-        persistWidgetSnapshot(reloadTimelines: true)
+        maintenanceWorker.persist(envelope, to: cacheURL)
+        scheduleWidgetSnapshot(reloadTimelines: true)
 
         notificationTask?.cancel()
-        notificationTask = Task {
+        notificationTask = Task { [weak self] in
+            do {
+                try await Task.sleep(for: .milliseconds(250))
+            } catch {
+                return
+            }
+            guard !Task.isCancelled, let self else { return }
             await refreshNotificationSchedule()
         }
         if !pendingMutations.isEmpty {
@@ -1902,6 +2073,7 @@ final class ChecklistStore: ObservableObject {
     private func switchLocalAccount(to accountID: String) {
         guard activeAccountID != accountID else { return }
         syncTask?.cancel()
+        maintenanceWorker.flushPersistence()
         activeAccountID = accountID
         UserDefaults.standard.set(accountID, forKey: "activeAccountID")
         items = []
@@ -1923,48 +2095,24 @@ final class ChecklistStore: ObservableObject {
             notificationQuietHours: nil,
             pendingMutations: []
         )
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        guard let data = try? encoder.encode(empty) else { return }
         let url = URL.documentsDirectory.appending(path: "daily-checklist-anonymous.json")
-        try? data.write(to: url, options: .atomic)
+        maintenanceWorker.persist(empty, to: url)
     }
 
-    private func widgetReminderMinutes(
-        remainingItems: [ChecklistItem],
-        carryoverItems: [ChecklistItem]
-    ) -> [Int] {
-        var candidates = remainingItems.compactMap(\.reminderMinutes)
-        if let eveningReminderMinutes {
-            let eveningRemainingCount = (remainingItems + carryoverItems)
-                .filter { notificationFilterForScheduling.includes(item: $0) }
-                .count
-            if eveningRemainingCount > 0 {
-                candidates.append(eveningReminderMinutes)
-            }
-        }
-        return Array(Set(candidates)).sorted()
+    private var maintenanceSnapshot: ChecklistMaintenanceSnapshot {
+        ChecklistMaintenanceSnapshot(
+            items: items,
+            groups: groups,
+            eveningReminderMinutes: eveningReminderMinutes,
+            notificationGroupFilter: notificationFilterForScheduling
+        )
     }
 
-    private func nextWidgetReminderMinutes(
-        on date: Date,
-        now: Date,
-        reminderMinutes: [Int]
-    ) -> Int? {
-        let calendar = Calendar.current
-        return reminderMinutes.filter { minutes in
-            var components = calendar.dateComponents([.year, .month, .day], from: date)
-            components.hour = minutes / 60
-            components.minute = minutes % 60
-            guard let reminderDate = calendar.date(from: components) else { return false }
-            return reminderDate > now
-        }.min()
-    }
-
-    private func persistWidgetSnapshot(reloadTimelines: Bool) {
-        guard RitualWidgetSnapshotStore.save(widgetSnapshots()) else { return }
-        guard reloadTimelines else { return }
-        WidgetCenter.shared.reloadTimelines(ofKind: RitualWidgetSnapshotStore.kind)
+    private func scheduleWidgetSnapshot(reloadTimelines: Bool) {
+        maintenanceWorker.scheduleWidgetUpdate(
+            maintenanceSnapshot,
+            reloadTimelines: reloadTimelines
+        )
     }
 
     static let allFields: Set<String> = [

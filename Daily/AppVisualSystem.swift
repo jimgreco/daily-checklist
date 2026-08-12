@@ -110,24 +110,10 @@ struct RitualBackdrop: View {
         ZStack {
             canvas
 
-            RadialGradient(
-                colors: [accent.opacity(0.12), .clear],
-                center: UnitPoint(x: 0.88, y: 0.02),
-                startRadius: 6,
-                endRadius: 430
-            )
-
-            RadialGradient(
-                colors: [success.opacity(0.065), .clear],
-                center: UnitPoint(x: 0.04, y: 0.72),
-                startRadius: 12,
-                endRadius: 360
-            )
-
             LinearGradient(
-                colors: [Color.white.opacity(0.05), .clear],
-                startPoint: .top,
-                endPoint: .center
+                colors: [accent.opacity(0.09), .clear, success.opacity(0.04)],
+                startPoint: .topTrailing,
+                endPoint: .bottomLeading
             )
         }
         .accessibilityHidden(true)
@@ -157,6 +143,13 @@ private struct RitualCardModifier: ViewModifier {
 extension View {
     func ritualCard(cornerRadius: Double = 24, elevated: Bool = false) -> some View {
         modifier(RitualCardModifier(cornerRadius: cornerRadius, elevated: elevated))
+    }
+
+    func ritualCircularControlSurface() -> some View {
+        background(controlSurface.opacity(0.96), in: Circle())
+            .overlay {
+                Circle().stroke(ritualLine.opacity(0.82), lineWidth: 1)
+            }
     }
 }
 

@@ -953,11 +953,18 @@ struct ChecklistItem: Identifiable, Codable, Hashable {
 
     func firstTrackedDate(calendar: Calendar = .current) -> Date {
         let firstActiveDate = calendar.startOfDay(for: startDate ?? createdAt)
-        let pausedDates = pauseWindows.compactMap { DateKey.date(from: $0.startDate) }
-        let recordedDates = (completedDates.union(Set(completionCounts.keys)).union(skippedDates).union(openDates))
-            .compactMap(DateKey.date(from:))
-            .map { calendar.startOfDay(for: $0) } + pausedDates.map { calendar.startOfDay(for: $0) }
-        guard let firstRecordedDate = recordedDates.min() else { return firstActiveDate }
+        let earliestRecordedKey = [
+            completedDates.min(),
+            completionCounts.keys.min(),
+            skippedDates.min(),
+            openDates.min(),
+            pauseWindows.lazy.map(\.startDate).min()
+        ]
+            .compactMap { $0 }
+            .min()
+        guard let earliestRecordedKey,
+              let firstRecordedDate = DateKey.date(from: earliestRecordedKey, calendar: calendar)
+        else { return firstActiveDate }
         return min(firstActiveDate, firstRecordedDate)
     }
 
@@ -1671,21 +1678,23 @@ enum ChecklistHistoryState: String, CaseIterable, Identifiable {
 }
 
 enum DateKey {
-    static let formatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.calendar = Calendar(identifier: .gregorian)
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = "yyyy-MM-dd"
-        formatter.isLenient = false
-        return formatter
-    }()
-
     static func string(from date: Date) -> String {
-        formatter.string(from: date)
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = .autoupdatingCurrent
+        let components = calendar.dateComponents([.year, .month, .day], from: date)
+        return String(
+            format: "%04d-%02d-%02d",
+            locale: Locale(identifier: "en_US_POSIX"),
+            components.year ?? 0,
+            components.month ?? 0,
+            components.day ?? 0
+        )
     }
 
     static func date(from key: String) -> Date? {
-        formatter.date(from: key)
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = .autoupdatingCurrent
+        return date(from: key, calendar: calendar)
     }
 
     static func date(from key: String, calendar: Calendar) -> Date? {
