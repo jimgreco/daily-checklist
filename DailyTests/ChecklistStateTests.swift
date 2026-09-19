@@ -1,4 +1,5 @@
 import XCTest
+import UserNotifications
 @testable import Daily
 
 final class ChecklistStateTests: XCTestCase {
@@ -9,6 +10,54 @@ final class ChecklistStateTests: XCTestCase {
     override func tearDown() {
         UserDefaults.standard.removeObject(forKey: "activeAccountID")
         super.tearDown()
+    }
+
+    func testNotificationOpenAndDismissCompleteOnMainThread() async {
+        for action in [UNNotificationDefaultActionIdentifier, UNNotificationDismissActionIdentifier, "unknown"] {
+            let completed = expectation(description: "System completion for \(action)")
+            completed.assertForOverFulfill = true
+            DispatchQueue.global().async {
+                RitualNotificationDelegate.shared.handleResponse(actionIdentifier: action, userInfo: [:]) {
+                    XCTAssertTrue(Thread.isMainThread)
+                    completed.fulfill()
+                }
+            }
+            await fulfillment(of: [completed], timeout: 3)
+        }
+    }
+
+    func testNotificationActionsPostOnMainThreadBeforeCompletion() async {
+        for action in [RitualNotificationAction.complete, RitualNotificationAction.skip,
+                       RitualNotificationAction.snooze, RitualNotificationAction.snooze15,
+                       RitualNotificationAction.snooze60] {
+            let delivered = expectation(description: "Action delivered")
+            let completed = expectation(description: "System completed")
+            completed.assertForOverFulfill = true
+            let itemID = UUID().uuidString
+            let observer = NotificationCenter.default.addObserver(
+                forName: .ritualNotificationAction, object: nil, queue: nil
+            ) { notification in
+                XCTAssertTrue(Thread.isMainThread)
+                XCTAssertEqual(notification.userInfo?["action"] as? String, action)
+                XCTAssertEqual(notification.userInfo?["itemID"] as? String, itemID)
+                XCTAssertEqual(notification.userInfo?["occurrenceID"] as? String, "occurrence")
+                XCTAssertEqual(notification.userInfo?["occurrenceDate"] as? String, "2026-09-19")
+                XCTAssertEqual(notification.userInfo?["isCarryover"] as? Bool, true)
+                delivered.fulfill()
+            }
+            DispatchQueue.global().async {
+                RitualNotificationDelegate.shared.handleResponse(
+                    actionIdentifier: action,
+                    userInfo: ["itemID": itemID, "occurrenceID": "occurrence",
+                               "date": "2026-09-19", "isCarryover": true]
+                ) {
+                    XCTAssertTrue(Thread.isMainThread)
+                    completed.fulfill()
+                }
+            }
+            await fulfillment(of: [delivered, completed], timeout: 3, enforceOrder: true)
+            NotificationCenter.default.removeObserver(observer)
+        }
     }
 
     func testExplicitOpenMakesOffDateTracked() {

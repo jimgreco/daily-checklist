@@ -125,27 +125,49 @@ final class RitualNotificationDelegate: NSObject, UNUserNotificationCenterDelega
 
     func userNotificationCenter(
         _ center: UNUserNotificationCenter,
-        didReceive response: UNNotificationResponse
-    ) async {
+        didReceive response: UNNotificationResponse,
+        withCompletionHandler completionHandler: @escaping () -> Void
+    ) {
+        handleResponse(
+            actionIdentifier: response.actionIdentifier,
+            userInfo: response.notification.request.content.userInfo,
+            completionHandler: completionHandler
+        )
+    }
+
+    func handleResponse(
+        actionIdentifier: String,
+        userInfo: [AnyHashable: Any],
+        completionHandler: @escaping () -> Void
+    ) {
+        // Notification callbacks can arrive on a background queue. Both SwiftUI
+        // subscribers and the system's notification-open completion need the main queue.
+        DispatchQueue.main.async {
+            defer { completionHandler() }
+            self.postAction(actionIdentifier: actionIdentifier, userInfo: userInfo)
+        }
+    }
+
+    private func postAction(actionIdentifier: String, userInfo: [AnyHashable: Any]) {
         guard [
             RitualNotificationAction.complete,
             RitualNotificationAction.skip,
             RitualNotificationAction.snooze,
             RitualNotificationAction.snooze15,
             RitualNotificationAction.snooze60
-        ].contains(response.actionIdentifier) else { return }
+        ].contains(actionIdentifier) else { return }
 
         NotificationCenter.default.post(
             name: .ritualNotificationAction,
             object: nil,
             userInfo: [
-                "action": response.actionIdentifier,
-                "itemID": response.notification.request.content.userInfo["itemID"] as? String ?? "",
-                "occurrenceID": response.notification.request.content.userInfo["occurrenceID"] as? String ?? "",
-                "occurrenceDate": response.notification.request.content.userInfo["occurrenceDate"] as? String
-                    ?? response.notification.request.content.userInfo["date"] as? String
+                "action": actionIdentifier,
+                "itemID": userInfo["itemID"] as? String ?? "",
+                "occurrenceID": userInfo["occurrenceID"] as? String ?? "",
+                "occurrenceDate": userInfo["occurrenceDate"] as? String
+                    ?? userInfo["date"] as? String
                     ?? "",
-                "isCarryover": response.notification.request.content.userInfo["isCarryover"] as? Bool ?? false
+                "isCarryover": userInfo["isCarryover"] as? Bool ?? false
             ]
         )
     }
