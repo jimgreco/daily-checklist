@@ -971,7 +971,10 @@ const recurrenceIntervalUnits = ["day", "week"];
 const recurrenceOrdinals = [-1, 1, 2, 3, 4];
 
 function validID(value) {
-  return typeof value === "string" && /^[a-z0-9._:-]{1,120}$/i.test(value);
+  // IDs index plain-object maps. Inherited keys must never resolve to a shared
+  // prototype/function instead of an account-owned record.
+  return typeof value === "string" && /^[a-z0-9._:-]{1,120}$/i.test(value)
+    && !Object.hasOwn(Object.prototype, value);
 }
 
 function validNotificationGroupFilter(filter) {
@@ -1544,7 +1547,9 @@ function validMutation(mutation) {
 }
 
 function applyMutation(account, mutation, deviceID) {
-  if (!mutation?.id || !mutation.kind || !mutation.stamp) return false;
+  if (!validID(mutation?.id) || !mutation.kind || !mutation.stamp
+      || (mutation.itemID != null && !validID(mutation.itemID))
+      || (mutation.groupID != null && !validID(mutation.groupID))) return false;
   account.appliedMutations ||= {};
   if (account.appliedMutations[mutation.id]) return true;
   account.appliedMutations[mutation.id] = mutation.stamp;
