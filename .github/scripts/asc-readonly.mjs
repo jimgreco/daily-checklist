@@ -58,6 +58,15 @@ export function validateProfile(resource, target, now = Date.now()) {
     && a.profileType === 'IOS_APP_STORE' && a.profileState === 'ACTIVE' && a.platform === 'IOS'
     && validUntil(a.expirationDate, now), 'Pinned existing iOS profile is missing, changed, inactive, or expired.');
 }
+export function validateBundle(resource, target, p = policy) {
+  const a = resource?.attributes;
+  // Apple BundleIdPlatform includes UNIVERSAL. The pinned profile itself must
+  // still be IOS_APP_STORE/IOS; decoded profile and certificate prove the team.
+  // seedId is optional metadata; if supplied it must match the pinned prefix.
+  check(resource?.type === 'bundleIds' && a?.identifier === target.bundleId
+    && ['IOS', 'UNIVERSAL'].includes(a.platform) && (a.seedId == null || a.seedId === p.teamId),
+    'Existing profile bundle metadata differs: ' + JSON.stringify({ type: resource?.type, identifier: a?.identifier, platform: a?.platform, seedId: a?.seedId }));
+}
 export async function existingProfile(client, name, der, now = Date.now(), p = policy) {
   const target = p.profiles[name]; check(target, 'Target outside the approved iOS release.');
   const rows = await client.list(`/v1/profiles?filter[name]=${encodeURIComponent(target.name)}&fields[profiles]=name,uuid&limit=200`);
@@ -67,8 +76,7 @@ export async function existingProfile(client, name, der, now = Date.now(), p = p
   const profile = (await client.get(`/v1/profiles/${id}`)).data;
   validateProfile(profile, target, now);
   const bundle = (await client.get(`/v1/profiles/${id}/bundleId`)).data;
-  check(bundle?.type === 'bundleIds' && bundle.attributes?.identifier === target.bundleId && bundle.attributes?.platform === 'IOS'
-    && bundle.attributes?.seedId === p.teamId, 'Existing profile bundle or team differs.');
+  validateBundle(bundle, target, p);
   const certificates = await client.list(`/v1/profiles/${id}/certificates?limit=200`);
   check(certificates.length === 1, 'Profile must contain exactly the approved signing certificate.');
   // Read the certificate resource now: a stale cached profile alone is insufficient.
@@ -95,7 +103,7 @@ export async function audience(client, p = policy) {
     const group = groups.find(g => g.id === expected.id), a = group.attributes;
     check(group.type === 'betaGroups' && a?.name === expected.name && a.isInternalGroup === expected.internal
       && Object.hasOwn(a, 'publicLinkEnabled') && [false, null].includes(a.publicLinkEnabled)
-      && !a.publicLink && !a.publicLinkId && a.hasAccessToAllBuilds === expected.automatic, 'TestFlight group scope or automatic distribution changed.');
+      && !a.publicLink && !a.publicLinkId && a.hasAccessToAllBuilds === expected.automatic, 'TestFlight group scope or automatic distribution changed: ' + JSON.stringify({ id: group.id, name: a?.name, internal: a?.isInternalGroup, publicLinkEnabledPresent: !!a && Object.hasOwn(a, 'publicLinkEnabled'), publicLinkEnabled: a?.publicLinkEnabled, hasPublicLink: !!a?.publicLink, hasPublicLinkId: !!a?.publicLinkId, automatic: a?.hasAccessToAllBuilds, expected }));
     const testers = await client.list(`/v1/betaGroups/${expected.id}/betaTesters?limit=200`);
     check(testers.length === expected.testers, 'TestFlight tester count changed.');
     if (expected.testers) {

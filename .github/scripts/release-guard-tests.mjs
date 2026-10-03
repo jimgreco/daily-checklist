@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { policy, digest, readClient, audience, preflight, verifyUploaded, validateCertificate, validateProfile, releaseIdentity } from './asc-readonly.mjs';
+import { policy, digest, readClient, audience, preflight, verifyUploaded, validateCertificate, validateProfile, validateBundle, releaseIdentity } from './asc-readonly.mjs';
 
 const clone = value => structuredClone(value);
 function fixture() {
@@ -128,4 +128,24 @@ test('processing success requires intended version, internal-only audience and a
   assert.equal(await verifyUploaded(f.client, '3', 'a'.repeat(40), f.p), null);
   f.routes['/v1/preReleaseVersions/ios-train/builds?limit=200'].data[0].attributes.buildAudienceType = 'APP_STORE_ELIGIBLE';
   await assert.rejects(() => verifyUploaded(f.client, '3', 'a'.repeat(40), f.p));
+});
+
+test('iOS profiles may belong to universal app IDs with optional seed metadata', () => {
+  const target = policy.profiles.app;
+  for (const platform of ['IOS', 'UNIVERSAL']) {
+    for (const seedId of [policy.teamId, null, undefined]) {
+      validateBundle({ type: 'bundleIds', attributes: { identifier: target.bundleId, platform, seedId } }, target);
+    }
+  }
+});
+test('bundle relationship rejects another app, platform or supplied team', () => {
+  const target = policy.profiles.app;
+  const resource = { type: 'bundleIds', attributes: { identifier: target.bundleId, platform: 'UNIVERSAL', seedId: policy.teamId } };
+  for (const [key, value] of Object.entries({ identifier: 'other.app', platform: 'MAC_OS', seedId: 'OTHERTEAM' })) {
+    const changed = clone(resource); changed.attributes[key] = value;
+    assert.throws(() => validateBundle(changed, target), /metadata differs/);
+  }
+  assert.throws(() => validateBundle({ ...resource, type: 'profiles' }, target));
+  const missingPlatform = clone(resource); delete missingPlatform.attributes.platform;
+  assert.throws(() => validateBundle(missingPlatform, target));
 });
