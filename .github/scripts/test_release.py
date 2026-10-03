@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import plistlib
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -14,6 +15,16 @@ import zipfile
 spec = importlib.util.spec_from_file_location('verify_release', Path(__file__).with_name('verify-release.py'))
 v = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(v)
+
+
+class PublicCertificateCommandTests(unittest.TestCase):
+    @unittest.skipUnless(sys.platform == 'darwin', 'macOS codesign integration')
+    def test_extract_public_certificate_uses_output_prefix(self):
+        with tempfile.TemporaryDirectory() as directory:
+            # Exercise actual codesign parsing without reading a keychain or key.
+            first = v.signing_certificate('/usr/bin/true', directory)
+            self.assertGreater(len(first), 100)
+            self.assertEqual(v.signing_certificate('/usr/bin/true', directory), first)
 
 
 class ProfileTests(unittest.TestCase):
