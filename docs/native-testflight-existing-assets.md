@@ -9,7 +9,7 @@ Ownership was cleared on 2026-10-03. Main pushes automatically run the guarded i
 ## Local checks
 
 ```sh
-node --test .github/scripts/test-release.test.mjs
+node --test .github/scripts/release-guard-tests.mjs
 PYTHONDONTWRITEBYTECODE=1 python3 .github/scripts/test_release.py
 actionlint .github/workflows/publish.yml
 git diff --check

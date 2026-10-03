@@ -91,10 +91,12 @@ test('build check accepts advancing iOS commit count only', async () => {
     await assert.rejects(() => preflight(f.client, '3', 'a'.repeat(40), f.p));
   }
 });
-test('checks all iOS version trains, not just newest upload', async () => {
+test('compares builds within the pinned iOS marketing version', async () => {
   const f = fixture();
   f.routes[`/v1/preReleaseVersions?filter[app]=${f.p.appId}&filter[platform]=IOS&limit=200`].data.push({ type: 'preReleaseVersions', id: 'old', attributes: { platform: 'IOS', version: '0.9' } });
   f.routes['/v1/preReleaseVersions/old/builds?limit=200'] = { data: [{ type: 'builds', id: 'old-high', attributes: { version: '900' } }] };
+  assert.equal((await preflight(f.client, '3', 'a'.repeat(40), f.p)).build, '3');
+  f.routes['/v1/preReleaseVersions/ios-train/builds?limit=200'].data.push({ type: 'builds', id: 'same-train-high', attributes: { version: '4' } });
   await assert.rejects(() => preflight(f.client, '3', 'a'.repeat(40), f.p));
 });
 test('source and build identifiers are strict', () => {

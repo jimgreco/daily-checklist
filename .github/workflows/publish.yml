@@ -331,7 +331,7 @@ jobs:
           test
     - name: Test no-mutation release guards
       run: |
-        node --test .github/scripts/test-release.test.mjs
+        node --test .github/scripts/release-guard-tests.mjs
         PYTHONDONTWRITEBYTECODE=1 python3 .github/scripts/test_release.py
     - name: Bind release to clean source
       run: |
