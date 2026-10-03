@@ -87,59 +87,79 @@ final class AuthStore: ObservableObject, ChecklistSessionProvider {
     }
 
     func exportData() async -> String? {
+        let generation = sessionGeneration
         guard let token = await validAccessToken() else {
+            guard sessionGeneration == generation else { return nil }
             errorMessage = "Sign in again to export your data."
             return nil
         }
+        guard sessionGeneration == generation else { return nil }
         do {
             let data = try await api.exportData(token: token)
+            guard sessionGeneration == generation else { return nil }
             errorMessage = nil
             return String(data: data, encoding: .utf8)
         } catch {
+            guard sessionGeneration == generation else { return nil }
             errorMessage = "Unable to export your data. Try again later."
             return nil
         }
     }
 
     func importData(_ data: Data) async -> SyncResponse? {
+        let generation = sessionGeneration
         guard let token = await validAccessToken() else {
+            guard sessionGeneration == generation else { return nil }
             errorMessage = "Sign in again to restore your data."
             return nil
         }
+        guard sessionGeneration == generation else { return nil }
         do {
             let response = try await importData(data, token: token)
+            guard sessionGeneration == generation else { return nil }
             errorMessage = nil
             return response
         } catch APIClient.APIError.badResponse(401) {
+            guard sessionGeneration == generation else { return nil }
             guard let refreshed = await refreshAccessToken() else {
+                guard sessionGeneration == generation else { return nil }
                 errorMessage = "Sign in again to restore your data."
                 return nil
             }
+            guard sessionGeneration == generation else { return nil }
             do {
                 let response = try await importData(data, token: refreshed)
+                guard sessionGeneration == generation else { return nil }
                 errorMessage = nil
                 return response
             } catch {
+                guard sessionGeneration == generation else { return nil }
                 errorMessage = restoreErrorMessage(for: error)
                 return nil
             }
         } catch {
+            guard sessionGeneration == generation else { return nil }
             errorMessage = restoreErrorMessage(for: error)
             return nil
         }
     }
 
     func deleteAccount() async -> Bool {
+        let generation = sessionGeneration
         guard let token = await validAccessToken() else {
+            guard sessionGeneration == generation else { return false }
             errorMessage = "Sign in again to delete your account."
             return false
         }
+        guard sessionGeneration == generation else { return false }
         do {
             try await api.deleteAccount(token: token)
+            guard sessionGeneration == generation else { return false }
             signOut()
             errorMessage = nil
             return true
         } catch {
+            guard sessionGeneration == generation else { return false }
             errorMessage = "Unable to delete your account. Try again later."
             return false
         }
