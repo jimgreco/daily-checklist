@@ -4,6 +4,8 @@ Pushes validate the server; deployment is manual and serialized with all other s
 
 The helper `server/scripts/deploy-service.py` uses the running `deploy/daily` container's recorded Compose files. It requires Docker Compose v2 through `docker-compose`, Python 3, exactly one running Daily container, and unchanged effective service configuration. It compares the current Compose configuration hash and complete resolved environment with the running container in memory. Configuration values are never printed or saved. Existing `SESSION_SECRET` must meet the audited startup requirement, and the existing runtime must use production Postgres. Missing or changed configuration is a blocker for coordinated reconciliation; the helper never rewrites `.env` or creates credentials.
 
+Compose 2.26.1 removes `depends_on` before hashing a container created with `up --no-deps`. For that exact Compose version and an empty live dependency label, the guard also accepts the native hash after removing only `daily.depends_on` in memory. It first proves that passing the full resolved model through stdin reproduces the original hash. All other service fields and the separate complete-environment comparison remain required; an unknown version or a lossy model conversion fails closed. No Compose file is rewritten.
+
 Before transfer/release, the coordinator must establish an existing rollback commit, current backup freshness, and exact intended source SHA. Use existing pinned SSH access. If `EC2_SSH_KNOWN_HOSTS` is absent, do not provision trust automatically or use the Actions deployment path. Local coordinator deployment through already pinned access is supported.
 
 1. Fetch remote `main` and record its exact 40-character SHA. Ensure the exact-SHA validation jobs succeeded.

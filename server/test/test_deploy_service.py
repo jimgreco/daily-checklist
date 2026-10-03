@@ -43,14 +43,87 @@ class DeploySafetyTests(unittest.TestCase):
             deploy.validate_environment(live, self.base, self.defaults)
 
     def test_preflight_refuses_changed_compose_hash(self):
-        container = {"Id": "container", "Config": {"Labels": {"com.docker.compose.config-hash": "running"}}}
-        responses = ["container", {"services": {"daily": {"build": "."}}}, "daily changed"]
+        container = {"Id": "container", "Config": {"Labels": {"com.docker.compose.config-hash": "a" * 64}}}
+        responses = ["container", {"services": {"daily": {"build": "."}}}, "daily " + "b" * 64]
         with patch.object(deploy, "run", side_effect=responses) as run, \
              patch.object(deploy, "inspect_container", return_value=container), \
              patch.object(deploy, "compose_for", return_value=["docker-compose"]):
             with self.assertRaisesRegex(deploy.ReleaseError, "Compose configuration differs"):
                 deploy.preflight(Path("/unused"))
             self.assertEqual(run.call_count, 3)
+
+    def no_deps_fixture(self):
+        live = {"Config": {"Labels": {"com.docker.compose.config-hash": "b" * 64,
+                                       "com.docker.compose.depends_on": "",
+                                       "com.docker.compose.version": "2.26.1"}}}
+        compose = ["docker-compose", "--project-name", "deploy", "--project-directory", "/deploy",
+                   "-f", "/deploy/docker-compose.yml", "-f", "/deploy/docker-compose.override.yml",
+                   "--profile", "daily"]
+        config = {"services": {"daily": {"depends_on": {"db": {"condition": "service_healthy"}},
+                                          "environment": self.base, "ports": ["8787:8787"]},
+                                "db": {"image": "postgres:16"}}}
+        return live, compose, config
+
+    def test_exact_hash_does_not_try_no_deps_alternative(self):
+        live, compose, config = self.no_deps_fixture()
+        with patch.object(deploy, "run", return_value="daily " + "b" * 64) as run:
+            deploy.validate_service_hash(live, compose, config)
+            run.assert_called_once_with(*compose, "config", "--hash", "daily")
+
+    def test_no_deps_hash_removes_only_dependencies_after_proven_roundtrip(self):
+        live, compose, config = self.no_deps_fixture()
+        original = deploy.copy.deepcopy(config)
+        responses = ["daily " + "a" * 64, "2.26.1", "daily " + "a" * 64, "daily " + "b" * 64]
+        with patch.object(deploy, "run", side_effect=responses) as run:
+            deploy.validate_service_hash(live, compose, config)
+            first = deploy.json.loads(run.call_args_list[2].kwargs["input_text"])
+            second = deploy.json.loads(run.call_args_list[3].kwargs["input_text"])
+            self.assertEqual(first, original)
+            self.assertEqual(first["services"]["db"], second["services"]["db"])
+            expected = deploy.copy.deepcopy(original)
+            expected["services"]["daily"].pop("depends_on")
+            self.assertEqual(second, expected)
+            self.assertEqual(config, original)
+            self.assertNotIn("/deploy/docker-compose.yml", run.call_args_list[3].args)
+            self.assertEqual(run.call_args_list[3].args[-5:], ("-f", "-", "config", "--hash", "daily"))
+            self.assertNotIn(self.base["SESSION_SECRET"], " ".join(run.call_args_list[3].args))
+
+    def test_no_deps_hash_never_accepts_unrelated_configuration_drift(self):
+        live, compose, config = self.no_deps_fixture()
+        responses = ["daily " + "a" * 64, "2.26.1", "daily " + "a" * 64, "daily " + "c" * 64]
+        with patch.object(deploy, "run", side_effect=responses):
+            with self.assertRaisesRegex(deploy.ReleaseError, "Compose configuration differs"):
+                deploy.validate_service_hash(live, compose, config)
+
+    def test_no_deps_hash_requires_lossless_full_configuration_roundtrip(self):
+        live, compose, config = self.no_deps_fixture()
+        responses = ["daily " + "a" * 64, "2.26.1", "daily " + "c" * 64]
+        with patch.object(deploy, "run", side_effect=responses) as run:
+            with self.assertRaisesRegex(deploy.ReleaseError, "unchanged Daily Compose model"):
+                deploy.validate_service_hash(live, compose, config)
+            self.assertEqual(run.call_count, 3)
+
+    def test_no_deps_alternative_requires_empty_live_dependency_label_and_known_version(self):
+        for changed in [{"com.docker.compose.depends_on": "db:service_started:false"},
+                        {"com.docker.compose.depends_on": None}, {"com.docker.compose.version": "2.27.0"}]:
+            live, compose, config = self.no_deps_fixture()
+            live["Config"]["Labels"].update(changed)
+            with patch.object(deploy, "run", return_value="daily " + "a" * 64) as run:
+                with self.assertRaises(deploy.ReleaseError):
+                    deploy.validate_service_hash(live, compose, config)
+                self.assertEqual(run.call_count, 1)
+
+    def test_no_deps_alternative_rejects_changed_installed_compose_version(self):
+        live, compose, config = self.no_deps_fixture()
+        with patch.object(deploy, "run", side_effect=["daily " + "a" * 64, "2.27.0"]) as run:
+            with self.assertRaises(deploy.ReleaseError):
+                deploy.validate_service_hash(live, compose, config)
+            self.assertEqual(run.call_count, 2)
+
+    def test_service_hash_rejects_missing_extra_or_malformed_results(self):
+        for value in ["", "daily invalid", "other " + "a" * 64, "daily " + "a" * 64 + "\ndb " + "b" * 64]:
+            with self.assertRaises(deploy.ReleaseError):
+                deploy.service_hash(value)
 
     def test_default_invocation_only_reads_preflight(self):
         with patch("sys.argv", ["deploy-service.py"]), \

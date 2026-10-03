@@ -2,6 +2,7 @@
 """Validate or replace only the existing Daily service without changing runtime config."""
 
 import argparse
+import copy
 import fcntl
 import json
 from pathlib import Path
@@ -15,10 +16,10 @@ class ReleaseError(Exception):
     pass
 
 
-def run(*args, json_output=False):
+def run(*args, json_output=False, input_text=None):
     # Compose config and inspect can contain credentials. Keep all output in memory
     # and never include subprocess output in an exception or release record.
-    result = subprocess.run(args, text=True, capture_output=True)
+    result = subprocess.run(args, input=input_text, text=True, capture_output=True)
     if result.returncode:
         raise ReleaseError(f"Command failed: {args[0]} {args[1] if len(args) > 1 else ''}; output withheld")
     try:
@@ -65,6 +66,48 @@ def compose_for(container, directory):
     return command + ["--profile", "daily"]
 
 
+def service_hash(output):
+    fields = output.split()
+    if len(fields) != 2 or fields[0] != "daily" or not re.fullmatch(r"[0-9a-f]{64}", fields[1]):
+        raise ReleaseError("Compose returned an invalid Daily configuration hash")
+    return fields[1]
+
+
+def validate_service_hash(live, compose, config):
+    labels = live["Config"].get("Labels") or {}
+    live_hash = labels.get("com.docker.compose.config-hash")
+    configured_hash = service_hash(run(*compose, "config", "--hash", "daily"))
+    if configured_hash == live_hash:
+        return
+    # Compose 2.26.1 up --no-deps selects only daily and removes its depends_on
+    # before hashing. Require that precise case; never waive unrelated drift.
+    # See compose v2.26.1 cmd/compose/up.go and compose-go v2.0.2 project.go.
+    service = config.get("services", {}).get("daily", {})
+    if (not service.get("depends_on")
+            or labels.get("com.docker.compose.depends_on") != ""
+            or labels.get("com.docker.compose.version") != "2.26.1"
+            or run(compose[0], "version", "--short").lstrip("v") != "2.26.1"):
+        raise ReleaseError("Effective Daily Compose configuration differs from the running container")
+    # Feed Compose's resolved model through stdin, never a file or CLI argument.
+    # Preserve its $$ escaping so Compose decodes literal dollars exactly once.
+    stdin_command = []
+    parts = iter(compose)
+    for part in parts:
+        if part == "-f":
+            next(parts)
+        else:
+            stdin_command.append(part)
+    stdin_command.extend(["-f", "-", "config", "--hash", "daily"])
+    roundtrip = service_hash(run(*stdin_command, input_text=json.dumps(config)))
+    if roundtrip != configured_hash:
+        raise ReleaseError("Cannot verify the unchanged Daily Compose model through stdin")
+    without_dependencies = copy.deepcopy(config)
+    without_dependencies["services"]["daily"].pop("depends_on")
+    no_deps_hash = service_hash(run(*stdin_command, input_text=json.dumps(without_dependencies)))
+    if no_deps_hash != live_hash:
+        raise ReleaseError("Effective Daily Compose configuration differs from the running container")
+
+
 def preflight(directory, expected_id=None):
     ids = run("docker", "ps", "--filter", "label=com.docker.compose.project=deploy",
               "--filter", "label=com.docker.compose.service=daily", "--format", "{{.ID}}").splitlines()
@@ -76,9 +119,7 @@ def preflight(directory, expected_id=None):
     compose = compose_for(live, directory)
     config = run(*compose, "config", "--format", "json", json_output=True)
     service = config.get("services", {}).get("daily", {})
-    digest = run(*compose, "config", "--hash", "daily").split()
-    if len(digest) != 2 or digest[0] != "daily" or digest[1] != live["Config"]["Labels"].get("com.docker.compose.config-hash"):
-        raise ReleaseError("Effective Daily Compose configuration differs from the running container")
+    validate_service_hash(live, compose, config)
     build = service.get("build") or {}
     if not isinstance(build, dict) or Path(build.get("context", "")).resolve() != Path(__file__).resolve().parents[1]:
         raise ReleaseError("Daily build context differs from the transferred server directory")
