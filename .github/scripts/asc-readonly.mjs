@@ -27,7 +27,7 @@ export function readClient(fetcher = fetch, auth = token) {
     let response;
     try { response = await fetcher(url.href, { method: 'GET', redirect: 'error', signal: AbortSignal.timeout(30000), headers: { Authorization: `Bearer ${auth()}`, Accept: 'application/json' } }); }
     catch { throw new Error('Apple read failed; no changes attempted.'); }
-    check(response.ok, `Apple read rejected (${response.status}); no changes attempted.`);
+    check(response.ok, `Apple read rejected (${response.status}) at ${url.pathname}; no changes attempted.`);
     return response.json();
   }
   async function list(path) {
@@ -147,7 +147,13 @@ export async function verifyUploaded(client, build, sha, p = policy) {
   const b = matches[0];
   check(b.marketingVersion === p.marketingVersion && b.attributes.processingState === 'VALID'
     && b.attributes.expired === false && b.attributes.buildAudienceType === 'INTERNAL_ONLY', 'Uploaded build failed processing or is not the intended internal-only iOS version.');
-  const groups = await client.list(`/v1/builds/${encodeURIComponent(b.id)}/betaGroups?limit=200`);
+  // Apple supports GET betaGroups/{id}/builds, not GET builds/{id}/betaGroups.
+  // audience() above already proved the complete app group set is exactly pinned.
+  const groups = [];
+  for (const group of p.groups) {
+    const groupBuilds = await client.list(`/v1/betaGroups/${group.id}/builds?limit=200`);
+    if (groupBuilds.some(row => row.id === b.id)) groups.push({ id: group.id });
+  }
   check(groups.every(g => p.groups.some(e => e.internal && e.id === g.id)), 'Uploaded build has an unapproved group.');
   const testers = await client.list(`/v1/builds/${encodeURIComponent(b.id)}/individualTesters?limit=200`);
   check(testers.length <= 1 && testers.every(t => isApprovedTester(t, p)), 'Uploaded build has an unapproved individual tester.');

@@ -22,9 +22,18 @@ class PublicCertificateCommandTests(unittest.TestCase):
     def test_extract_public_certificate_uses_output_prefix(self):
         with tempfile.TemporaryDirectory() as directory:
             # Exercise actual codesign parsing without reading a keychain or key.
-            first = v.signing_certificate('/usr/bin/true', directory)
-            self.assertGreater(len(first), 100)
-            self.assertEqual(v.signing_certificate('/usr/bin/true', directory), first)
+            prefix = str(Path(directory) / 'signing-cert-')
+            # Some macOS system signatures omit their embedded certificate chain.
+            # Successful codesign parsing is still testable without a private key.
+            v.run('codesign', '-d', '--extract-certificates=' + prefix, '/usr/bin/true')
+            certificate = Path(prefix + '0')
+            if certificate.exists():
+                first = certificate.read_bytes()
+                self.assertGreater(len(first), 100)
+                self.assertEqual(v.signing_certificate('/usr/bin/true', directory), first)
+            else:
+                with self.assertRaisesRegex(ValueError, 'no embedded public signing certificate'):
+                    v.signing_certificate('/usr/bin/true', directory)
 
 
 class ProfileTests(unittest.TestCase):

@@ -121,10 +121,10 @@ test('certificate uses pinned public bytes and rejects expired/inactive/wrong ty
 test('processing success requires intended version, internal-only audience and approved group', async () => {
   const f = fixture(), id = 'uploaded';
   f.routes['/v1/preReleaseVersions/ios-train/builds?limit=200'].data = [{ type: 'builds', id, attributes: { version: '3', processingState: 'VALID', expired: false, buildAudienceType: 'INTERNAL_ONLY' } }];
-  f.routes[`/v1/builds/${id}/betaGroups?limit=200`] = { data: [{ id: f.p.groups[0].id }] };
+  f.routes[`/v1/betaGroups/${f.p.groups[0].id}/builds?limit=200`] = { data: [{ id, type: 'builds' }] };
   f.routes[`/v1/builds/${id}/individualTesters?limit=200`] = { data: [] };
   assert.equal((await verifyUploaded(f.client, '3', 'a'.repeat(40), f.p)).approvedGroupAttached, true);
-  f.routes[`/v1/builds/${id}/betaGroups?limit=200`].data = [];
+  f.routes[`/v1/betaGroups/${f.p.groups[0].id}/builds?limit=200`].data = [];
   assert.equal(await verifyUploaded(f.client, '3', 'a'.repeat(40), f.p), null);
   f.routes['/v1/preReleaseVersions/ios-train/builds?limit=200'].data[0].attributes.buildAudienceType = 'APP_STORE_ELIGIBLE';
   await assert.rejects(() => verifyUploaded(f.client, '3', 'a'.repeat(40), f.p));

@@ -142,7 +142,9 @@ def signing_certificate(app, directory):
     # by codesign as another input file. These are public certificates only.
     prefix = str(Path(directory) / 'signing-cert-')
     run('codesign', '-d', '--extract-certificates=' + prefix, str(app))
-    return Path(prefix + '0').read_bytes()
+    certificate = Path(prefix + '0')
+    check(certificate.is_file(), 'Signed bundle has no embedded public signing certificate.')
+    return certificate.read_bytes()
 
 
 def artifact(ipa, sha, build, policy=POLICY):
