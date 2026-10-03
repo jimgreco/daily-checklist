@@ -5,7 +5,7 @@ Pushes to `main` run server tests, dependency audit, and a container build. The 
 Manual Publish inputs default to validation only:
 
 - `deploy_server=false`: set true only for a coordinated server replacement with existing pinned SSH trust. This replaces only the existing `daily` service and preserves its effective runtime configuration. See [isolated server release](server-release.md).
-- `publish_testflight=false`: set true only after native distribution and signing/profile actions are approved. This runs iOS tests, creates current provisioning profiles, archives the app, and uploads to TestFlight. A successful upload does not mean an App Store release or device acceptance.
+- `publish_testflight=false`: set true only after native distribution and signing/profile actions are approved. This runs iOS tests, validates the pinned existing profiles without changing Apple resources, archives the app, and uploads for internal TestFlight only. See [existing-assets-only release](native-testflight-existing-assets.md). A successful upload does not mean an App Store release or device acceptance.
 - App Store listing and screenshot updates remain separate opt-in inputs.
 
 For a release-candidate build, set these manual inputs:

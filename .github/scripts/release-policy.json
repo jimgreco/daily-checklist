@@ -1,0 +1,51 @@
+{
+  "app": "ritual",
+  "appId": "6784239049",
+  "bundleId": "com.jimgreco.dailychecklist",
+  "teamId": "V6JPQCD336",
+  "certificateSha256": "7fb57dbf0cd7923f9ba97d8801824de79e1ba235dbe78d4a821f8195c30f0bf8",
+  "certificateSha1": "963A7A5107DB8D4C141371C285F71CCAE84A5452",
+  "testerEmailSha256": "a46343858cf3e5e2fda6339f7063190f295ece10dea50979932e69ec57ea4baa",
+  "groups": [
+    {
+      "id": "f5c7d464-a8a4-478a-9c45-918ac787e637",
+      "name": "Family",
+      "internal": true,
+      "testers": 1,
+      "automatic": true
+    }
+  ],
+  "profiles": {
+    "app": {
+      "uuid": "12917070-3f51-46ec-9b10-0ff1c2228163",
+      "name": "Daily App Store 34663348983",
+      "bundleId": "com.jimgreco.dailychecklist",
+      "groups": [
+        "group.com.jimgreco.dailychecklist"
+      ],
+      "appleSignin": [
+        "Default"
+      ],
+      "push": null
+    },
+    "extension": {
+      "uuid": "6e9eb6c7-4440-460f-8683-60e884b2a051",
+      "name": "Daily Widget App Store 34663348983",
+      "bundleId": "com.jimgreco.dailychecklist.widget",
+      "groups": [
+        "group.com.jimgreco.dailychecklist"
+      ],
+      "appleSignin": [
+        "Default"
+      ],
+      "push": null
+    }
+  },
+  "marketingVersion": "1.1",
+  "apiOrigin": "https://ritualcue.com",
+  "infoPlists": [
+    "Daily/Info.plist",
+    "DailyWidget/Info.plist"
+  ],
+  "configuredPlistKeys": []
+}
