@@ -1,12 +1,12 @@
 # Production App Store Release
 
-Use GitHub Actions > Publish > Run workflow to kick off a production build.
+Pushes to `main` run server tests, dependency audit, and a container build. The separate Web E2E workflow checks browser journeys. Deployments and native distribution require an explicit manual Publish run.
 
-The Publish workflow always:
+Manual Publish inputs default to validation only:
 
-- tests, audits, and container-builds the server;
-- deploys the server to production and runs the production health check;
-- builds the iOS app and uploads the build to TestFlight.
+- `deploy_server=false`: set true only for a coordinated server replacement with existing pinned SSH trust. This replaces only the existing `daily` service and preserves its effective runtime configuration. See [isolated server release](server-release.md).
+- `publish_testflight=false`: set true only after native distribution and signing/profile actions are approved. This runs iOS tests, creates current provisioning profiles, archives the app, and uploads to TestFlight. A successful upload does not mean an App Store release or device acceptance.
+- App Store listing and screenshot updates remain separate opt-in inputs.
 
 For a release-candidate build, set these manual inputs:
 

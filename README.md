@@ -113,25 +113,21 @@ Visibility and streaks use the same tracked-day rule: a date counts for an item 
 
 ## Publishing
 
-Every push to `main` runs `.github/workflows/publish.yml`:
+Every push to `main` runs server tests, deployment-guard tests, dependency audit, and a container build. The Web E2E workflow checks browser journeys.
 
-- tests and container-builds the Node server;
-- deploys `server/` to the shared EC2 host, ensures the `daily_checklist` Postgres database exists, migrates the old `daily-data/database.json` file into Postgres if Postgres is still empty, and rebuilds the `daily` Docker Compose service;
-- builds the iOS app, creates a current App Store provisioning profile, archives, and uploads to TestFlight.
+Server deployment is manual with `deploy_server=true`; iOS distribution is separately manual with `publish_testflight=true`. Both default to false. Server deployment preserves the existing effective live configuration, retains a rollback image, and replaces only the `daily` service. It never updates runtime credentials, starts dependencies, migrates legacy JSON, creates databases, or prunes shared images. See [`docs/server-release.md`](docs/server-release.md).
 
-Manual Publish runs can also upload source-controlled App Store listing metadata and deterministic screenshots to the editable App Store Connect version. See `docs/app-store-production.md`.
+Native distribution creates current provisioning profiles and uploads to TestFlight after its iOS tests pass. Manual Publish runs can separately upload source-controlled App Store listing metadata and deterministic screenshots. See [`docs/app-store-production.md`](docs/app-store-production.md).
 
 Production database protection includes daily encrypted S3 logical dumps, a separate freshness monitor, disposable restore drills, and daily EBS snapshots. See [`docs/database-backups.md`](docs/database-backups.md) for schedules, alerts, inspection, and recovery steps.
 
-Repository secrets required:
+Existing repository secrets for optional delivery:
 
-- EC2: `EC2_HOST`, `EC2_USER`, `EC2_SSH_KEY`, `EC2_SSH_KNOWN_HOSTS`, `DAILY_SESSION_SECRET`
-- OAuth/runtime: `GOOGLE_IOS_CLIENT_ID`, `GOOGLE_IOS_REVERSED_CLIENT_ID`, `GOOGLE_WEB_CLIENT_ID`, `APPLE_WEB_CLIENT_ID`, `APPLE_WEB_KEY_ID`, `APPLE_WEB_PRIVATE_KEY_BASE64`, `IOS_API_BASE_URL`; the deploy sets `ADMIN_EMAILS=jgreco@gmail.com` and `DAILY_ADMIN_EMAILS=jgreco@gmail.com`
-- Apple delivery: `APP_STORE_CONNECT_KEY_ID`, `APP_STORE_CONNECT_ISSUER_ID`, `APP_STORE_CONNECT_API_KEY`, `IOS_DIST_CERT_P12`, `IOS_DIST_CERT_PASSWORD`, `KEYCHAIN_PASSWORD`
+- EC2 transport: `EC2_HOST`, `EC2_USER`, `EC2_SSH_KEY`, `EC2_SSH_KNOWN_HOSTS`. Missing pinned trust blocks the Actions deployment path.
+- Native configuration: `GOOGLE_IOS_CLIENT_ID`, `GOOGLE_IOS_REVERSED_CLIENT_ID`, `IOS_API_BASE_URL`.
+- Apple delivery: `APP_STORE_CONNECT_KEY_ID`, `APP_STORE_CONNECT_ISSUER_ID`, `APP_STORE_CONNECT_API_KEY`, `IOS_DIST_CERT_P12`, `IOS_DIST_CERT_PASSWORD`, `KEYCHAIN_PASSWORD`.
 
-Optional runtime secret:
-
-- `DAILY_DATABASE_URL` overrides the default shared Postgres URL `postgresql://admin:${DB_PASSWORD}@db:5432/daily_checklist`.
+Server runtime configuration must already be present and match the running service. Routine deployment does not copy GitHub runtime secrets to the host or rewrite `~/deploy/.env`.
 
 Backup repository variables:
 

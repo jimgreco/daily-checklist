@@ -5,6 +5,16 @@ on:
     branches: [main]
   workflow_dispatch:
     inputs:
+      deploy_server:
+        description: Deploy only Ritual Cue after coordinated host approval and live configuration preflight
+        required: true
+        type: boolean
+        default: false
+      publish_testflight:
+        description: Build and upload to TestFlight (requires explicit distribution and profile approval)
+        required: true
+        type: boolean
+        default: false
       update_app_store_metadata:
         description: Upload source-controlled App Store listing metadata to the editable version
         required: true
@@ -55,6 +65,9 @@ jobs:
         working-directory: server
         run: npm test
 
+      - name: Test isolated deployment guards
+        run: python3 -m unittest discover -s server/test -p 'test_deploy_service.py'
+
       - name: Audit production dependencies
         working-directory: server
         run: npm audit --omit=dev
@@ -63,6 +76,7 @@ jobs:
         run: docker build -t daily-server-ci server
 
   deploy-server:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.deploy_server }}
     needs: verify-server
     runs-on: ubuntu-latest
     environment: production
@@ -75,14 +89,11 @@ jobs:
           EC2_USER: ${{ secrets.EC2_USER }}
           EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
           EC2_SSH_KNOWN_HOSTS: ${{ secrets.EC2_SSH_KNOWN_HOSTS }}
-          SESSION_SECRET: ${{ secrets.DAILY_SESSION_SECRET }}
-          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_IOS_CLIENT_ID }}
         run: |
           set -euo pipefail
-          for name in EC2_HOST EC2_USER EC2_SSH_KEY EC2_SSH_KNOWN_HOSTS SESSION_SECRET GOOGLE_CLIENT_ID; do
+          for name in EC2_HOST EC2_USER EC2_SSH_KEY EC2_SSH_KNOWN_HOSTS; do
             test -n "${!name}" || { echo "Missing required secret: $name"; exit 1; }
           done
-          test "${#SESSION_SECRET}" -ge 32 || { echo "DAILY_SESSION_SECRET must be at least 32 characters."; exit 1; }
 
       - name: Prepare SSH
         env:
@@ -114,105 +125,17 @@ jobs:
             --exclude '.env*' \
             server/ "$EC2_USER@$EC2_HOST:~/daily-checklist/server/"
 
-      - name: Rebuild Daily service
+      - name: Rebuild only Daily with unchanged live configuration
         env:
           EC2_HOST: ${{ secrets.EC2_HOST }}
           EC2_USER: ${{ secrets.EC2_USER }}
-          DAILY_SESSION_SECRET: ${{ secrets.DAILY_SESSION_SECRET }}
-          ADMIN_EMAILS: jgreco@gmail.com
-          DAILY_ADMIN_EMAILS: jgreco@gmail.com
-          GOOGLE_IOS_CLIENT_ID: ${{ secrets.GOOGLE_IOS_CLIENT_ID }}
-          GOOGLE_WEB_CLIENT_ID: ${{ secrets.GOOGLE_WEB_CLIENT_ID }}
-          DAILY_DATABASE_URL: ${{ secrets.DAILY_DATABASE_URL }}
-          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID || 'V6JPQCD336' }}
-          APPLE_WEB_CLIENT_ID: ${{ secrets.APPLE_WEB_CLIENT_ID }}
-          APPLE_WEB_KEY_ID: ${{ secrets.APPLE_WEB_KEY_ID }}
-          APPLE_WEB_PRIVATE_KEY_BASE64: ${{ secrets.APPLE_WEB_PRIVATE_KEY_BASE64 }}
-          APPLE_WEB_REDIRECT_URI: ${{ secrets.APPLE_WEB_REDIRECT_URI || 'https://ritualcue.com' }}
-          DAILY_MONITOR_TOKEN: ${{ secrets.DAILY_MONITOR_TOKEN }}
         run: |
           set -euo pipefail
           ssh -i "$HOME/.ssh/daily" \
             -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
             -o StrictHostKeyChecking=yes \
             "$EC2_USER@$EC2_HOST" \
-            "DAILY_SESSION_SECRET='$DAILY_SESSION_SECRET' ADMIN_EMAILS='$ADMIN_EMAILS' DAILY_ADMIN_EMAILS='$DAILY_ADMIN_EMAILS' DAILY_GOOGLE_CLIENT_ID='$GOOGLE_IOS_CLIENT_ID' DAILY_GOOGLE_WEB_CLIENT_ID='$GOOGLE_WEB_CLIENT_ID' DAILY_DATABASE_URL='$DAILY_DATABASE_URL' DAILY_APPLE_TEAM_ID='$APPLE_TEAM_ID' DAILY_APPLE_WEB_CLIENT_ID='$APPLE_WEB_CLIENT_ID' DAILY_APPLE_WEB_KEY_ID='$APPLE_WEB_KEY_ID' DAILY_APPLE_WEB_PRIVATE_KEY_BASE64='$APPLE_WEB_PRIVATE_KEY_BASE64' DAILY_APPLE_WEB_REDIRECT_URI='$APPLE_WEB_REDIRECT_URI' DAILY_MONITOR_TOKEN='$DAILY_MONITOR_TOKEN' bash -se" <<'REMOTE'
-          set -euo pipefail
-          cd "$HOME/deploy"
-
-          update_env() {
-            key="$1"
-            value="$2"
-            tmp="$(mktemp)"
-            if [ -f .env ]; then
-              awk -v key="$key" -v value="$value" '
-                BEGIN { replaced = 0 }
-                index($0, key "=") == 1 { print key "=" value; replaced = 1; next }
-                { print }
-                END { if (!replaced) print key "=" value }
-              ' .env > "$tmp"
-            else
-              printf '%s=%s\n' "$key" "$value" > "$tmp"
-            fi
-            mv "$tmp" .env
-          }
-
-          update_env DAILY_SESSION_SECRET "$DAILY_SESSION_SECRET"
-          update_env ADMIN_EMAILS "$ADMIN_EMAILS"
-          update_env DAILY_ADMIN_EMAILS "$DAILY_ADMIN_EMAILS"
-          update_env DAILY_GOOGLE_CLIENT_ID "$DAILY_GOOGLE_CLIENT_ID"
-          update_env DAILY_GOOGLE_WEB_CLIENT_ID "$DAILY_GOOGLE_WEB_CLIENT_ID"
-          if [ -n "$DAILY_DATABASE_URL" ]; then
-            update_env DAILY_DATABASE_URL "$DAILY_DATABASE_URL"
-          else
-            update_env DAILY_DATABASE_URL 'postgresql://admin:${DB_PASSWORD}@db:5432/daily_checklist'
-          fi
-          update_env DAILY_APPLE_BUNDLE_ID "com.jimgreco.dailychecklist"
-          update_env DAILY_APPLE_TEAM_ID "$DAILY_APPLE_TEAM_ID"
-          update_env DAILY_APPLE_WEB_CLIENT_ID "$DAILY_APPLE_WEB_CLIENT_ID"
-          update_env DAILY_APPLE_WEB_KEY_ID "$DAILY_APPLE_WEB_KEY_ID"
-          update_env DAILY_APPLE_WEB_PRIVATE_KEY_BASE64 "$DAILY_APPLE_WEB_PRIVATE_KEY_BASE64"
-          update_env DAILY_APPLE_WEB_REDIRECT_URI "$DAILY_APPLE_WEB_REDIRECT_URI"
-          update_env DAILY_MONITOR_TOKEN "$DAILY_MONITOR_TOKEN"
-
-          docker-compose up -d db
-          for attempt in $(seq 1 60); do
-            if docker-compose exec -T db pg_isready -U admin </dev/null; then
-              break
-            fi
-            sleep 2
-          done
-          echo "Ensuring daily_checklist database exists."
-          daily_db_exists="$(docker-compose exec -T db psql -U admin -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname = 'daily_checklist'" </dev/null | tr -d '[:space:]')"
-          if [ "$daily_db_exists" != "1" ]; then
-            docker-compose exec -T db psql -U admin -d postgres -c "CREATE DATABASE daily_checklist" </dev/null
-          fi
-          echo "Building Daily service."
-          docker-compose --profile daily build daily
-          if [ -f daily-data/database.json ]; then
-            echo "Migrating legacy Daily JSON data into Postgres."
-            docker-compose --profile daily run --rm \
-              -v "$PWD/daily-data:/legacy-daily-data:ro" \
-              -e MIGRATE_JSON_FILE=/legacy-daily-data/database.json \
-              daily node src/migrate-json-to-postgres.js </dev/null
-          else
-            echo "No legacy Daily JSON data found; skipping migration."
-          fi
-          echo "Starting Daily service."
-          docker-compose --profile daily up -d daily
-          for attempt in $(seq 1 60); do
-            if docker-compose --profile daily exec -T daily node -e \
-              'fetch("http://127.0.0.1:8787/health").then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))' </dev/null; then
-              echo "Daily server is healthy."
-              docker system prune -f
-              exit 0
-            fi
-            sleep 2
-          done
-          docker-compose --profile daily ps daily || true
-          docker-compose --profile daily logs --tail=100 daily || true
-          exit 1
-          REMOTE
+            "python3 \"\$HOME/daily-checklist/server/scripts/deploy-service.py\" --release '$GITHUB_SHA'"
 
   app-store-assets:
     if: ${{ github.event_name == 'workflow_dispatch' && (inputs.update_app_store_metadata == 'true' || inputs.update_app_store_screenshots == 'true') }}
@@ -287,6 +210,7 @@ jobs:
         run: bundle exec fastlane ios upload_screenshots
 
   testflight:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish_testflight }}
     runs-on: macos-latest
     timeout-minutes: 45
     environment: production
