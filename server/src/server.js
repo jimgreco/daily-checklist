@@ -17,6 +17,11 @@ try {
 
 const port = Number(process.env.PORT || 8787);
 const sessionSecret = process.env.SESSION_SECRET || "daily-local-development-secret-change-me";
+// Enforce the same requirement as deployment even when starting outside CI.
+if (process.env.NODE_ENV === "production"
+    && (sessionSecret.trim().length < 32 || sessionSecret === "daily-local-development-secret-change-me")) {
+  throw new Error("SESSION_SECRET must be a non-default secret of at least 32 characters in production.");
+}
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 const webRoot = path.join(__dirname, "..", "web");
 const store = createStore();
@@ -1832,8 +1837,7 @@ function monitorToken() {
 function hasMonitorToken(request) {
   const expected = monitorToken();
   const provided = firstHeaderValue(request.headers["x-ritual-cue-monitor-token"]);
-  if (!provided) return false;
-  if (!expected) return true;
+  if (!provided || !expected) return false;
   const expectedBytes = Buffer.from(expected);
   const providedBytes = Buffer.from(provided);
   return expectedBytes.length === providedBytes.length
@@ -2288,5 +2292,6 @@ module.exports = {
   resetRateLimits,
   trustedProxyHops,
   recurrenceMatchesDate,
-  nextRecurrenceDates
+  nextRecurrenceDates,
+  hasMonitorToken
 };

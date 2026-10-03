@@ -152,9 +152,11 @@ test("monitor sync probe requires its shared secret and leaves no checklist data
   }
 });
 
-test("monitor sync probe accepts the monitor header when no runtime token is configured", async () => {
+test("monitor sync probe rejects the monitor header when no runtime token is configured", async () => {
   const previousMonitorToken = process.env.DAILY_MONITOR_TOKEN;
+  const previousGenericToken = process.env.MONITOR_TOKEN;
   delete process.env.DAILY_MONITOR_TOKEN;
+  delete process.env.MONITOR_TOKEN;
 
   try {
     const rejected = await fetch(`${baseURL}/api/monitor/sync`, {
@@ -172,13 +174,10 @@ test("monitor sync probe accepts the monitor header when no runtime token is con
       },
       body: JSON.stringify({})
     });
-    assert.equal(response.status, 200);
-    const payload = await response.json();
-    assert.equal(payload.ok, true);
-    assert.equal(payload.acceptedMutationCount, 1);
-    assert.equal(payload.itemCount, 0);
+    assert.equal(response.status, 404);
   } finally {
     restoreEnv("DAILY_MONITOR_TOKEN", previousMonitorToken);
+    restoreEnv("MONITOR_TOKEN", previousGenericToken);
   }
 });
 
