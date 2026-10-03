@@ -1,6 +1,20 @@
 import Foundation
 import WidgetKit
 
+protocol ChecklistSyncClient {
+    func sync(_ request: SyncRequest, token: String) async throws -> SyncResponse
+}
+
+extension APIClient: ChecklistSyncClient {}
+
+@MainActor
+protocol ChecklistSessionProvider: AnyObject {
+    var user: AppUser? { get }
+    var sessionGeneration: UUID { get }
+    func validAccessToken() async -> String?
+    func refreshAccessToken() async -> String?
+}
+
 enum ChecklistSort: String, CaseIterable, Identifiable {
     case manual
     case name
@@ -499,7 +513,7 @@ final class ChecklistStore: ObservableObject {
         didSet { UserDefaults.standard.set(sortMode.rawValue, forKey: "checklistSortMode") }
     }
 
-    private let api = APIClient()
+    private let api: any ChecklistSyncClient
     private let notifications = NotificationManager()
     private let maintenanceWorker = ChecklistMaintenanceWorker()
     private var hasStarted = false
@@ -507,8 +521,11 @@ final class ChecklistStore: ObservableObject {
     private var notificationTask: Task<Void, Never>?
     private weak var authStore: AuthStore?
     private var activeAccountID: String = UserDefaults.standard.string(forKey: "activeAccountID") ?? "anonymous"
+    private var accountGeneration = UUID()
+    private var syncRequestID = UUID()
 
-    init() {
+    init(api: any ChecklistSyncClient = APIClient()) {
+        self.api = api
         sortMode = ChecklistSort(
             rawValue: UserDefaults.standard.string(forKey: "checklistSortMode") ?? ""
         ) ?? .manual
@@ -710,6 +727,7 @@ final class ChecklistStore: ObservableObject {
                 return
             }
             activeAccountID = userID
+            accountGeneration = UUID()
             UserDefaults.standard.set(userID, forKey: "activeAccountID")
             persistAndSchedule()
             clearAnonymousCache()
@@ -1955,8 +1973,23 @@ final class ChecklistStore: ObservableObject {
     }
 
     @discardableResult
-    func sync(using authStore: AuthStore) async -> Bool {
-        guard let token = await authStore.validAccessToken() else {
+    func sync(using authStore: any ChecklistSessionProvider) async -> Bool {
+        let accountID = activeAccountID
+        let accountGeneration = self.accountGeneration
+        let sessionGeneration = authStore.sessionGeneration
+        let requestID = UUID()
+        syncRequestID = requestID
+        func isCurrent() -> Bool {
+            !Task.isCancelled && self.activeAccountID == accountID
+                && self.accountGeneration == accountGeneration
+                && self.syncRequestID == requestID
+                && authStore.user?.id == accountID
+                && authStore.sessionGeneration == sessionGeneration
+        }
+        guard isCurrent() else { return false }
+        let accessToken = await authStore.validAccessToken()
+        guard isCurrent() else { return false }
+        guard let token = accessToken else {
             syncState = pendingMutations.isEmpty ? "Saved locally" : "Waiting to sync"
             return false
         }
@@ -1968,21 +2001,31 @@ final class ChecklistStore: ObservableObject {
             do {
                 response = try await api.sync(request, token: token)
             } catch APIClient.APIError.badResponse(401) {
+                guard isCurrent() else { return false }
                 guard let refreshed = await authStore.refreshAccessToken() else { throw APIClient.APIError.badResponse(401) }
+                guard isCurrent() else { return false }
                 response = try await api.sync(request, token: refreshed)
             }
+            // Account switches and newer requests invalidate this snapshot. An old
+            // response must never be persisted in another account's cache.
+            guard isCurrent() else { return false }
             let accepted = Set(response.acceptedMutationIDs)
             pendingMutations.removeAll { accepted.contains($0.id) }
-            items = response.items
-            groups = response.groups ?? groups
-            eveningReminderMinutes = response.eveningReminderMinutes
-            notificationGroupFilter = response.notificationGroupFilter ?? .all
-            notificationQuietHours = response.notificationQuietHours
+            // Keep edits made while awaiting the server visible and durable until
+            // the next idempotent sync acknowledges them too.
+            if pendingMutations.isEmpty {
+                items = response.items
+                groups = response.groups ?? groups
+                eveningReminderMinutes = response.eveningReminderMinutes
+                notificationGroupFilter = response.notificationGroupFilter ?? .all
+                notificationQuietHours = response.notificationQuietHours
+            }
             persistAndSchedule()
             let didFinishSyncing = pendingMutations.isEmpty
             syncState = didFinishSyncing ? "Synced" : "Changes pending"
             return didFinishSyncing
         } catch {
+            guard isCurrent() else { return false }
             syncState = "Saved offline"
             return false
         }
@@ -1990,6 +2033,7 @@ final class ChecklistStore: ObservableObject {
 
     func applyImportedState(_ response: SyncResponse) {
         syncTask?.cancel()
+        accountGeneration = UUID()
         pendingMutations = []
         items = response.items
         groups = response.groups ?? []
@@ -2075,6 +2119,7 @@ final class ChecklistStore: ObservableObject {
         syncTask?.cancel()
         maintenanceWorker.flushPersistence()
         activeAccountID = accountID
+        accountGeneration = UUID()
         UserDefaults.standard.set(accountID, forKey: "activeAccountID")
         items = []
         groups = []

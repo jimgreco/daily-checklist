@@ -3,7 +3,7 @@ import Foundation
 import Security
 
 @MainActor
-final class AuthStore: ObservableObject {
+final class AuthStore: ObservableObject, ChecklistSessionProvider {
     @Published private(set) var user: AppUser?
     @Published private(set) var isLoading = false
     @Published private(set) var requiresReauthentication = false
@@ -12,12 +12,14 @@ final class AuthStore: ObservableObject {
     private let api = APIClient()
     private let cachedUserKey = "cachedAuthUser"
     private var refreshTask: Task<AuthResponse, Error>?
+    private(set) var sessionGeneration = UUID()
 
     var isAuthenticated: Bool { user != nil && (accessToken != nil || refreshToken != nil) }
     var accessToken: String? { KeychainStore.read("accessToken") }
     private var refreshToken: String? { KeychainStore.read("refreshToken") }
 
     func restore() async {
+        let generation = sessionGeneration
         if let cachedUser {
             user = cachedUser
         }
@@ -27,11 +29,13 @@ final class AuthStore: ObservableObject {
         do {
             if let accessToken {
                 let restoredUser = try await api.currentUser(token: accessToken)
+                guard sessionGeneration == generation else { return }
                 user = restoredUser
                 cache(restoredUser)
                 return
             }
         } catch {}
+        guard sessionGeneration == generation else { return }
         await refreshSession()
     }
 
@@ -69,6 +73,7 @@ final class AuthStore: ObservableObject {
     }
 
     func signOut() {
+        invalidatePendingAuthentication()
         KeychainStore.delete("accessToken")
         KeychainStore.delete("refreshToken")
         UserDefaults.standard.removeObject(forKey: cachedUserKey)
@@ -156,35 +161,54 @@ final class AuthStore: ObservableObject {
     }
 
     private func authenticate(_ operation: () async throws -> AuthResponse) async {
+        invalidatePendingAuthentication()
+        let generation = sessionGeneration
         isLoading = true
         defer { isLoading = false }
         do {
             let response = try await operation()
+            guard sessionGeneration == generation else { return }
             complete(response)
             errorMessage = nil
         } catch {
+            guard sessionGeneration == generation else { return }
             errorMessage = "Sign in failed. Check the server configuration and try again."
         }
     }
 
     private func refreshSession() async {
         guard let refreshToken else { return }
+        let generation = sessionGeneration
         if let refreshTask {
             do {
-                complete(try await refreshTask.value)
+                let response = try await refreshTask.value
+                guard sessionGeneration == generation else { return }
+                complete(response)
             } catch {
+                guard sessionGeneration == generation else { return }
                 handleRefreshFailure(error)
             }
             return
         }
         let task = Task { try await api.refresh(refreshToken: refreshToken) }
         refreshTask = task
-        defer { refreshTask = nil }
+        defer { if sessionGeneration == generation { refreshTask = nil } }
         do {
-            complete(try await task.value)
+            let response = try await task.value
+            guard sessionGeneration == generation else { return }
+            complete(response)
         } catch {
+            guard sessionGeneration == generation else { return }
             handleRefreshFailure(error)
         }
+    }
+
+    private func invalidatePendingAuthentication() {
+        // Cancellation alone cannot prevent an already completed request from
+        // restoring credentials after sign-out or a different sign-in.
+        sessionGeneration = UUID()
+        refreshTask?.cancel()
+        refreshTask = nil
     }
 
     private func handleRefreshFailure(_ error: Error) {

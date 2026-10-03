@@ -2,6 +2,106 @@ import XCTest
 import UserNotifications
 @testable import Daily
 
+@MainActor
+private final class AuditSession: ChecklistSessionProvider {
+    var user: AppUser?
+    var sessionGeneration = UUID()
+    init(id: String) { user = AppUser(id: id, email: "synthetic@example.invalid", name: "Synthetic") }
+    func validAccessToken() async -> String? { "synthetic-test-token" }
+    func refreshAccessToken() async -> String? { "synthetic-refreshed-token" }
+}
+
+private final class AuditSyncClient: ChecklistSyncClient {
+    var started: XCTestExpectation?
+    var request: SyncRequest?
+    var continuation: CheckedContinuation<SyncResponse, Error>?
+    func sync(_ request: SyncRequest, token: String) async throws -> SyncResponse {
+        self.request = request
+        return try await withCheckedThrowingContinuation {
+            continuation = $0
+            started?.fulfill()
+        }
+    }
+}
+
+final class SyncBoundaryTests: XCTestCase {
+    @MainActor
+    func testAccountSwitchDiscardsDelayedResponse() async {
+        let api = AuditSyncClient()
+        let store = ChecklistStore(api: api)
+        let auth = AuditSession(id: UUID().uuidString)
+        store.activateAuthenticatedAccount(auth.user!.id)
+        api.started = expectation(description: "Sync started")
+        let task = Task { await store.sync(using: auth) }
+        await fulfillment(of: [api.started!], timeout: 2)
+        let otherID = UUID().uuidString
+        store.activateAuthenticatedAccount(otherID)
+        auth.user?.id = otherID
+        api.continuation?.resume(returning: SyncResponse(
+            items: [ChecklistItem(title: "Previous account's private routine")], acceptedMutationIDs: []
+        ))
+        let applied = await task.value
+        XCTAssertFalse(applied)
+        XCTAssertTrue(store.items.isEmpty)
+        store.flushPendingPersistence()
+    }
+
+    @MainActor
+    func testReauthenticationOfSameAccountDiscardsOldResponse() async {
+        let api = AuditSyncClient()
+        let store = ChecklistStore(api: api)
+        let auth = AuditSession(id: UUID().uuidString)
+        store.activateAuthenticatedAccount(auth.user!.id)
+        api.started = expectation(description: "Sync started")
+        let task = Task { await store.sync(using: auth) }
+        await fulfillment(of: [api.started!], timeout: 2)
+        auth.sessionGeneration = UUID()
+        api.continuation?.resume(returning: SyncResponse(
+            items: [ChecklistItem(title: "Stale session")], acceptedMutationIDs: []
+        ))
+        let applied = await task.value
+        XCTAssertFalse(applied)
+        XCTAssertTrue(store.items.isEmpty)
+        store.flushPendingPersistence()
+    }
+
+    @MainActor
+    func testInFlightResponsePreservesNewerLocalEditAndItsQueue() async {
+        let api = AuditSyncClient()
+        let store = ChecklistStore(api: api)
+        let auth = AuditSession(id: UUID().uuidString)
+        store.activateAuthenticatedAccount(auth.user!.id)
+        var item = ChecklistItem(title: "Before request")
+        store.save(item)
+        api.started = expectation(description: "Sync started")
+        let task = Task { await store.sync(using: auth) }
+        await fulfillment(of: [api.started!], timeout: 2)
+        item.title = "Changed while offline"
+        store.save(item)
+        api.continuation?.resume(returning: SyncResponse(
+            items: [], acceptedMutationIDs: api.request!.mutations.map(\.id)
+        ))
+        let finished = await task.value
+        XCTAssertFalse(finished)
+        XCTAssertEqual(store.items.first?.title, "Changed while offline")
+        XCTAssertGreaterThan(store.pendingMutationCount, 0)
+        store.flushPendingPersistence()
+    }
+
+    @MainActor
+    func testMismatchedAccountDoesNotSendMutations() async {
+        let api = AuditSyncClient()
+        let store = ChecklistStore(api: api)
+        store.activateAuthenticatedAccount(UUID().uuidString)
+        store.save(ChecklistItem(title: "Private local change"))
+        let result = await store.sync(using: AuditSession(id: UUID().uuidString))
+        XCTAssertFalse(result)
+        XCTAssertNil(api.request)
+        XCTAssertEqual(store.pendingMutationCount, 1)
+        store.flushPendingPersistence()
+    }
+}
+
 final class ChecklistStateTests: XCTestCase {
     private var calendar: Calendar {
         Calendar.current
