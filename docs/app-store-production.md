@@ -1,6 +1,6 @@
 # Production App Store Release
 
-Pushes to `main` run server tests, dependency audit, and a container build. The separate Web E2E workflow checks browser journeys. Deployments and native distribution require an explicit manual Publish run.
+Pushes to `main` run server tests, dependency audit, and a container build. The separate Web E2E workflow checks browser journeys. Server deployment requires an explicit manual Publish run. Main pushes run the guarded iOS-only TestFlight path using existing signing assets.
 
 Manual Publish inputs default to validation only:
 

@@ -4,7 +4,7 @@ This path uploads only the iOS app and its approved extensions to the existing A
 
 The workflow imports this repository's existing signing identity into a temporary runner keychain. It downloads the pinned existing profiles, verifies live certificate/profile resources and decoded entitlements, preserves any cached profile with the same UUID, and signs/exports manually without provisioning-update flags. Export is restricted to internal TestFlight, preserves the exact Git-count build number, and embeds the full source SHA. The exported app and all approved extensions must match the expected source, build, version, platform, signing identity, profiles, and required entitlements. Current signing state, audience, and build availability are rechecked immediately before the sole binary upload.
 
-Publication is paused pending the parent coordinator's ownership clearance. These preparation commits retain manual upload gates. Do not push, dispatch, or upload from the recovery clones until the coordinator clears ownership and selects the final source SHA. The separately supplied activation patch restores automatic iOS uploads on main; apply it only after that clearance and rerun workflow checks. Any activation commit changes the final build number.
+Ownership was cleared on 2026-10-03. Main pushes automatically run the guarded iOS upload path. Any new commit changes the source SHA and Git-count build, and the workflow rechecks current signing state, approved audience, and build availability before upload. Manual dispatch is also available with the existing upload input.
 
 ## Local checks
 

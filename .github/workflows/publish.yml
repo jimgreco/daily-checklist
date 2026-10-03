@@ -210,7 +210,7 @@ jobs:
         run: bundle exec fastlane ios upload_screenshots
 
   testflight:
-    if: github.event_name == 'workflow_dispatch' && inputs.publish_testflight && github.ref == 'refs/heads/main'
+    if: (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish_testflight)) && github.ref == 'refs/heads/main'
     runs-on: macos-latest
     timeout-minutes: 45
     environment: production
