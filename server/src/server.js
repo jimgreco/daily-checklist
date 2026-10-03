@@ -2271,8 +2271,17 @@ const server = http.createServer(async (request, response) => {
 });
 
 if (require.main === module) {
-  server.listen(port, "0.0.0.0", () => {
-    console.log(`Ritual Cue server listening on http://0.0.0.0:${port}`);
+  if (process.env.MIGRATION_DATABASE_URL) {
+    console.error('Remove MIGRATION_DATABASE_URL from the runtime environment; use the separate migration command.');
+    process.exit(1);
+  }
+  store.health().then(() => {
+    server.listen(port, "0.0.0.0", () => {
+      console.log(`Ritual Cue server listening on http://0.0.0.0:${port}`);
+    });
+  }).catch(() => {
+    console.error('Database is not ready; run the reviewed schema migration/adoption or owner recovery before startup.');
+    process.exit(1);
   });
 }
 

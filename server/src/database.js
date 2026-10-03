@@ -62,21 +62,11 @@ class PostgresStore {
 
   async init() {
     if (!this.ready) {
-      this.ready = (async () => {
-        await this.pool.query(`
-          CREATE TABLE IF NOT EXISTS daily_app_state (
-            id INTEGER PRIMARY KEY CHECK (id = 1),
-            data JSONB NOT NULL,
-            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-          );
-        `);
-        await this.pool.query(
-          `INSERT INTO daily_app_state (id, data)
-           VALUES (1, $1::jsonb)
-           ON CONFLICT (id) DO NOTHING`,
-          [JSON.stringify(emptyDatabase())]
-        );
-      })();
+      this.ready = require('./schema-contract').assertSchemaCompatible(this.pool)
+        .then(async () => {
+          const result = await this.pool.query("SELECT id FROM daily_app_state WHERE id = 1 AND jsonb_typeof(data) = 'object'");
+          if (result.rows.length !== 1) throw new Error('Database singleton state is missing or invalid; owner recovery is required.');
+        });
     }
     return this.ready;
   }
@@ -84,7 +74,8 @@ class PostgresStore {
   async read() {
     await this.init();
     const result = await this.pool.query("SELECT data FROM daily_app_state WHERE id = 1");
-    return cloneDatabase(result.rows[0]?.data);
+    if (!result.rows[0]) throw new Error('Database singleton state is missing; owner recovery is required.');
+    return cloneDatabase(result.rows[0].data);
   }
 
   async update(operation) {
@@ -93,7 +84,8 @@ class PostgresStore {
     try {
       await client.query("BEGIN");
       const result = await client.query("SELECT data FROM daily_app_state WHERE id = 1 FOR UPDATE");
-      const database = cloneDatabase(result.rows[0]?.data);
+      if (!result.rows[0]) throw new Error('Database singleton state is missing; owner recovery is required.');
+      const database = cloneDatabase(result.rows[0].data);
       const value = await operation(database);
       await client.query(
         "UPDATE daily_app_state SET data = $1::jsonb, updated_at = NOW() WHERE id = 1",
@@ -111,7 +103,7 @@ class PostgresStore {
 
   async health() {
     await this.init();
-    await this.pool.query("SELECT 1");
+    await this.read();
     return { ok: true };
   }
 }

@@ -1,0 +1,46 @@
+{
+  "app": "daily-checklist",
+  "version": 1,
+  "objects": [
+    {
+      "kind": "column",
+      "name": "daily_app_state.data",
+      "definition": "[\"jsonb\", true, null]"
+    },
+    {
+      "kind": "column",
+      "name": "daily_app_state.id",
+      "definition": "[\"integer\", true, null]"
+    },
+    {
+      "kind": "column",
+      "name": "daily_app_state.updated_at",
+      "definition": "[\"timestamp with time zone\", true, \"now()\"]"
+    },
+    {
+      "kind": "constraint",
+      "name": "daily_app_state:CHECK ((id = 1))",
+      "definition": "true"
+    },
+    {
+      "kind": "constraint",
+      "name": "daily_app_state:PRIMARY KEY (id)",
+      "definition": "true"
+    },
+    {
+      "kind": "extension",
+      "name": "plpgsql",
+      "definition": "pg_catalog"
+    },
+    {
+      "kind": "index",
+      "name": "daily_app_state_pkey",
+      "definition": "CREATE UNIQUE INDEX daily_app_state_pkey ON public.daily_app_state USING btree (id)"
+    },
+    {
+      "kind": "table",
+      "name": "daily_app_state",
+      "definition": "[\"r\", \"p\", false, false]"
+    }
+  ]
+}

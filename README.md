@@ -23,6 +23,7 @@ The server hosts the public marketing site at `http://127.0.0.1:8787/` and the m
 Local development can run without Postgres and will use `server/data/database.json`. Production requires Postgres:
 
 ```sh
+MIGRATION_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/daily_checklist npm run db:migrate
 DATABASE_URL=postgresql://postgres:postgres@localhost:5432/daily_checklist npm start
 ```
 
@@ -137,3 +138,5 @@ Backup repository variables:
 Before the first upload, create the Ritual Cue app record in App Store Connect for bundle ID `com.jimgreco.dailychecklist`. The workflow can register the bundle ID and provisioning profile, but Apple does not expose app-record creation through the same provisioning API.
 
 The iOS app and widget extension use the App Group `group.com.jimgreco.dailychecklist`. Enable App Groups for both `com.jimgreco.dailychecklist` and `com.jimgreco.dailychecklist.widget` in Apple Developer, assign that group to both App IDs, then rerun publish so the generated profiles include the shared container entitlement.
+
+PostgreSQL startup requires a compatible prepared schema. Existing databases need reviewed adoption; see [database runtime access](docs/database-runtime-access.md). JSON-file development storage is unchanged.

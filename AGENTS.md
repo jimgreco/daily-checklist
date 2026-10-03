@@ -30,3 +30,11 @@
 - Publishing: `.github/workflows/publish.yml` and `docs/app-store-production.md`;
   backup/recovery: `docs/database-backups.md`. A Publish result includes both
   server deployment and iOS upload; inspect each applicable result.
+
+## Database runtime and migration boundary
+
+- Normal startup only checks the reviewed schema contract; it never creates or repairs tables.
+- Run `npm --prefix server run db:migrate` as a separate process with `MIGRATION_DATABASE_URL` supplied by the owner. It never falls back to runtime `DATABASE_URL`.
+- Existing databases require reviewed `--adopt-existing` (with `--` before that flag for npm). Adoption validates structure and adds only compatibility metadata; it does not replay historical data repairs. Fresh initialization requires an empty public schema.
+- See `docs/database-runtime-access.md` for the owner/runtime split, rollout ordering and rollback limits. Do not deploy this startup change before schema adoption is approved and completed.
+- Runtime must not receive migration credentials or membership in its object-owner role. Schema changes require an updated contract, an explicit migration, reviewed grants and a compatible rollback floor.
