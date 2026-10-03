@@ -32,6 +32,8 @@
     modal: null,
     toast: "",
     sessionExpired: false,
+    sessionGeneration: 0,
+    signingOut: false,
   };
   let refreshPromise = null;
   let toastTimer = null;
@@ -415,6 +417,7 @@
   function hasSession() { return Boolean(state.token || state.user); }
 
   function clearSession({ preserveData = false, expired = false } = {}) {
+    state.sessionGeneration += 1;
     state.token = "";
     state.user = null;
     state.sessionExpired = expired;
@@ -432,6 +435,7 @@
   function applyAuth(auth) {
     const nextUser = auth.user || null;
     const nextAccountID = nextUser?.id || "";
+    if (state.accountID !== nextAccountID) state.sessionGeneration += 1;
     if (state.accountID && nextAccountID && state.accountID !== nextAccountID) {
       state.items = [];
       state.groups = [];
@@ -446,7 +450,15 @@
     persistSession();
   }
 
-  async function request(path, options = {}, retry = true) {
+  async function request(path, options = {}, retry = true, raw = false) {
+    if (state.signingOut && path !== "/auth/logout") throw new Error("Sign-out is finishing. Try again.");
+    const generation = state.sessionGeneration;
+    const accountID = state.accountID;
+    const requireCurrentSession = () => {
+      if (generation !== state.sessionGeneration || accountID !== state.accountID) {
+        throw new Error("Your account changed. Try again.");
+      }
+    };
     const response = await fetch(path, {
       ...options,
       headers: {
@@ -455,8 +467,11 @@
         ...(options.headers || {}),
       },
     });
+    requireCurrentSession();
     if (response.status === 401 && retry && path !== "/auth/refresh") {
-      if (await refreshAccessToken()) return request(path, options, false);
+      const refreshed = await refreshAccessToken();
+      requireCurrentSession();
+      if (refreshed) return request(path, options, false, raw);
     }
     if (!response.ok) {
       let message = `HTTP ${response.status}`;
@@ -465,7 +480,9 @@
       error.status = response.status;
       throw error;
     }
-    return response.status === 204 ? null : response.json();
+    const result = raw ? response : response.status === 204 ? null : await response.json();
+    requireCurrentSession();
+    return result;
   }
 
   async function refreshAccessToken() {
@@ -501,6 +518,7 @@
 
   async function sync() {
     if (!hasSession() || state.syncing) return;
+    const generation = state.sessionGeneration;
     state.syncing = true;
     render();
     const sent = [...state.pending];
@@ -510,11 +528,14 @@
         method: "POST",
         body: JSON.stringify({ deviceID: state.deviceID, mutations: sent }),
       });
+      if (generation !== state.sessionGeneration) return;
       const accepted = new Set(result.acceptedMutationIDs || []);
       state.pending = state.pending.filter((entry) => !accepted.has(entry.id));
-      state.items = normalizeChecklistItems(result.items || []);
-      state.groups = result.groups || [];
-      state.notificationQuietHours = normalizedQuietHours(result.notificationQuietHours);
+      if (state.pending.length === 0) {
+        state.items = normalizeChecklistItems(result.items || []);
+        state.groups = result.groups || [];
+        state.notificationQuietHours = normalizedQuietHours(result.notificationQuietHours);
+      }
       state.loaded = true;
       didSync = true;
       persistData();
@@ -1469,21 +1490,28 @@
   }
 
   async function signOut() {
-    try {
-      await request("/auth/logout", { method: "POST", body: JSON.stringify({}) }, false);
-    } catch {}
+    if (state.signingOut) return;
+    state.signingOut = true;
+    const pendingRefresh = refreshPromise;
     clearSession();
     state.modal = null;
     render();
+    try {
+      // A refresh response can set its cookie even when its JS result is stale.
+      // Wait for it, then revoke that cookie; block new requests until done.
+      await pendingRefresh;
+      await request("/auth/logout", { method: "POST", body: JSON.stringify({}) }, false);
+    } catch {} finally {
+      state.signingOut = false;
+      render();
+    }
   }
 
   async function exportData() {
-    const response = await fetch("/api/export", {
-      headers: state.token ? { Authorization: `Bearer ${state.token}` } : {}
-    });
-    if (response.status === 401 && await refreshAccessToken()) return exportData();
-    if (!response.ok) throw new Error("Unable to export data.");
+    const generation = state.sessionGeneration;
+    const response = await request("/api/export", {}, true, true);
     const blob = await response.blob();
+    if (generation !== state.sessionGeneration) return;
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
@@ -1537,6 +1565,7 @@
 
   async function importDataFromFile(file) {
     if (!file) return;
+    const generation = state.sessionGeneration;
     if (file.size > 2_000_000) throw new Error("That export file is too large.");
     let parsed;
     try {
@@ -1544,11 +1573,15 @@
     } catch {
       throw new Error("Select a valid Ritual Cue export.");
     }
+    if (generation !== state.sessionGeneration) return;
     if (!confirm("Restore this Ritual Cue export? This replaces the synced checklist data on this account.")) return;
     const result = await request("/api/import", {
       method: "POST",
       body: JSON.stringify(parsed)
     });
+    if (generation !== state.sessionGeneration) return;
+    // A sync started before the restore must not replace the restored snapshot.
+    state.sessionGeneration += 1;
     state.items = normalizeChecklistItems(result.items || []);
     state.groups = result.groups || [];
     state.notificationQuietHours = normalizedQuietHours(result.notificationQuietHours);
@@ -1561,12 +1594,9 @@
 
   async function deleteAccount(confirmed = false) {
     if (!confirmed && !confirm("Delete your Ritual Cue account and synced checklist data? This cannot be undone.")) return;
-    const response = await fetch("/api/account", {
-      method: "DELETE",
-      headers: state.token ? { Authorization: `Bearer ${state.token}` } : {}
-    });
-    if (response.status === 401 && await refreshAccessToken()) return deleteAccount(true);
-    if (!response.ok) throw new Error("Unable to delete account.");
+    const generation = state.sessionGeneration;
+    await request("/api/account", { method: "DELETE" });
+    if (generation !== state.sessionGeneration) return;
     clearSession();
     state.modal = null;
     render();
