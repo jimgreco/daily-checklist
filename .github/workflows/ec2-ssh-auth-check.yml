@@ -1,0 +1,80 @@
+name: EC2 SSH authentication only
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  authenticate:
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.ref == 'refs/heads/main' &&
+      github.repository == 'jimgreco/daily-checklist'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    environment: production
+    steps:
+      - name: Verify the approved key and read the remote identity
+        shell: bash
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+          EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+          CONFIGURED_KNOWN_HOSTS: ${{ secrets.EC2_SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          set +x
+          fail() { printf '::error::%s\n' "$1"; exit 1; }
+
+          [[ "$EC2_HOST" == '18.219.163.101' ]] || fail 'EC2_HOST differs from the approved host.'
+          [[ "$EC2_USER" == 'ec2-user' ]] || fail 'EC2_USER differs from the approved account.'
+          [[ -n "$EC2_SSH_KEY" ]] || fail 'EC2_SSH_KEY is missing.'
+          [[ -n "$CONFIGURED_KNOWN_HOSTS" ]] || fail 'The configured host-trust secret is missing.'
+
+          umask 077
+          auth_dir=$(mktemp -d "${RUNNER_TEMP:?}/ec2-auth-check.XXXXXX")
+          trap 'rm -rf -- "$auth_dir"' EXIT
+          printf '%s\n' "$EC2_SSH_KEY" > "$auth_dir/key"
+          printf '%s\n' "$CONFIGURED_KNOWN_HOSTS" > "$auth_dir/configured_known_hosts"
+          unset EC2_SSH_KEY CONFIGURED_KNOWN_HOSTS
+
+          # Derive only the public half. Never print or upload the private material.
+          ssh-keygen -y -P '' -f "$auth_dir/key" > "$auth_dir/client.pub" 2>/dev/null \
+            || fail 'The configured client key cannot be used without a passphrase.'
+          client_fingerprint=$(ssh-keygen -lf "$auth_dir/client.pub" -E sha256 | awk '{print $2}')
+          [[ "$client_fingerprint" == 'SHA256:aqFmJE+P63UxmrP+MnXpzVCd1yL7KoOgTRp2NWloLrg' ]] \
+            || fail 'The configured client key is not the approved replacement key.'
+
+          # This server key was obtained through the authenticated EC2 console session.
+          server_public_key='ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGN/NuUfhjgE7YaZckV8NpPRY8DKfHuvg7bKyjfGSqVE'
+          printf '%s\n' "$server_public_key" > "$auth_dir/server.pub"
+          server_fingerprint=$(ssh-keygen -lf "$auth_dir/server.pub" -E sha256 | awk '{print $2}')
+          [[ "$server_fingerprint" == 'SHA256:AAeqj+0cFaet2R9bhDaTCZdUN2lFbuMN5jRYFwYttDQ' ]] \
+            || fail 'The embedded server pin does not match the verified fingerprint.'
+          configured_server_key=$(
+            ssh-keygen -F '18.219.163.101' -f "$auth_dir/configured_known_hosts" \
+              | awk '!/^#/ && $2 == "ssh-ed25519" {print $2 " " $3}' | sort -u
+          ) || fail 'The host-trust secret has no entry for the approved host.'
+          [[ "$configured_server_key" == "$server_public_key" ]] \
+            || fail 'The configured host-trust secret does not match the verified server pin.'
+          printf '18.219.163.101 %s\n' "$server_public_key" > "$auth_dir/known_hosts"
+
+          # Only identity reads are permitted remotely. No repository scripts are used.
+          identity=$(
+            ssh -F /dev/null -S none -T -n -p 22 -i "$auth_dir/key" \
+              -o IdentityAgent=none -o IdentitiesOnly=yes -o CertificateFile=none \
+              -o BatchMode=yes -o PreferredAuthentications=publickey \
+              -o PubkeyAcceptedAlgorithms=ssh-ed25519 \
+              -o PasswordAuthentication=no -o KbdInteractiveAuthentication=no \
+              -o StrictHostKeyChecking=yes -o HostKeyAlgorithms=ssh-ed25519 \
+              -o UserKnownHostsFile="$auth_dir/known_hosts" -o GlobalKnownHostsFile=/dev/null \
+              -o UpdateHostKeys=no -o VerifyHostKeyDNS=no -o ForwardAgent=no \
+              -o ClearAllForwardings=yes -o ConnectTimeout=15 -o ConnectionAttempts=1 \
+              -o LogLevel=ERROR \
+              ec2-user@18.219.163.101 \
+              '/usr/bin/id -u; /usr/bin/id -un; /usr/bin/hostname'
+          ) || fail 'SSH authentication or identity observation failed.'
+          [[ "$identity" == $'1000\nec2-user\nip-172-31-27-205.us-east-2.compute.internal' ]] \
+            || fail 'The remote account or hostname differs from the approved identity.'
+          printf '%s\n' 'PASS: approved replacement key, pinned server, ec2-user uid 1000, expected hostname.'
