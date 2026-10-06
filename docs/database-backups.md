@@ -48,6 +48,20 @@ gh workflow run "Production Database Backup Check"
 gh workflow run "Production Database Restore Drill"
 ```
 
+For a coordinated recovery backup that must preserve all existing local copies:
+
+```sh
+gh workflow run "Production Database Backup" --ref main -f skip_local_prune=true
+```
+
+`skip_local_prune` defaults to false. Scheduled runs and ordinary manual runs keep
+the existing seven-day local retention behavior. The script's optional third
+argument has the same meaning (`true` preserves local copies; `false` prunes).
+The backup script never deletes S3 objects. This option does not change the
+bucket's independent 90-day lifecycle policy. Successful output confirms that
+`pg_restore --list` accepted the archive and S3 ContentLength matches the local
+archive size; this is not a full restore test.
+
 The restore drill downloads the newest S3 dump, creates a uniquely named temporary database in the production Postgres container, restores with `pg_restore --exit-on-error`, and verifies that `daily_app_state` contains exactly one object-valued JSONB row. Its cleanup trap drops the temporary database and removes the downloaded file. It never writes to `daily_checklist`.
 
 ## Manual logical restore

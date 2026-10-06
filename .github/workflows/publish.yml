@@ -68,6 +68,9 @@ jobs:
       - name: Test isolated deployment guards
         run: python3 -m unittest discover -s server/test -p 'test_deploy_service.py'
 
+      - name: Test backup SSH formatting and retention controls
+        run: python3 -m unittest discover -s server/test -p 'test_database_backup.py'
+
       - name: Audit production dependencies
         working-directory: server
         run: npm audit --omit=dev

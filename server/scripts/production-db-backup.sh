@@ -3,6 +3,7 @@ set -euo pipefail
 
 bucket="${1:-}"
 local_retention_days="${2:-7}"
+skip_local_prune="${3:-false}"
 
 if [[ ! "$bucket" =~ ^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$ ]]; then
   echo "A valid S3 backup bucket is required." >&2
@@ -10,6 +11,10 @@ if [[ ! "$bucket" =~ ^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$ ]]; then
 fi
 if [[ ! "$local_retention_days" =~ ^[1-9][0-9]*$ ]]; then
   echo "Local retention days must be a positive integer." >&2
+  exit 1
+fi
+if [[ "$skip_local_prune" != true && "$skip_local_prune" != false ]]; then
+  echo "Skip local pruning must be true or false." >&2
   exit 1
 fi
 
@@ -52,6 +57,7 @@ docker-compose exec -T -e PGPASSWORD="$db_password" db \
   < /dev/null > "$temporary_path"
 test -s "$temporary_path"
 docker-compose exec -T db pg_restore --list < "$temporary_path" > /dev/null
+echo "Postgres archive list verified."
 
 mv "$temporary_path" "$final_path"
 chmod 600 "$final_path"
@@ -69,6 +75,15 @@ if [[ ! "$remote_size" =~ ^[1-9][0-9]*$ ]]; then
   echo "Uploaded backup could not be verified." >&2
   exit 1
 fi
+local_size="$(wc -c < "$final_path")"
+if [[ "$remote_size" -ne "$local_size" ]]; then
+  echo "Uploaded backup size does not match the local archive." >&2
+  exit 1
+fi
 
-find "$backup_dir" -type f -name 'ritual-cue-*.dump' -mtime +"$local_retention_days" -delete
+if [[ "$skip_local_prune" == true ]]; then
+  echo "Local backup pruning disabled; existing backup files preserved."
+else
+  find "$backup_dir" -type f -name 'ritual-cue-*.dump' -mtime +"$local_retention_days" -delete
+fi
 echo "Ritual Cue database backup verified: s3://$bucket/$s3_key (${remote_size} bytes)"

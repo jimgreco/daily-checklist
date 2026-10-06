@@ -4,6 +4,12 @@ on:
   schedule:
     - cron: "17 9 * * *"
   workflow_dispatch:
+    inputs:
+      skip_local_prune:
+        description: Preserve all existing local backup files for this run
+        required: true
+        type: boolean
+        default: false
 
 concurrency:
   group: production-database-backup
@@ -23,6 +29,7 @@ jobs:
       EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
       EC2_SSH_KNOWN_HOSTS: ${{ secrets.EC2_SSH_KNOWN_HOSTS }}
       EC2_USER: ${{ secrets.EC2_USER }}
+      SKIP_LOCAL_PRUNE: ${{ inputs.skip_local_prune || false }}
     steps:
       - uses: actions/checkout@v5
 
@@ -41,7 +48,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$HOME/.ssh"
-          printf '%s' "$EC2_SSH_KEY" > "$HOME/.ssh/daily-backup"
+          printf '%s\n' "$EC2_SSH_KEY" > "$HOME/.ssh/daily-backup"
           printf '%s\n' "$EC2_SSH_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
           chmod 600 "$HOME/.ssh/daily-backup" "$HOME/.ssh/known_hosts"
 
@@ -52,7 +59,7 @@ jobs:
             -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
             -o StrictHostKeyChecking=yes \
             "$EC2_USER@$EC2_HOST" \
-            "bash -se -- '$BACKUP_BUCKET' '7'" \
+            "bash -se -- '$BACKUP_BUCKET' '7' '$SKIP_LOCAL_PRUNE'" \
             < server/scripts/production-db-backup.sh
 
   notify-failure:
