@@ -36,7 +36,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$HOME/.ssh"
-          printf '%s' "$EC2_SSH_KEY" > "$HOME/.ssh/daily-backup"
+          printf '%s\n' "$EC2_SSH_KEY" > "$HOME/.ssh/daily-backup"
           printf '%s\n' "$EC2_SSH_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
           chmod 600 "$HOME/.ssh/daily-backup" "$HOME/.ssh/known_hosts"
 
