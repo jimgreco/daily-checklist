@@ -1111,7 +1111,9 @@
 
   function editorValues(item) {
     const source = item || {};
-    const start = source.startDate ? dateKey(new Date(source.startDate)) : dateKey(state.selectedDate);
+    // Existing routines may use their creation date as the implicit beginning.
+    // A title/notes edit must not replace that with the day being browsed.
+    const start = source.startDate ? dateKey(new Date(source.startDate)) : item ? "" : dateKey(state.selectedDate);
     const end = source.endedAt ? dateKey(addDays(new Date(source.endedAt), -1)) : "";
     const time = source.reminderMinutes == null ? "" :
       `${String(Math.floor(source.reminderMinutes / 60)).padStart(2, "0")}:${String(source.reminderMinutes % 60).padStart(2, "0")}`;
