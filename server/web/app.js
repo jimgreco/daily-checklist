@@ -1432,11 +1432,17 @@
       && state.modal === renderedEditorModal ? app.querySelector("[data-editor]") : null;
     const focused = editor?.contains(document.activeElement) ? document.activeElement : null;
     const scrollTop = editor?.scrollTop;
+    const search = hasSession() && document.activeElement?.matches("[data-search]")
+      ? document.activeElement : null;
     hasSession() ? renderChecklist() : renderAuth();
     if (editor) {
       app.querySelector("[data-editor]")?.replaceWith(editor);
       if (focused) focused.focus({ preventScroll: true });
       editor.scrollTop = scrollTop;
+    }
+    if (search) {
+      app.querySelector("[data-search]")?.replaceWith(search);
+      search.focus({ preventScroll: true });
     }
     renderedEditorModal = state.modal?.type === "editor" ? state.modal : null;
     updateEditorScheduleControls(app.querySelector("[data-editor]"));
