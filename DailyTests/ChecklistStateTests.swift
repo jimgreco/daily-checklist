@@ -725,6 +725,66 @@ final class ChecklistStateTests: XCTestCase {
     }
 
     @MainActor
+    func testEditorSavePreservesProgressRecordedAfterOpening() throws {
+        let accountID = "editor-progress-test-\(UUID().uuidString)"
+        cleanCaches(for: [accountID])
+        defer {
+            cleanCaches(for: [accountID])
+            UserDefaults.standard.removeObject(forKey: "activeAccountID")
+        }
+        UserDefaults.standard.set(accountID, forKey: "activeAccountID")
+        let store = ChecklistStore()
+        let today = calendar.startOfDay(for: .now)
+        store.selectedDate = today
+        let item = ChecklistItem(title: "Vitamins", quantity: 3, createdAt: today)
+        store.save(item)
+        var draft = try XCTUnwrap(store.items.first)
+        draft.title = "Morning vitamins"
+        store.toggle(item)
+        store.pause(item)
+        let current = try XCTUnwrap(store.items.first)
+
+        store.saveEditorChanges(draft)
+
+        let saved = try XCTUnwrap(store.items.first)
+        XCTAssertEqual(saved.title, "Morning vitamins")
+        XCTAssertEqual(saved.completionCount(on: today), 1)
+        XCTAssertEqual(saved.occurrences, current.occurrences)
+        XCTAssertEqual(saved.pauseWindows, current.pauseWindows)
+        XCTAssertEqual(saved.scheduleRevision, current.scheduleRevision)
+        store.flushPendingPersistence()
+    }
+
+    @MainActor
+    func testEditorSavePreservesSkippedAndExplicitOpenDates() throws {
+        let accountID = "editor-history-test-\(UUID().uuidString)"
+        cleanCaches(for: [accountID])
+        defer {
+            cleanCaches(for: [accountID])
+            UserDefaults.standard.removeObject(forKey: "activeAccountID")
+        }
+        UserDefaults.standard.set(accountID, forKey: "activeAccountID")
+        let store = ChecklistStore()
+        var item = ChecklistItem(title: "Weekly review")
+        store.save(item)
+        var draft = item
+        draft.notes = "New notes"
+        item.skippedDates = ["2026-10-10"]
+        item.openDates = ["2026-10-11"]
+        item.carryoverResolvedThroughDate = "2026-10-09"
+        store.save(item)
+
+        store.saveEditorChanges(draft)
+
+        let saved = try XCTUnwrap(store.items.first)
+        XCTAssertEqual(saved.notes, "New notes")
+        XCTAssertEqual(saved.skippedDates, item.skippedDates)
+        XCTAssertEqual(saved.openDates, item.openDates)
+        XCTAssertEqual(saved.carryoverResolvedThroughDate, item.carryoverResolvedThroughDate)
+        store.flushPendingPersistence()
+    }
+
+    @MainActor
     func testQuantityRequiresMultipleCheckoffs() throws {
         let accountID = "quantity-test-\(UUID().uuidString)"
         let today = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 7, day: 5)))

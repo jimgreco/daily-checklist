@@ -166,7 +166,7 @@ struct ChecklistView: View {
                            store.unresolvedCarryoverEntry(for: item.id) != nil {
                             editedItemEndingWithCarryover = updatedItem
                         } else {
-                            store.save(updatedItem)
+                            store.saveEditorChanges(updatedItem)
                         }
                     },
                     onCreateGroup: { store.createGroup(named: $0) },
@@ -299,7 +299,7 @@ struct ChecklistView: View {
                         return
                     }
                     store.completeCarryover(itemID: updatedItem.id, occurrenceDate: date)
-                    store.save(mergingCurrentOccurrenceState(into: updatedItem))
+                    store.saveEditorChanges(updatedItem)
                     editedItemEndingWithCarryover = nil
                 }
                 Button("Skip Overdue and Save", role: .destructive) {
@@ -309,7 +309,7 @@ struct ChecklistView: View {
                         return
                     }
                     store.skipCarryover(entry)
-                    store.save(mergingCurrentOccurrenceState(into: updatedItem))
+                    store.saveEditorChanges(updatedItem)
                     editedItemEndingWithCarryover = nil
                 }
                 Button("Cancel", role: .cancel) {
@@ -517,20 +517,6 @@ struct ChecklistView: View {
         if count == 0 { return "Everything is checked off." }
         let day = store.isSelectedDateToday ? "today" : "this day"
         return count == 1 ? "One thing left \(day)." : "\(count) things left \(day)."
-    }
-
-    private func mergingCurrentOccurrenceState(into editedItem: ChecklistItem) -> ChecklistItem {
-        guard let current = store.items.first(where: { $0.id == editedItem.id }) else {
-            return editedItem
-        }
-        var merged = editedItem
-        merged.completedDates = current.completedDates
-        merged.completionCounts = current.completionCounts
-        merged.skippedDates = current.skippedDates
-        merged.openDates = current.openDates
-        merged.occurrences = current.occurrences
-        merged.carryoverResolvedThroughDate = current.carryoverResolvedThroughDate
-        return merged
     }
 
     private func makeRenderSnapshot() -> ChecklistRenderSnapshot {

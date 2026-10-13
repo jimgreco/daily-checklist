@@ -1377,6 +1377,23 @@ final class ChecklistStore: ObservableObject {
         persistAndSchedule()
     }
 
+    /// Editors hold a snapshot while notification, widget, and sync actions may
+    /// update progress. Apply the edited settings without restoring old history.
+    func saveEditorChanges(_ editedItem: ChecklistItem) {
+        guard let current = items.first(where: { $0.id == editedItem.id }) else { return }
+        var merged = editedItem
+        merged.completedDates = current.completedDates
+        merged.completionCounts = current.completionCounts
+        merged.skippedDates = current.skippedDates
+        merged.openDates = current.openDates
+        merged.occurrences = current.occurrences
+        merged.carryoverResolvedThroughDate = current.carryoverResolvedThroughDate
+        merged.pauseWindows = current.pauseWindows
+        merged.sortOrder = current.sortOrder
+        merged.scheduleRevision = current.scheduleRevision
+        save(merged)
+    }
+
     func save(_ item: ChecklistItem) {
         var item = item
         if item.schedule == .everyDay {
