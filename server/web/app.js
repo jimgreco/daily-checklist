@@ -1315,7 +1315,11 @@
       </section></div>`;
     }
     if (state.modal.type === "history") {
-      const item = state.modal.item;
+      const item = state.items.find((candidate) => candidate.id === state.modal.item?.id);
+      if (!item) {
+        state.modal = null;
+        return "";
+      }
       const historyEntries = historyFor(item);
       const calendarEntries = historyCalendarFor(historyEntries);
       return `<div class="scrim" data-action="close"><section class="modal" data-modal>
