@@ -37,6 +37,7 @@
   };
   let refreshPromise = null;
   let toastTimer = null;
+  let renderedEditorModal = null;
   const delayDailyMessage = "Daily items already appear tomorrow. Delay is only for items scheduled a few times a week.";
   const bringForwardDailyMessage = "Daily items already appear today. Bring forward is only for items scheduled a few times a week.";
   const templates = [
@@ -1419,7 +1420,19 @@
   }
 
   function render() {
+    // Sync and toast updates redraw the checklist while an editor may contain
+    // unsaved input. Keep that editor's actual controls (and caret) intact.
+    const editor = hasSession() && state.modal?.type === "editor"
+      && state.modal === renderedEditorModal ? app.querySelector("[data-editor]") : null;
+    const focused = editor?.contains(document.activeElement) ? document.activeElement : null;
+    const scrollTop = editor?.scrollTop;
     hasSession() ? renderChecklist() : renderAuth();
+    if (editor) {
+      app.querySelector("[data-editor]")?.replaceWith(editor);
+      if (focused) focused.focus({ preventScroll: true });
+      editor.scrollTop = scrollTop;
+    }
+    renderedEditorModal = state.modal?.type === "editor" ? state.modal : null;
     updateEditorScheduleControls(app.querySelector("[data-editor]"));
   }
 
