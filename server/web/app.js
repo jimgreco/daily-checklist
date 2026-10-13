@@ -2399,8 +2399,13 @@
     }));
   }
 
-  function requestEndItem(item) {
-    if (!item) return;
+  function requestEndItem(editedItem) {
+    const item = state.items.find((candidate) => candidate.id === editedItem?.id);
+    if (!item) {
+      state.modal = null;
+      showToast("This item is no longer available.");
+      return;
+    }
     const entry = carryoverForItem(item, startOfDay(new Date()), { includeHidden: true, ignoreCurrentPause: true });
     if (!entry) {
       endItem(item);
