@@ -974,7 +974,8 @@
     const groupPaused = realGroup && groupID ? isGroupPaused(groupID, state.selectedDate) : false;
     const todo = items.filter((item) => !complete(item) && !isPaused(item, state.selectedDate));
     const done = items.filter(complete);
-    const ordered = realGroup && todo.length ? [...todo, ...done] : items;
+    const paused = items.filter((item) => !complete(item) && isPaused(item, state.selectedDate));
+    const ordered = realGroup && todo.length ? [...todo, ...paused, ...done] : items;
     return `<section class="group">
       <div class="group-head">
         <div class="group-title">
