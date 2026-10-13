@@ -2478,7 +2478,14 @@
 
   function saveEditor(form, { existingItem = null, skipEndResolution = false } = {}) {
     const data = new FormData(form);
-    const existing = existingItem || state.modal.item;
+    const editing = existingItem || state.modal.item;
+    const existing = editing ? state.items.find((item) => item.id === editing.id) : null;
+    if (editing && !existing) {
+      state.modal = null;
+      showToast("This item is no longer available.");
+      return;
+    }
+    const previous = existing ? structuredClone(existing) : null;
     const previousEditorValues = existing ? editorValues(existing) : null;
     const nextEndDate = String(data.get("endDate") || "");
     const endDateChanged = Boolean(existing && nextEndDate !== previousEditorValues.end);
@@ -2577,21 +2584,26 @@
     const index = state.items.findIndex((candidate) => candidate.id === item.id);
     if (index >= 0) state.items[index] = item; else state.items.push(item);
     state.modal = null;
-    queue(mutation("upsert", {
-      itemID: item.id,
-      changedFields: ["title","notes","schedule","customWeekdays","recurrence","reminderMinutes","followUpPolicy","quantity","skippedDates","openDates","createdAt","startDate","endedAt","groupID","sortOrder","pauseWindows","scheduleRevision","missedBehavior","carryoverStartDate","carryoverResolvedThroughDate"],
-      item: {
-        title: item.title, notes: item.notes, schedule: item.schedule,
-        customWeekdays: item.customWeekdays, recurrence: item.recurrence,
-        reminderMinutes: item.reminderMinutes, followUpPolicy: item.followUpPolicy, quantity: item.quantity,
-        skippedDates: item.skippedDates, openDates: item.openDates,
-        createdAt: item.createdAt, startDate: item.startDate, endedAt: item.endedAt,
-        groupID: item.groupID, sortOrder: item.sortOrder, pauseWindows: item.pauseWindows,
-        scheduleRevision: item.scheduleRevision,
-        missedBehavior: item.missedBehavior, carryoverStartDate: item.carryoverStartDate,
-        carryoverResolvedThroughDate: item.carryoverResolvedThroughDate
-      }
-    }));
+    const values = {
+      title: item.title, notes: item.notes, schedule: item.schedule,
+      customWeekdays: item.customWeekdays, recurrence: item.recurrence,
+      reminderMinutes: item.reminderMinutes, followUpPolicy: item.followUpPolicy, quantity: item.quantity,
+      skippedDates: item.skippedDates, openDates: item.openDates,
+      createdAt: item.createdAt, startDate: item.startDate, endedAt: item.endedAt,
+      groupID: item.groupID, sortOrder: item.sortOrder, pauseWindows: item.pauseWindows,
+      scheduleRevision: item.scheduleRevision,
+      missedBehavior: item.missedBehavior, carryoverStartDate: item.carryoverStartDate,
+      carryoverResolvedThroughDate: item.carryoverResolvedThroughDate
+    };
+    const changedFields = Object.keys(values).filter((field) => !previous
+      || JSON.stringify(previous[field] ?? null) !== JSON.stringify(values[field] ?? null));
+    if (changedFields.length) {
+      queue(mutation("upsert", { itemID: item.id, changedFields, item: values }));
+    } else {
+      persistData();
+      render();
+      void sync();
+    }
   }
 
   app.addEventListener("click", async (event) => {
