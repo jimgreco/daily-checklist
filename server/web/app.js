@@ -995,6 +995,19 @@
     </section>`;
   }
 
+  function renderSearchFeedback(resultCount) {
+    if (!state.search.trim()) return '';
+    return `<div class="search-feedback"><span role="status" aria-live="polite">${resultCount} matching ${resultCount === 1 ? 'task' : 'tasks'}</span><button type="button" class="mini-button accent" data-action="clear-search">Clear search</button></div>`;
+  }
+
+  function clearSearch() {
+    state.search = '';
+    const input = app.querySelector('[data-search]');
+    if (input) input.value = '';
+    render();
+    app.querySelector('[data-search]')?.focus({ preventScroll: true });
+  }
+
   function renderChecklist() {
     const items = visibleItems();
     const showsCarryovers = state.mode === "today" && sameDay(state.selectedDate, new Date());
@@ -1015,6 +1028,8 @@
     const isTodoItem = (item) => !complete(item)
       && (!hidesPausedExpected || !isPaused(item, state.selectedDate))
       && (!separatesSkipped || !skipped(item));
+    const searchResultCount = items.filter((item) => isTodoItem(item) || complete(item) || (separatesSkipped && skipped(item))).length + carryovers.length;
+    const searchHasNoMatches = Boolean(state.search.trim()) && searchResultCount === 0;
     const ungroupedTodo = ungrouped.filter(isTodoItem);
     const ungroupedSkipped = separatesSkipped ? ungrouped.filter((item) => skipped(item) && !complete(item)) : [];
     const ungroupedDone = ungrouped.filter(complete);
@@ -1068,9 +1083,10 @@
         <div class="toolbar">
           <button class="sort-button" data-action="sort">${icon("arrowDownUp")} ${state.sort === "manual" ? "Manual" : state.sort === "name" ? "Name" : "Time"}</button>
         </div>
-        <label class="search-field"><span>${icon("search")}</span><input data-search placeholder="Search tasks" value="${escapeHTML(state.search)}"></label>
+        <label class="search-field"><span>${icon("search")}</span><input data-search aria-label="Search tasks" placeholder="Search tasks" value="${escapeHTML(state.search)}"></label>
       </div>
-      ${state.mode === "archive" ? `<div class="section-head"><span class="section-label">Archive</span></div>${archiveBody || `<div class="empty">No ended tasks.</div>`}` : `${carryoverBody ? `<div class="section-head still-open-head"><span class="section-label">Still open</span><span class="section-count">${carryoverCount} outstanding</span></div>${carryoverBody}` : ""}<div class="section-head">
+      ${renderSearchFeedback(searchResultCount)}
+      ${searchHasNoMatches ? `<div class="empty search-empty"><strong>No matching rituals</strong><span>Try a different task name or note.</span></div>` : state.mode === "archive" ? `<div class="section-head"><span class="section-label">Archive</span></div>${archiveBody || `<div class="empty">No ended tasks.</div>`}` : `${carryoverBody ? `<div class="section-head still-open-head"><span class="section-label">Still open</span><span class="section-count">${carryoverCount} outstanding</span></div>${carryoverBody}` : ""}<div class="section-head">
         <span class="section-label">To do</span>
         ${remaining ? `<button class="complete-all" data-action="complete-all">${icon("check")} All&nbsp;&nbsp;${remaining}</button>` : ""}
       </div>
@@ -2648,6 +2664,7 @@
     if (action === "previous") { state.selectedDate = addDays(state.selectedDate, -1); render(); }
     if (action === "next") { state.selectedDate = addDays(state.selectedDate, 1); render(); }
     if (action === "mode") { state.mode = target.dataset.mode; render(); }
+    if (action === "clear-search") clearSearch();
     if (action === "sort") {
       state.sort = state.sort === "manual" ? "time" : state.sort === "time" ? "name" : "manual";
       render();
@@ -2777,6 +2794,13 @@
     if (event.target.matches("[data-recurrence-control]")
       || ["startDate", "endDate"].includes(event.target.name)) {
       updateEditorScheduleControls(event.target.closest("form"));
+    }
+  });
+
+  app.addEventListener("keydown", (event) => {
+    if (event.key === 'Escape' && event.target.matches('[data-search]') && state.search) {
+      event.preventDefault();
+      clearSearch();
     }
   });
 

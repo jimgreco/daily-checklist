@@ -245,6 +245,12 @@ h1 {
 .search-field input { min-width: 0; width: 100%; border: 0; outline: none; background: transparent; color: var(--ink); }
 .search-field input::placeholder { color: var(--muted-strong); }
 
+.search-feedback { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 12px 2px 0; color: var(--muted-strong); font-size: 13px; }
+.search-feedback .mini-button { min-height: 40px; padding: 8px 12px; }
+.empty.search-empty { margin-top: 16px; }
+.empty.search-empty::before { content: "⌕"; }
+.search-empty strong { color: var(--ink); font-size: 18px; }
+
 .section-head { min-height: 30px; justify-content: space-between; margin: 25px 0 11px; }
 .section-label { color: var(--muted); font-size: 12px; font-weight: 850; letter-spacing: 0.18em; text-transform: uppercase; }
 .section-count { color: var(--muted); font-size: 12px; font-weight: 740; }

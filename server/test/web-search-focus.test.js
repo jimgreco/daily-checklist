@@ -54,3 +54,13 @@ test('an expired session does not reinsert private search text into the sign-in 
   assert.equal(document.activeElement,null);
   assert.equal(current(),null);
 });
+
+test('clearing search resets a retained focused input and leaves it ready to type again', () => {
+  const { context, document, search, current } = fixture();
+  context.state.search = 'review';
+  vm.runInContext(source.slice(source.indexOf('  function clearSearch('), source.indexOf('  function renderChecklist(')), context);
+  context.clearSearch();
+  assert.equal(context.state.search, '');
+  assert.equal(current().value, '');
+  assert.equal(document.activeElement, search);
+});
