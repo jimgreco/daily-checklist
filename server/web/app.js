@@ -2399,7 +2399,7 @@
     }));
   }
 
-  function requestEndItem(editedItem) {
+  function requestEndItem(editedItem, form = null) {
     const item = state.items.find((candidate) => candidate.id === editedItem?.id);
     if (!item) {
       state.modal = null;
@@ -2411,8 +2411,23 @@
       endItem(item);
       return;
     }
-    state.modal = { type: "endCarryover", itemID: item.id };
+    state.modal = {
+      type: "endCarryover", itemID: item.id,
+      returnEditor: form ? { form, scrollTop: form.scrollTop } : null
+    };
     render();
+  }
+
+  function cancelEndCarryover() {
+    const draft = state.modal?.returnEditor;
+    const item = state.items.find((candidate) => candidate.id === state.modal?.itemID);
+    state.modal = item ? { type: "editor", item } : null;
+    render();
+    if (item && draft?.form) {
+      app.querySelector("[data-editor]")?.replaceWith(draft.form);
+      updateEditorScheduleControls(draft.form);
+      draft.form.scrollTop = draft.scrollTop;
+    }
   }
 
   function resolveCarryoverAndEnd(item, occurrenceID, resolution) {
@@ -2504,7 +2519,8 @@
         state.modal = {
           type: "endCarryover",
           itemID: existing.id,
-          pendingEditor: { form, existing }
+          pendingEditor: { form, existing },
+          returnEditor: { form, scrollTop: form.scrollTop }
         };
         render();
         return;
@@ -2621,11 +2637,7 @@
     if (target.classList.contains("scrim") && event.target !== target) return;
     const action = target.dataset.action;
     if (action === "close") { state.modal = null; render(); }
-    if (action === "cancel-end-carryover") {
-      const item = state.items.find((candidate) => candidate.id === state.modal?.itemID);
-      state.modal = item ? { type: "editor", item } : null;
-      render();
-    }
+    if (action === "cancel-end-carryover") cancelEndCarryover();
     if (action === "previous") { state.selectedDate = addDays(state.selectedDate, -1); render(); }
     if (action === "next") { state.selectedDate = addDays(state.selectedDate, 1); render(); }
     if (action === "mode") { state.mode = target.dataset.mode; render(); }
@@ -2699,7 +2711,7 @@
       updateEditorScheduleControls(form);
     }
     if (action === "end-item") {
-      requestEndItem(state.modal.item);
+      requestEndItem(state.modal.item, app.querySelector("[data-editor]"));
     }
     if (action === "dev") {
       try {

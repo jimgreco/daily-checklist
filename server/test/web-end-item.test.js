@@ -54,3 +54,13 @@ test('ending an item removed by sync does not enqueue an outdated mutation', () 
   assert.equal(queued.length, 0);
   assert.deepEqual(messages, ['This item is no longer available.']);
 });
+
+test('the End item button retains the open editor only for returning after cancellation', () => {
+  const { context, state, stale, current } = fixture();
+  current.hasCarryover = true;
+  const form = { scrollTop: 180, values: { title: 'Unsaved title' } };
+  context.requestEndItem(stale, form);
+  assert.equal(state.modal.returnEditor.form, form);
+  assert.equal(state.modal.returnEditor.scrollTop, 180);
+  assert.equal(state.modal.pendingEditor, undefined, 'confirming End still ends the item instead of saving editor settings');
+});
