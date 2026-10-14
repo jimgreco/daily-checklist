@@ -55,6 +55,26 @@ final class RitualCueScreenshots: XCTestCase {
         snapshot("04-Sync")
     }
 
+    func testSearchCountsClearAndNoMatchFeedback() throws {
+        app.buttons["Search checklist"].tap()
+        let search = app.textFields["Search tasks"]
+        XCTAssertTrue(search.waitForExistence(timeout: 5))
+        search.typeText("calendar")
+        XCTAssertTrue(app.staticTexts["1 matching task"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Review calendar"].exists)
+        snapshot("05-Search-Count")
+        app.buttons["clear-search-query"].tap()
+        XCTAssertFalse(app.staticTexts["search-result-count"].exists)
+        XCTAssertTrue(search.exists)
+        search.typeText("no-such-ritual")
+        XCTAssertTrue(app.staticTexts["0 matching tasks"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["No matching rituals"].exists)
+        snapshot("06-Search-Empty")
+        app.buttons["clear-search-query"].tap()
+        XCTAssertTrue(app.staticTexts["Review calendar"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.staticTexts["No matching rituals"].exists)
+    }
+
     private func scrollToExistence(_ element: XCUIElement, maxSwipes: Int = 5) -> Bool {
         if element.waitForExistence(timeout: 1) { return true }
         for _ in 0..<maxSwipes {

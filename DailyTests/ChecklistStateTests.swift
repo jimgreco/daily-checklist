@@ -1982,6 +1982,57 @@ final class ChecklistStateTests: XCTestCase {
         XCTAssertEqual(mutation.occurrence?.scheduledDate, dateKey)
     }
 
+    @MainActor
+    func testSearchCountIncludesSkippedOnceAndRespectsPausedScope() {
+        withSearchStore { store in
+            let today = DateKey.string(from: store.selectedDate)
+            store.save(ChecklistItem(title: "Review active"))
+            store.save(ChecklistItem(title: "Review complete", completedDates: [today]))
+            store.save(ChecklistItem(title: "Review skipped", skippedDates: [today]))
+            store.save(ChecklistItem(title: "Review paused", pauseWindows: [PauseWindow(startDate: today)]))
+            store.scope = .today
+            let todayResult = ChecklistView.makeRenderSnapshot(store: store, searchText: "review")
+            XCTAssertEqual(todayResult.searchResultCount, 3)
+            XCTAssertEqual(todayResult.skippedItems.count, 1)
+            store.scope = .all
+            let allResult = ChecklistView.makeRenderSnapshot(store: store, searchText: "review")
+            XCTAssertEqual(allResult.searchResultCount, 4)
+            XCTAssertEqual(allResult.searchResultCount, allResult.todoSectionItems.count + allResult.completedSectionItems.count)
+        }
+    }
+
+    @MainActor
+    func testSearchCountUsesNotesAndArchiveRowsAndClearRestoresResults() {
+        withSearchStore { store in
+            store.save(ChecklistItem(title: "Active", notes: "Morning REVIEW"))
+            store.save(ChecklistItem(title: "Ended review", endedAt: .now.addingTimeInterval(-86_400)))
+            XCTAssertEqual(ChecklistView.makeRenderSnapshot(store: store, searchText: " review ").searchResultCount, 1)
+            let empty = ChecklistView.makeRenderSnapshot(store: store, searchText: "no-such-ritual")
+            XCTAssertEqual(empty.searchResultCount, 0)
+            XCTAssertTrue(empty.searchHasNoMatches)
+            let cleared = ChecklistView.makeRenderSnapshot(store: store, searchText: "")
+            XCTAssertEqual(cleared.searchResultCount, 1)
+            XCTAssertFalse(cleared.searchHasNoMatches)
+            store.scope = .archive
+            let archived = ChecklistView.makeRenderSnapshot(store: store, searchText: "REVIEW")
+            XCTAssertEqual(archived.searchResultCount, 1)
+            XCTAssertEqual(archived.archiveItems.map(\.title), ["Ended review"])
+        }
+    }
+
+    @MainActor
+    private func withSearchStore(_ body: (ChecklistStore) -> Void) {
+        let accountID = "search-feedback-\(UUID().uuidString)"
+        UserDefaults.standard.set(accountID, forKey: "activeAccountID")
+        let store = ChecklistStore()
+        defer {
+            store.flushPendingPersistence()
+            cleanCaches(for: [accountID])
+            UserDefaults.standard.removeObject(forKey: "activeAccountID")
+        }
+        body(store)
+    }
+
     private func cleanCaches(for accountIDs: [String]) {
         for accountID in accountIDs {
             let url = URL.documentsDirectory.appending(path: "daily-checklist-\(accountID).json")

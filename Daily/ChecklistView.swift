@@ -26,7 +26,7 @@ struct ChecklistView: View {
     @FocusState private var searchIsFocused: Bool
 
     var body: some View {
-        let snapshot = makeRenderSnapshot()
+        let snapshot = Self.makeRenderSnapshot(store: store, searchText: searchText)
 
         NavigationStack {
             ZStack(alignment: .bottomTrailing) {
@@ -128,22 +128,18 @@ struct ChecklistView: View {
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
-            .overlay {
-                if isSearchPresented {
-                    Color.clear
-                        .contentShape(Rectangle())
-                        .ignoresSafeArea()
-                        .onTapGesture {
-                            dismissSearch()
-                        }
-                        .zIndex(4)
-                }
-            }
             .overlay(alignment: .top) {
                 if isSearchPresented {
-                    expandedSearchOverlay
-                        .transition(.move(edge: .top).combined(with: .opacity))
-                        .zIndex(5)
+                    VStack(spacing: 0) {
+                        expandedSearchOverlay(resultCount: snapshot.searchResultCount)
+                            .transition(.move(edge: .top).combined(with: .opacity))
+                        Color.clear
+                            .contentShape(Rectangle())
+                            .ignoresSafeArea(edges: .bottom)
+                            .onTapGesture {
+                                dismissSearch()
+                            }
+                    }
                 }
             }
             .toolbar(.hidden, for: .navigationBar)
@@ -519,10 +515,9 @@ struct ChecklistView: View {
         return count == 1 ? "One thing left \(day)." : "\(count) things left \(day)."
     }
 
-    private func makeRenderSnapshot() -> ChecklistRenderSnapshot {
+    static func makeRenderSnapshot(store: ChecklistStore, searchText: String, now: Date = .now) -> ChecklistRenderSnapshot {
         let visibleItems = store.visibleItems
         let isShowingCurrentToday = store.scope == .today && store.isSelectedDateToday
-        let now = Date.now
         let allCarryoverEntries = isShowingCurrentToday
             ? CarryoverResolver.entries(
                 items: store.items,
@@ -587,7 +582,8 @@ struct ChecklistView: View {
         let matchingCarryoverEntries = carryoverEntries.filter { matchesSearch($0.item) }
         let searchResultCount = store.scope == .archive
             ? archiveMatches.count
-            : todoMatches.count + completedMatches.count + skippedMatches.count + matchingCarryoverEntries.count
+            : todoMatches.count + completedMatches.count
+                + (store.scope == .today ? skippedMatches.count : 0) + matchingCarryoverEntries.count
 
         return ChecklistRenderSnapshot(
             archiveItems: archiveMatches,
@@ -601,6 +597,7 @@ struct ChecklistView: View {
             filteredTodoCount: todoItems.filter(matchesSearch).count,
             carryoverCount: carryoverEntries.count,
             showsStillOpenSection: isShowingCurrentToday && !matchingCarryoverEntries.isEmpty,
+            searchResultCount: searchResultCount,
             searchHasNoMatches: !query.isEmpty && searchResultCount == 0
         )
     }
@@ -668,7 +665,7 @@ struct ChecklistView: View {
         .accessibilityHint("Shows the search field")
     }
 
-    private var expandedSearchOverlay: some View {
+    private func expandedSearchOverlay(resultCount: Int) -> some View {
         VStack(spacing: 12) {
             HStack {
                 HStack(spacing: 8) {
@@ -684,8 +681,12 @@ struct ChecklistView: View {
                         } label: {
                             Image(systemName: "xmark.circle.fill")
                                 .foregroundStyle(.secondary)
+                                .frame(width: 44, height: 44)
+                                .contentShape(Rectangle())
                         }
+                        .buttonStyle(.plain)
                         .accessibilityLabel("Clear search")
+                        .accessibilityIdentifier("clear-search-query")
                     }
                 }
                 .font(.system(size: 17, weight: .medium))
@@ -696,7 +697,17 @@ struct ChecklistView: View {
             }
             .padding(.horizontal, 20)
             .padding(.top, 12)
-            .padding(.bottom, 10)
+            .padding(.bottom, 2)
+
+            if !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Text("\(resultCount) matching \(resultCount == 1 ? "task" : "tasks")")
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("search-result-count")
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .glassEffect(.regular, in: Capsule())
+            }
         }
         .frame(maxWidth: .infinity)
         .padding(.bottom, 4)
@@ -1484,7 +1495,7 @@ private struct ChecklistTutorialView: View {
     }
 }
 
-private struct ChecklistRenderSnapshot {
+struct ChecklistRenderSnapshot {
     let archiveItems: [ChecklistItem]
     let archiveTotalCount: Int
     let todoSectionItems: [ChecklistItem]
@@ -1496,6 +1507,7 @@ private struct ChecklistRenderSnapshot {
     let filteredTodoCount: Int
     let carryoverCount: Int
     let showsStillOpenSection: Bool
+    let searchResultCount: Int
     let searchHasNoMatches: Bool
 }
 
