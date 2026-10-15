@@ -168,6 +168,35 @@ class DeploySafetyTests(unittest.TestCase):
             deploy.main()
             run.assert_not_called()
 
+    def test_candidate_override_allows_only_daily_image_change(self):
+        original = {"services": {"daily": {"image": "sha256:" + "a" * 64, "environment": self.base,
+                                          "cap_drop": ["ALL"], "networks": {"private": {}}},
+                                 "db": {"image": "postgres:16"}}, "networks": {"private": {}}}
+        candidate = deploy.copy.deepcopy(original)
+        candidate["services"]["daily"]["image"] = "ritual-cue-release:" + "b" * 40
+        with patch.object(deploy, "run", side_effect=[original, candidate]):
+            deploy.validate_image_only_override(["original"], ["candidate"], candidate["services"]["daily"]["image"])
+        self.assertEqual(original["services"]["daily"]["image"], "sha256:" + "a" * 64)
+        changes = [lambda c: c["services"]["daily"]["environment"].update(SESSION_SECRET="unexpected-secret"),
+                   lambda c: c["services"]["daily"].update(cap_drop=[]),
+                   lambda c: c["services"]["daily"].update(networks={}),
+                   lambda c: c["services"]["db"].update(image="postgres:17")]
+        for change in changes:
+            altered = deploy.copy.deepcopy(candidate)
+            change(altered)
+            with patch.object(deploy, "run", side_effect=[original, altered]):
+                with self.assertRaisesRegex(deploy.ReleaseError, "changes more than the Daily image") as error:
+                    deploy.validate_image_only_override(["original"], ["candidate"], candidate["services"]["daily"]["image"])
+                self.assertNotIn("unexpected-secret", str(error.exception))
+
+    def test_image_override_refuses_to_overwrite_existing_release_file(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "existing.json"
+            path.write_text("preserve existing overlay")
+            with self.assertRaises(FileExistsError):
+                deploy.write_image_override(path, "candidate", exclusive=True)
+            self.assertEqual(path.read_text(), "preserve existing overlay")
+
     def test_invalid_sha_fails_before_docker_access(self):
         with patch("sys.argv", ["deploy-service.py", "--release", "main; unexpected"]), \
              patch.object(deploy, "run") as run:
@@ -190,7 +219,7 @@ class DeploySafetyTests(unittest.TestCase):
                 deploy.compose_for({"Config": {"Labels": labels}}, directory)
 
     def release_fixture(self, temp):
-        directory = Path(temp)
+        directory = Path(temp).resolve()
         scripts = directory / "server" / "scripts"
         scripts.mkdir(parents=True)
         metadata = directory / "server" / "src" / "deployment.json"
@@ -204,22 +233,56 @@ class DeploySafetyTests(unittest.TestCase):
     def test_release_retains_recovery_and_only_replaces_daily(self):
         with tempfile.TemporaryDirectory() as temp:
             directory, script, previous, current, compose = self.release_fixture(temp)
+            overlay = directory / ("daily-image-" + "b" * 40 + ".json")
+            candidate_compose = compose + ["-f", str(overlay)]
+            built_image = "sha256:" + "c" * 64
+
+            def response(*args, **kwargs):
+                if args[:3] == ("docker", "exec", "old-container"):
+                    return {"sha": "a" * 40}
+                if args[:3] == ("docker", "image", "inspect"):
+                    return [{"Id": built_image}]
+                if args[-3:] == ("config", "--format", "json"):
+                    image = deploy.json.loads(overlay.read_text())["services"]["daily"]["image"] if str(overlay) in args else "deploy-daily"
+                    return {"services": {"daily": {"image": image, "environment": self.base}}}
+                return ""
+
             with patch("sys.argv", [str(script), "--deploy-directory", str(directory), "--release", "b" * 40]), \
                  patch.object(deploy, "__file__", str(script)), \
                  patch.object(deploy, "preflight", side_effect=[(previous, compose, {}), (previous, compose, {}), (current, compose, {})]), \
-                 patch.object(deploy, "run", return_value={"sha": "a" * 40}) as run, \
+                 patch.object(deploy, "run", side_effect=response) as run, \
                  patch.object(deploy, "verify") as verify, contextlib.redirect_stdout(io.StringIO()):
                 deploy.main()
                 commands = [call.args for call in run.call_args_list]
-                self.assertIn(tuple(compose + ["build", "daily"]), commands)
-                self.assertIn(tuple(compose + ["up", "-d", "--no-deps", "--no-build", "daily"]), commands)
-                self.assertEqual(len(commands), 4)
-                self.assertEqual(commands[1], ("docker", "image", "tag", "old-image", "ritual-cue-rollback:" + "b" * 40))
+                self.assertIn(tuple(candidate_compose + ["build", "daily"]), commands)
+                self.assertIn(tuple(candidate_compose + ["up", "-d", "--no-deps", "--no-build", "daily"]), commands)
+                self.assertIn(("docker", "image", "tag", "old-image", "ritual-cue-rollback:" + "b" * 40), commands)
+                self.assertEqual([c for c in commands if "up" in c], [tuple(candidate_compose + ["up", "-d", "--no-deps", "--no-build", "daily"])])
+                self.assertEqual(deploy.json.loads(overlay.read_text()), {"services": {"daily": {"image": built_image}}})
                 verify.assert_called_once_with("new-container", "b" * 40)
                 record = deploy.json.loads((directory / "release-records" / ("daily-" + "b" * 40 + ".json")).read_text())
                 self.assertEqual(record["previousSha"], "a" * 40)
                 self.assertEqual(record["previousShaSource"], "deployment.json")
+                self.assertEqual(record["compose"], compose)
+                self.assertEqual(record["candidateCompose"], candidate_compose)
                 self.assertEqual(record["status"], "healthy")
+
+    def test_candidate_drift_after_build_stops_before_container_replacement(self):
+        with tempfile.TemporaryDirectory() as temp:
+            directory, script, previous, _, compose = self.release_fixture(temp)
+            with patch("sys.argv", [str(script), "--deploy-directory", str(directory), "--release", "b" * 40]), \
+                 patch.object(deploy, "__file__", str(script)), \
+                 patch.object(deploy, "preflight", return_value=(previous, compose, {})), \
+                 patch.object(deploy, "deployed_revision", return_value={"sha": "a" * 40, "source": "image-revision-label"}), \
+                 patch.object(deploy, "validate_image_only_override", side_effect=[None, deploy.ReleaseError("candidate drift")]), \
+                 patch.object(deploy, "run", side_effect=["", "", [{"Id": "sha256:" + "c" * 64}]]) as run, \
+                 contextlib.redirect_stdout(io.StringIO()):
+                with self.assertRaisesRegex(deploy.ReleaseError, "candidate drift"):
+                    deploy.main()
+                self.assertFalse(any("up" in call.args for call in run.call_args_list))
+                record = deploy.json.loads((directory / "release-records" / ("daily-" + "b" * 40 + ".json")).read_text())
+                self.assertEqual(record["status"], "prepared")
+                self.assertEqual(record["previousImage"], "old-image")
 
     def test_existing_record_blocks_retry_before_retagging_rollback(self):
         with tempfile.TemporaryDirectory() as temp:
