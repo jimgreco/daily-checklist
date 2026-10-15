@@ -160,6 +160,21 @@ def deployed_revision(live):
     return {"sha": sha, "source": source}
 
 
+def validate_image_only_override(compose, candidate_compose, image):
+    original = run(*compose, "config", "--format", "json", json_output=True)
+    candidate = run(*candidate_compose, "config", "--format", "json", json_output=True)
+    expected = copy.deepcopy(original)
+    expected["services"]["daily"]["image"] = image
+    if candidate != expected:
+        raise ReleaseError("Candidate Compose configuration changes more than the Daily image")
+
+
+def write_image_override(path, image, *, exclusive=False):
+    with path.open("x" if exclusive else "w") as file:
+        json.dump({"services": {"daily": {"image": image}}}, file)
+        file.write("\n")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--deploy-directory", type=Path, default=Path.home() / "deploy")
@@ -185,16 +200,29 @@ def main():
         if record.exists():
             raise ReleaseError("Release record already exists; inspect it before retrying")
         previous_revision = deployed_revision(live)
+        release_tag = f"ritual-cue-release:{args.release}"
+        image_override = directory / f"daily-image-{args.release}.json"
+        # Preserve the recorded overlays, which may pin the current image by ID.
+        # Only this new release file changes, before it is used by any container.
+        write_image_override(image_override, release_tag, exclusive=True)
+        candidate_compose = compose + ["-f", str(image_override)]
+        validate_image_only_override(compose, candidate_compose, release_tag)
         run("docker", "image", "tag", live["Image"], rollback)
         recovery = {"sha": args.release, "previousContainer": live["Id"], "previousImage": live["Image"],
                     "previousImageName": live["Config"]["Image"], "previousSha": previous_revision["sha"],
                     "previousShaSource": previous_revision["source"], "rollbackTag": rollback,
-                    "compose": compose, "status": "prepared"}
+                    "compose": compose, "candidateCompose": candidate_compose,
+                    "imageOverride": str(image_override), "status": "prepared"}
         record.write_text(json.dumps(recovery, indent=2) + "\n")
         print(f"Rollback image retained: {rollback}", flush=True)
-        run(*compose, "build", "daily")
+        run(*candidate_compose, "build", "daily")
+        built_image = run("docker", "image", "inspect", release_tag, json_output=True)[0].get("Id")
+        if not isinstance(built_image, str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", built_image):
+            raise ReleaseError("Built Daily image has no immutable image ID")
+        write_image_override(image_override, built_image)
+        validate_image_only_override(compose, candidate_compose, built_image)
         preflight(directory, expected_id=live["Id"])
-        run(*compose, "up", "-d", "--no-deps", "--no-build", "daily")
+        run(*candidate_compose, "up", "-d", "--no-deps", "--no-build", "daily")
         recovery["status"] = "replaced-awaiting-health"
         record.write_text(json.dumps(recovery, indent=2) + "\n")
         for _ in range(60):
