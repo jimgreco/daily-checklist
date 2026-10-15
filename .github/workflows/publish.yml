@@ -68,7 +68,7 @@ jobs:
       - name: Test isolated deployment guards
         run: python3 -m unittest discover -s server/test -p 'test_deploy_service.py'
 
-      - name: Test backup SSH formatting and retention controls
+      - name: Test workflow SSH formatting and backup retention controls
         run: python3 -m unittest discover -s server/test -p 'test_database_backup.py'
 
       - name: Audit production dependencies
@@ -104,10 +104,16 @@ jobs:
           EC2_SSH_KNOWN_HOSTS: ${{ secrets.EC2_SSH_KNOWN_HOSTS }}
         run: |
           set -euo pipefail
+          set +x
+          umask 077
           mkdir -p "$HOME/.ssh"
-          printf '%s' "$EC2_SSH_KEY" > "$HOME/.ssh/daily"
+          printf '%s\n' "$EC2_SSH_KEY" > "$HOME/.ssh/daily"
           printf '%s\n' "$EC2_SSH_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
           chmod 600 "$HOME/.ssh/daily" "$HOME/.ssh/known_hosts"
+          ssh-keygen -y -P '' -f "$HOME/.ssh/daily" >/dev/null 2>&1 || {
+            echo '::error::EC2_SSH_KEY cannot be parsed as an unencrypted SSH private key.'
+            exit 1
+          }
 
       - name: Transfer server to EC2
         env:

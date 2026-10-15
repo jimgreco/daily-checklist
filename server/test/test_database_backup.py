@@ -1,4 +1,4 @@
-"""Offline backup regressions: generated keys and isolated filesystem/CLI fixtures."""
+"""Offline workflow SSH and backup regressions using isolated fixtures."""
 import os
 from pathlib import Path
 import subprocess
@@ -10,7 +10,12 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "server/scripts/production-db-backup.sh"
-WORKFLOWS = ("production-backup.yml", "production-backup-check.yml", "production-restore-drill.yml")
+WORKFLOWS = {
+    "production-backup.yml": "daily-backup",
+    "production-backup-check.yml": "daily-backup",
+    "production-restore-drill.yml": "daily-backup",
+    "publish.yml": "daily",
+}
 
 
 def run_block(workflow, step):
@@ -38,18 +43,37 @@ class BackupSSHTests(unittest.TestCase):
             key_path.write_text(key.rstrip("\n"))
             old = subprocess.run(["ssh-keygen", "-y", "-P", "", "-f", str(key_path)], capture_output=True)
             self.assertNotEqual(old.returncode, 0)
-            for workflow in WORKFLOWS:
+            for workflow, prepared_name in WORKFLOWS.items():
                 for trailing_newline in (False, True):
                     with self.subTest(workflow=workflow, trailing_newline=trailing_newline):
                         env = os.environ | {"BACKUP_TEST_HOME": temp, "EC2_SSH_KEY": key if trailing_newline else key.rstrip("\n"),
                                             "EC2_SSH_KNOWN_HOSTS": "synthetic-host-entry"}
                         result = subprocess.run(["bash", "-c", run_block(workflow, "Prepare SSH")], env=env, capture_output=True)
                         self.assertEqual(result.returncode, 0)
-                        prepared = directory / ".ssh/daily-backup"
+                        prepared = directory / ".ssh" / prepared_name
                         self.assertEqual(prepared.stat().st_mode & 0o777, 0o600)
                         public = subprocess.run(["ssh-keygen", "-y", "-P", "", "-f", str(prepared)], capture_output=True)
                         self.assertEqual(public.returncode, 0)
                         self.assertEqual(public.stdout, original_public)
+                        known_hosts = directory / ".ssh/known_hosts"
+                        self.assertEqual(known_hosts.read_text(), "synthetic-host-entry\n")
+                        self.assertEqual(known_hosts.stat().st_mode & 0o777, 0o600)
+                        self.assertEqual(result.stdout + result.stderr, b"")
+
+    def test_publish_rejects_unusable_keys_before_transfer_without_disclosure(self):
+        with tempfile.TemporaryDirectory() as temp:
+            encrypted = Path(temp) / "encrypted-synthetic-key"
+            subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "synthetic-passphrase",
+                            "-f", str(encrypted)], check=True)
+            for key in ("", "invalid-synthetic-key", encrypted.read_text()):
+                with self.subTest(encrypted=key.startswith("-----BEGIN"), empty=not key):
+                    env = os.environ | {"BACKUP_TEST_HOME": temp, "EC2_SSH_KEY": key,
+                                        "EC2_SSH_KNOWN_HOSTS": "synthetic-host-entry"}
+                    result = subprocess.run(["bash", "-c", run_block("publish.yml", "Prepare SSH")],
+                                            env=env, capture_output=True, timeout=10)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertEqual(result.stdout + result.stderr,
+                                     b"::error::EC2_SSH_KEY cannot be parsed as an unencrypted SSH private key.\n")
 
     def test_manual_no_prune_value_reaches_remote_script(self):
         source = (ROOT / ".github/workflows/production-backup.yml").read_text()
