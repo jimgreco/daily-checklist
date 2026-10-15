@@ -125,6 +125,42 @@ class DeploySafetyTests(unittest.TestCase):
             with self.assertRaises(deploy.ReleaseError):
                 deploy.service_hash(value)
 
+    def test_rollback_revision_uses_deployment_metadata_without_image_fallback(self):
+        with patch.object(deploy, "run", return_value={"sha": "a" * 40}) as run:
+            self.assertEqual(deploy.deployed_revision({"Id": "container", "Image": "image"}),
+                             {"sha": "a" * 40, "source": "deployment.json"})
+            self.assertEqual(run.call_count, 1)
+
+    def test_missing_metadata_uses_exact_running_image_revision(self):
+        image = {"Id": "immutable-image", "Config": {"Labels": {"org.opencontainers.image.revision": "a" * 40}}}
+        with patch.object(deploy, "run", side_effect=[{"missing": True}, [image]]) as run:
+            self.assertEqual(deploy.deployed_revision({"Id": "container", "Image": "immutable-image"}),
+                             {"sha": "a" * 40, "source": "image-revision-label"})
+            self.assertEqual(run.call_args.args, ("docker", "image", "inspect", "immutable-image"))
+
+    def test_invalid_metadata_never_falls_back_to_image_label(self):
+        for metadata in ({}, {"sha": "main"}, {"sha": None}, {"missing": False}, None):
+            with self.subTest(metadata=metadata), patch.object(deploy, "run", return_value=metadata) as run:
+                with self.assertRaisesRegex(deploy.ReleaseError, "no exact commit"):
+                    deploy.deployed_revision({"Id": "container", "Image": "image"})
+                self.assertEqual(run.call_count, 1)
+
+    def test_metadata_read_failure_never_falls_back_to_image_label(self):
+        with patch.object(deploy, "run", side_effect=deploy.ReleaseError("read failed")) as run:
+            with self.assertRaisesRegex(deploy.ReleaseError, "read failed"):
+                deploy.deployed_revision({"Id": "container", "Image": "image"})
+            self.assertEqual(run.call_count, 1)
+
+    def test_image_revision_fallback_rejects_missing_invalid_or_mismatched_identity(self):
+        for image in [
+                {"Id": "image", "Config": {"Labels": None}},
+                {"Id": "image", "Config": {"Labels": {"org.opencontainers.image.revision": "main"}}},
+                {"Id": "image", "Config": {"Labels": {"org.opencontainers.image.revision": 123}}},
+                {"Id": "different-image", "Config": {"Labels": {"org.opencontainers.image.revision": "a" * 40}}}]:
+            with self.subTest(image=image), patch.object(deploy, "run", side_effect=[{"missing": True}, [image]]):
+                with self.assertRaises(deploy.ReleaseError):
+                    deploy.deployed_revision({"Id": "container", "Image": "image"})
+
     def test_default_invocation_only_reads_preflight(self):
         with patch("sys.argv", ["deploy-service.py"]), \
              patch.object(deploy, "preflight", return_value=({"Id": "container", "Image": "image"}, [], {})), \
@@ -171,7 +207,7 @@ class DeploySafetyTests(unittest.TestCase):
             with patch("sys.argv", [str(script), "--deploy-directory", str(directory), "--release", "b" * 40]), \
                  patch.object(deploy, "__file__", str(script)), \
                  patch.object(deploy, "preflight", side_effect=[(previous, compose, {}), (previous, compose, {}), (current, compose, {})]), \
-                 patch.object(deploy, "run", return_value="a" * 40) as run, \
+                 patch.object(deploy, "run", return_value={"sha": "a" * 40}) as run, \
                  patch.object(deploy, "verify") as verify, contextlib.redirect_stdout(io.StringIO()):
                 deploy.main()
                 commands = [call.args for call in run.call_args_list]
@@ -182,6 +218,7 @@ class DeploySafetyTests(unittest.TestCase):
                 verify.assert_called_once_with("new-container", "b" * 40)
                 record = deploy.json.loads((directory / "release-records" / ("daily-" + "b" * 40 + ".json")).read_text())
                 self.assertEqual(record["previousSha"], "a" * 40)
+                self.assertEqual(record["previousShaSource"], "deployment.json")
                 self.assertEqual(record["status"], "healthy")
 
     def test_existing_record_blocks_retry_before_retagging_rollback(self):

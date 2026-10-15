@@ -138,6 +138,28 @@ def verify(container_id, sha):
     run("docker", "exec", container_id, "node", "-e", script, sha)
 
 
+def deployed_revision(live):
+    # Earlier coordinated images record their source in an immutable image label.
+    # Only a missing metadata file permits that fallback; malformed files fail closed.
+    script = ('const fs=require("node:fs");let result;try{'
+              'result={sha:JSON.parse(fs.readFileSync("/app/src/deployment.json","utf8")).buildHash};'
+              '}catch(e){if(e.code!=="ENOENT")process.exit(1);result={missing:true};}'
+              'console.log(JSON.stringify(result));')
+    metadata = run("docker", "exec", live["Id"], "node", "-e", script, json_output=True)
+    source = "deployment.json"
+    if metadata == {"missing": True}:
+        image = run("docker", "image", "inspect", live["Image"], json_output=True)[0]
+        if image.get("Id") != live["Image"]:
+            raise ReleaseError("Rollback revision image differs from the running Daily image")
+        sha = (image["Config"].get("Labels") or {}).get("org.opencontainers.image.revision")
+        source = "image-revision-label"
+    else:
+        sha = metadata.get("sha") if isinstance(metadata, dict) else None
+    if not isinstance(sha, str) or not re.fullmatch(r"[0-9a-f]{40}", sha):
+        raise ReleaseError("Existing Daily image has no exact commit; establish recovery evidence first")
+    return {"sha": sha, "source": source}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--deploy-directory", type=Path, default=Path.home() / "deploy")
@@ -162,13 +184,11 @@ def main():
         record = record_dir / f"daily-{args.release}.json"
         if record.exists():
             raise ReleaseError("Release record already exists; inspect it before retrying")
-        previous_sha = run("docker", "exec", live["Id"], "node", "-p",
-                           'require("/app/src/deployment.json").buildHash')
-        if not re.fullmatch(r"[0-9a-f]{40}", previous_sha):
-            raise ReleaseError("Existing Daily deployment metadata has no exact commit; establish recovery evidence first")
+        previous_revision = deployed_revision(live)
         run("docker", "image", "tag", live["Image"], rollback)
         recovery = {"sha": args.release, "previousContainer": live["Id"], "previousImage": live["Image"],
-                    "previousImageName": live["Config"]["Image"], "previousSha": previous_sha, "rollbackTag": rollback,
+                    "previousImageName": live["Config"]["Image"], "previousSha": previous_revision["sha"],
+                    "previousShaSource": previous_revision["source"], "rollbackTag": rollback,
                     "compose": compose, "status": "prepared"}
         record.write_text(json.dumps(recovery, indent=2) + "\n")
         print(f"Rollback image retained: {rollback}", flush=True)

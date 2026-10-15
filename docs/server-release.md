@@ -8,6 +8,8 @@ Compose 2.26.1 removes `depends_on` before hashing a container created with `up 
 
 Before transfer/release, the coordinator must establish an existing rollback commit, current backup freshness, and exact intended source SHA. Use existing pinned SSH access. If `EC2_SSH_KNOWN_HOSTS` is absent, do not provision trust automatically or use the Actions deployment path. Local coordinator deployment through already pinned access is supported.
 
+The rollback commit normally comes from the running container's `deployment.json`. Older coordinated images without that file may use the exact `org.opencontainers.image.revision` label read from the running image's immutable ID. Missing or invalid revisions, malformed metadata, and failed metadata reads remain blockers. The recovery record identifies which source established the rollback commit.
+
 1. Fetch remote `main` and record its exact 40-character SHA. Ensure the exact-SHA validation jobs succeeded.
 2. Write that SHA and a deployment timestamp into `server/src/deployment.json`. Transfer the source to `~/daily-checklist/server/`, excluding `node_modules`, `data`, and `.env*`. Do not overwrite user storage.
 3. On the host, run `python3 ~/daily-checklist/server/scripts/deploy-service.py` for read-only preflight.
@@ -18,6 +20,6 @@ The helper does not start dependencies, migrate legacy JSON, create databases, c
 
 ## Recovery
 
-Inspect the non-secret recovery record. If replacement failed, retain all images and serialize rollback with the coordinator. Confirm current effective configuration has not drifted, then retag the record's `previousImage` as its `previousImageName` and invoke the record's Compose command with `up -d --no-deps --no-build daily`. Verify `/health` and that `/app/src/deployment.json` reports the record's `previousSha`. Those actions restore only the prior app image; they do not restore or alter user data. This audit introduces no database migration, so no database rollback is needed.
+Inspect the non-secret recovery record. If replacement failed, retain all images and serialize rollback with the coordinator. Confirm current effective configuration has not drifted, then retag the record's `previousImage` as its `previousImageName` and invoke the record's Compose command with `up -d --no-deps --no-build daily`. Verify `/health`, the restored immutable image ID, and the record's `previousSha` using its recorded metadata or image-label source. Those actions restore only the prior app image; they do not restore or alter user data. This audit introduces no database migration, so no database rollback is needed.
 
 If the configuration guard fails, the current container changed during release, or the previous image/commit cannot be established, stop the affected release step and reconcile through the coordinator. Do not bypass the checks or restart shared services to make deployment proceed.
