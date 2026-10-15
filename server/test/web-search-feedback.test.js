@@ -5,9 +5,9 @@ const path = require('node:path');
 const vm = require('node:vm');
 const source = fs.readFileSync(path.join(__dirname, '../web/app.js'), 'utf8');
 
-function fixture({ items = [], carryovers = [], mode = 'today', search = 'morning' } = {}) {
+function fixture({ items = [], carryovers = [], mode = 'today', search = 'morning', completedCollapsed = false } = {}) {
   const context = vm.createContext({
-    state: { mode, search, groups: [], selectedDate: new Date(), sort: 'manual' },
+    state: { mode, search, completedCollapsed, groups: [], selectedDate: new Date(), sort: 'manual' },
     app: { innerHTML: '' }, visibleItems: () => items, carryoverItems: () => carryovers,
     sameDay: () => true, complete: item => item.done, skipped: item => item.skipped,
     isPaused: item => item.paused, escapeHTML: String, icon: () => '',
@@ -44,4 +44,23 @@ test('ordinary empty schedules retain their existing message when no search is a
   const html = fixture({ search: '  ' });
   assert.doesNotMatch(html, /matching tasks|No matching rituals|Clear search/);
   assert.match(html, /Nothing is scheduled/);
+});
+
+test('completed collapse preserves count and expands matching results during search', () => {
+  const items = [{ done: true }, { done: true }, {}];
+  const hidden = fixture({ items, search: '', completedCollapsed: true });
+  assert.match(hidden, /Completed · 2/);
+  assert.match(hidden, /id="completed-tasks" hidden/);
+  assert.match(hidden, /aria-expanded="false"/);
+  const searching = fixture({ items, search: 'morning', completedCollapsed: true });
+  assert.match(searching, /3 matching tasks/);
+  assert.match(searching, /id="completed-tasks">/);
+  assert.doesNotMatch(searching, /data-action="toggle-completed"/);
+  const expanded = fixture({ items, search: '', completedCollapsed: false });
+  assert.match(expanded, /aria-expanded="true"/);
+  assert.doesNotMatch(expanded, /id="completed-tasks" hidden/);
+});
+test('archive and empty completed sections never offer the collapse control', () => {
+  assert.doesNotMatch(fixture({ mode: 'archive', items: [{ done: true }], search: '' }), /toggle-completed/);
+  assert.doesNotMatch(fixture({ items: [{}], search: '' }), /toggle-completed/);
 });

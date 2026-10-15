@@ -684,7 +684,7 @@ test("admin operations expose redacted runtime status and audited snapshots", as
     });
     assert.equal(status.status, 200);
     const statusPayload = await status.json();
-    assert.equal(statusPayload.server.version, "1.0.0");
+    assert.equal(statusPayload.server.version, "1.3.0");
     assert.equal(statusPayload.server.buildHash, "abc123deployment");
     assert.equal(statusPayload.server.deployedAt, "2026-07-13T18:00:00.000Z");
     assert.equal(statusPayload.database.ok, true);

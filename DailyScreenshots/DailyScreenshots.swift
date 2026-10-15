@@ -55,6 +55,35 @@ final class RitualCueScreenshots: XCTestCase {
         snapshot("04-Sync")
     }
 
+    func testCompletedSectionCanCollapseWithoutHidingSearchMatches() throws {
+        // The seeded Morning group stays together until both tasks are done.
+        app.buttons["Check off"].firstMatch.tap()
+        let toggle = app.buttons["toggle-completed"]
+        XCTAssertTrue(scrollToExistence(toggle))
+        for _ in 0..<4 where !toggle.isHittable { app.swipeUp() }
+        XCTAssertTrue(scrollToExistence(app.staticTexts["Take vitamins"]))
+        toggle.tap()
+        XCTAssertFalse(app.staticTexts["Take vitamins"].exists)
+        XCTAssertEqual(toggle.label, "Show completed tasks")
+        snapshot("07-Completed-Collapsed")
+        toggle.tap()
+        XCTAssertTrue(scrollToExistence(app.staticTexts["Take vitamins"]))
+        toggle.tap()
+        for _ in 0..<5 where !app.buttons["Search checklist"].isHittable { app.swipeDown() }
+        app.buttons["Search checklist"].tap()
+        app.textFields["Search tasks"].typeText("vitamins")
+        XCTAssertTrue(app.staticTexts["Take vitamins"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["1 matching task"].exists)
+        XCTAssertFalse(toggle.exists)
+        app.keyboards.buttons["Search"].tap()
+        let match = app.staticTexts["Take vitamins"]
+        for _ in 0..<5 where !match.isHittable { app.swipeUp() }
+        XCTAssertTrue(match.isHittable)
+        snapshot("08-Completed-Search")
+        app.buttons["clear-search-query"].tap()
+        XCTAssertFalse(app.staticTexts["Take vitamins"].exists)
+    }
+
     func testSearchCountsClearAndNoMatchFeedback() throws {
         app.buttons["Search checklist"].tap()
         let search = app.textFields["Search tasks"]

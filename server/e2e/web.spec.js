@@ -652,8 +652,18 @@ test("covers create, edit, complete, skip, export, and delete-account flows", as
       task(page, editedTitle).getByRole("button", { name: "Mark complete" }).click()
     ]);
   }
-  await expect(page.getByText("Completed", { exact: true })).toBeVisible();
+  await expect(page.getByText(/^Completed · \d+$/)).toBeVisible();
   await expect(task(page, editedTitle).getByRole("button", { name: "Mark incomplete" })).toBeVisible();
+  await page.getByRole("button", { name: "Hide completed", exact: true }).click();
+  await expect(task(page, editedTitle)).toBeHidden();
+  await page.getByRole("textbox", { name: "Search tasks" }).fill(editedTitle);
+  await expect(task(page, editedTitle)).toBeVisible();
+  await expect(page.getByRole("button", { name: "Show completed", exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "Clear search", exact: true }).click();
+  await expect(task(page, editedTitle)).toBeHidden();
+  await page.getByRole("button", { name: "Show completed", exact: true }).click();
+  await expect(task(page, editedTitle)).toBeVisible();
+
 
   await createItem(page, skippedTitle, { notes: "Evening mobility" });
   await Promise.all([

@@ -24,6 +24,7 @@
     mode: "today",
     sort: "manual",
     search: "",
+    completedCollapsed: false,
     loaded: false,
     syncing: false,
     authLoaded: false,
@@ -1030,6 +1031,8 @@
       && (!separatesSkipped || !skipped(item));
     const searchResultCount = items.filter((item) => isTodoItem(item) || complete(item) || (separatesSkipped && skipped(item))).length + carryovers.length;
     const searchHasNoMatches = Boolean(state.search.trim()) && searchResultCount === 0;
+    const completedCount = items.filter(complete).length;
+    const completedHidden = state.completedCollapsed && !state.search.trim();
     const ungroupedTodo = ungrouped.filter(isTodoItem);
     const ungroupedSkipped = separatesSkipped ? ungrouped.filter((item) => skipped(item) && !complete(item)) : [];
     const ungroupedDone = ungrouped.filter(complete);
@@ -1092,7 +1095,7 @@
       </div>
       ${todoBody || `<div class="empty">${completedBody ? "Everything is complete." : "Nothing is scheduled for this day."}</div>`}
       ${skippedBody ? `<div class="section-head"><span class="section-label">Skipped</span></div>${skippedBody}` : ""}
-      ${completedBody ? `<div class="section-head"><span class="section-label">Completed</span></div>${completedBody}` : ""}`}
+      ${completedBody ? `<div class="section-head"><span class="section-label">Completed · ${completedCount}</span>${!state.search.trim() ? `<button class="mini-button" data-action="toggle-completed" aria-expanded="${!completedHidden}" aria-controls="completed-tasks">${completedHidden ? "Show" : "Hide"} completed</button>` : ""}</div><div id="completed-tasks"${completedHidden ? " hidden" : ""}>${completedBody}</div>` : ""}`}
       <button class="fab" data-action="add" aria-label="Add checklist item">+</button>
       ${renderModal()}
       ${state.toast ? `<div class="toast">${escapeHTML(state.toast)}</div>` : ""}
@@ -2665,6 +2668,7 @@
     if (action === "next") { state.selectedDate = addDays(state.selectedDate, 1); render(); }
     if (action === "mode") { state.mode = target.dataset.mode; render(); }
     if (action === "clear-search") clearSearch();
+    if (action === "toggle-completed") { state.completedCollapsed = !state.completedCollapsed; render(); }
     if (action === "sort") {
       state.sort = state.sort === "manual" ? "time" : state.sort === "time" ? "name" : "manual";
       render();

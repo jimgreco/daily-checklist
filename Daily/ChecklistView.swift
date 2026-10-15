@@ -8,6 +8,7 @@ struct ChecklistView: View {
     @State private var showingNewItem = false
     @State private var showingAccount = false
     @State private var searchText = ""
+    @State private var completedCollapsed = false
     @State private var historyItem: ChecklistItem?
     @State private var isEditingChecklist = false
     @State private var draggingItemID: UUID?
@@ -859,6 +860,19 @@ struct ChecklistView: View {
                     .accessibilityLabel("Complete all tasks")
                     .accessibilityHint("Marks every task scheduled for today as complete")
                 }
+                if isCompletedSection && searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Button {
+                        completedCollapsed.toggle()
+                    } label: {
+                        Label(completedCollapsed ? "Show" : "Hide", systemImage: completedCollapsed ? "chevron.down" : "chevron.up")
+                            .font(.system(size: 12, weight: .semibold))
+                            .padding(.vertical, 8)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(accent)
+                    .accessibilityLabel(completedCollapsed ? "Show completed tasks" : "Hide completed tasks")
+                    .accessibilityIdentifier("toggle-completed")
+                }
                 Text("\(displayCount ?? items.count)")
                     .font(.system(size: 12, weight: .bold, design: .rounded))
                     .foregroundStyle(.secondary)
@@ -886,7 +900,7 @@ struct ChecklistView: View {
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 28)
                 .ritualCard(cornerRadius: 24)
-            } else {
+            } else if !isCompletedSection || !completedCollapsed || !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 groupedItems(
                     items,
                     isCompletedSection: isCompletedSection,
