@@ -674,11 +674,15 @@ final class ChecklistStore: ObservableObject {
 
     func moveSelectedDate(by days: Int) {
         guard let date = Calendar.current.date(byAdding: .day, value: days, to: selectedDate) else { return }
+        selectDate(date)
+    }
+
+    func selectDate(_ date: Date) {
         selectedDate = Calendar.current.startOfDay(for: date)
     }
 
     func selectToday() {
-        selectedDate = Calendar.current.startOfDay(for: .now)
+        selectDate(.now)
         scope = .today
     }
 

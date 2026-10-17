@@ -7,6 +7,8 @@ struct ChecklistView: View {
     @State private var editingItem: ChecklistItem?
     @State private var showingNewItem = false
     @State private var showingAccount = false
+    @State private var showingDatePicker = false
+    @State private var datePickerSelection = Date.now
     @State private var searchText = ""
     @State private var completedCollapsed = false
     @State private var historyItem: ChecklistItem?
@@ -176,6 +178,29 @@ struct ChecklistView: View {
             .sheet(isPresented: $showingAccount) {
                 AccountView(onShowTutorial: showTutorialFromAccount)
                     .environmentObject(store)
+            }
+            .sheet(isPresented: $showingDatePicker) {
+                NavigationStack {
+                    ScrollView {
+                        DatePicker("Checklist date", selection: $datePickerSelection, displayedComponents: .date)
+                            .datePickerStyle(.graphical)
+                            .padding()
+                    }
+                    .navigationTitle("Choose date")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button("Cancel") { showingDatePicker = false }
+                        }
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("View day") {
+                                store.selectDate(datePickerSelection)
+                                showingDatePicker = false
+                            }
+                        }
+                    }
+                }
+                .presentationDetents([.medium, .large])
             }
             .sheet(isPresented: $showingTutorial) {
                 ChecklistTutorialView(
@@ -381,17 +406,32 @@ struct ChecklistView: View {
             VStack(alignment: .leading, spacing: 22) {
                 HStack(spacing: 10) {
                     VStack(alignment: .leading, spacing: 5) {
-                        Label(
-                            store.scope == .archive
-                                ? "Archived routines"
-                                : store.selectedDate.formatted(.dateTime.weekday(.wide).month(.wide).day()),
-                            systemImage: store.scope == .archive ? "archivebox.fill" : "calendar"
-                        )
+                        Group {
+                            if store.scope == .archive {
+                                Label("Archived routines", systemImage: "archivebox.fill")
+                            } else {
+                                Button {
+                                    datePickerSelection = store.selectedDate
+                                    showingDatePicker = true
+                                } label: {
+                                    Label(
+                                        store.selectedDate.formatted(.dateTime.weekday(.wide).month(.wide).day().year()),
+                                        systemImage: "calendar"
+                                    )
+                                    .frame(minHeight: 44, alignment: .leading)
+                                    .contentShape(Rectangle())
+                                }
+                                .accessibilityLabel("Choose checklist date")
+                                .accessibilityIdentifier("choose-checklist-date")
+                                .accessibilityValue(store.selectedDate.formatted(date: .complete, time: .omitted))
+                                .accessibilityHint("Opens a calendar to jump to another day")
+                            }
+                        }
                         .font(.system(size: 12, weight: .bold))
                         .foregroundStyle(accent)
                         .textCase(.uppercase)
                         .tracking(1.25)
-                        .lineLimit(1)
+                        .lineLimit(2)
                         .minimumScaleFactor(0.78)
 
                         if store.scope != .archive, !store.isSelectedDateToday {

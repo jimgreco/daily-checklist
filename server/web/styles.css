@@ -165,6 +165,10 @@ body:has(.auth-shell) .app-site-nav { display: flex; }
   letter-spacing: 0.15em;
   text-transform: uppercase;
 }
+.date-picker-button { display: flex; align-items: center; gap: 6px; min-height: 44px; border: 0; padding: 6px 0; background: transparent; text-align: left; }
+.date-picker-button:hover { text-decoration: underline; text-underline-offset: 4px; }
+.back-to-today { margin-top: 10px; }
+.date-picker-modal { max-width: 420px; }
 h1 {
   margin: 0;
   font-size: clamp(50px, 7vw, 68px);

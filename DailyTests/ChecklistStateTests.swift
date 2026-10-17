@@ -1983,6 +1983,39 @@ final class ChecklistStateTests: XCTestCase {
     }
 
     @MainActor
+    func testDateNavigationPreservesTaskProgressAndScope() throws {
+        withSearchStore { store in
+            let originalSort = store.sortMode
+            defer { store.sortMode = originalSort }
+            let calendar = Calendar.current
+            let leapDay = calendar.date(from: DateComponents(year: 2040, month: 2, day: 29, hour: 15))!
+            let todayKey = DateKey.string(from: .now)
+            store.save(ChecklistItem(title: "Calendar review", completedDates: [todayKey]))
+            store.scope = .all
+            store.sortMode = .name
+            let pending = store.pendingMutationCount
+            let items = store.items
+
+            store.selectDate(leapDay)
+            XCTAssertEqual(store.selectedDate, calendar.startOfDay(for: leapDay))
+            XCTAssertEqual(store.scope, .all)
+            XCTAssertEqual(store.sortMode, .name)
+            XCTAssertEqual(ChecklistView.makeRenderSnapshot(store: store, searchText: "review").searchResultCount, 1)
+            XCTAssertFalse(store.items[0].isComplete(on: store.selectedDate))
+            store.moveSelectedDate(by: 1)
+            XCTAssertEqual(DateKey.string(from: store.selectedDate), "2040-03-01")
+            store.moveSelectedDate(by: -1)
+            XCTAssertEqual(DateKey.string(from: store.selectedDate), "2040-02-29")
+
+            store.selectToday()
+            XCTAssertTrue(store.isSelectedDateToday)
+            XCTAssertEqual(store.scope, .today)
+            XCTAssertEqual(store.items, items)
+            XCTAssertEqual(store.pendingMutationCount, pending)
+        }
+    }
+
+    @MainActor
     func testSearchCountIncludesSkippedOnceAndRespectsPausedScope() {
         withSearchStore { store in
             let today = DateKey.string(from: store.selectedDate)

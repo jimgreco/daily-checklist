@@ -63,6 +63,7 @@
   function icon(name, className = "") {
     const paths = {
       arrowDownUp: '<path d="m7 3-4 4 4 4"/><path d="M3 7h18"/><path d="m17 21 4-4-4-4"/><path d="M21 17H3"/>',
+      calendar: '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 11h18"/>',
       chevronLeft: '<path d="m15 18-6-6 6-6"/>',
       chevronRight: '<path d="m9 18 6-6-6-6"/>',
       check: '<path d="M20 6 9 17l-5-5"/>',
@@ -1009,6 +1010,20 @@
     app.querySelector('[data-search]')?.focus({ preventScroll: true });
   }
 
+  function selectChecklistDate(value) {
+    if (!isDateKey(value)) return false;
+    state.selectedDate = dateFromInput(value);
+    state.modal = null;
+    render();
+    app.querySelector('[data-action="choose-date"]')?.focus({ preventScroll: true });
+    return true;
+  }
+
+  function selectToday() {
+    state.mode = "today";
+    selectChecklistDate(dateKey(new Date()));
+  }
+
   function renderChecklist() {
     const items = visibleItems();
     const showsCarryovers = state.mode === "today" && sameDay(state.selectedDate, new Date());
@@ -1019,12 +1034,13 @@
     const known = new Set(groups.map((group) => group.id));
     const ungrouped = items.filter((item) => !item.groupID || !known.has(item.groupID));
     const remaining = items.filter((item) => !complete(item) && !skipped(item) && !isPaused(item, state.selectedDate)).length;
-    const dateLabel = state.selectedDate.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" });
-    const title = sameDay(state.selectedDate, new Date()) ? "Ritual Cue" : state.selectedDate.toLocaleDateString([], { month: "short", day: "numeric" });
+    const isToday = sameDay(state.selectedDate, new Date());
+    const dateLabel = state.selectedDate.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric", year: "numeric" });
+    const title = state.mode === "archive" || isToday ? "Ritual Cue" : state.selectedDate.toLocaleDateString([], { month: "short", day: "numeric" });
     const hidesPausedExpected = state.mode === "today";
     const subtitle = state.mode === "archive"
       ? `${items.length} ${items.length === 1 ? "archived item" : "archived items"}.`
-      : `${remaining} ${remaining === 1 ? "thing" : "things"} left today${carryoverCount ? ` · ${carryoverCount} still open` : ""}.`;
+      : `${remaining} ${remaining === 1 ? "thing" : "things"} left ${isToday ? "today" : "on this day"}${carryoverCount ? ` · ${carryoverCount} still open` : ""}.`;
     const separatesSkipped = state.mode === "today";
     const isTodoItem = (item) => !complete(item)
       && (!hidesPausedExpected || !isPaused(item, state.selectedDate))
@@ -1063,15 +1079,16 @@
     app.innerHTML = `<div class="shell">
       <div class="topline">
         <div>
-          <p class="eyebrow">${escapeHTML(dateLabel)}</p>
+          ${state.mode === "archive" ? `<p class="eyebrow">Archived routines</p>` : `<button class="eyebrow date-picker-button" data-action="choose-date" aria-label="Choose checklist date: ${escapeHTML(dateLabel)}" aria-haspopup="dialog">${icon("calendar")}<span>${escapeHTML(dateLabel)}</span></button>`}
           <h1>${escapeHTML(title)}</h1>
           <p class="subtitle">${escapeHTML(subtitle)}</p>
+          ${state.mode !== "archive" && !isToday ? `<button class="mini-button accent back-to-today" data-action="today">Back to today</button>` : ""}
         </div>
         <div>
-          <div class="date-nav">
+          ${state.mode !== "archive" ? `<div class="date-nav">
             <button class="circle-button" data-action="previous" aria-label="Previous day">${icon("chevronLeft")}</button>
             <button class="circle-button" data-action="next" aria-label="Next day">${icon("chevronRight")}</button>
-          </div>
+          </div>` : ""}
           <div class="date-nav account-nav">
             ${renderAccountButton()}
           </div>
@@ -1079,7 +1096,7 @@
       </div>
       <div class="controls">
         <div class="segmented">
-          <button class="${state.mode === "today" ? "active" : ""}" data-action="mode" data-mode="today">Today</button>
+          <button class="${state.mode === "today" ? "active" : ""}" data-action="mode" data-mode="today">${isToday ? "Today" : "Scheduled"}</button>
           <button class="${state.mode === "all" ? "active" : ""}" data-action="mode" data-mode="all">All items</button>
           <button class="${state.mode === "archive" ? "active" : ""}" data-action="mode" data-mode="archive">Archive</button>
         </div>
@@ -1275,6 +1292,13 @@
 
   function renderModal() {
     if (!state.modal) return "";
+    if (state.modal.type === "date") {
+      return `<div class="scrim" data-action="close"><form class="modal date-picker-modal" data-modal data-date-picker role="dialog" aria-modal="true" aria-labelledby="date-picker-title">
+        <h2 id="date-picker-title">Choose date</h2>
+        <label class="field">Checklist date<input type="date" name="checklistDate" required value="${dateKey(state.selectedDate)}"></label>
+        <div class="modal-actions"><span></span><div><button type="button" class="secondary" data-action="close">Cancel</button><button class="primary" type="submit">View day</button></div></div>
+      </form></div>`;
+    }
     if (state.modal.type === "account") {
       const displayName = state.user?.name || "Ritual Cue account";
       const email = state.user?.email || "";
@@ -1446,17 +1470,18 @@
   }
 
   function render() {
-    // Sync and toast updates redraw the checklist while an editor may contain
-    // unsaved input. Keep that editor's actual controls (and caret) intact.
-    const editor = hasSession() && state.modal?.type === "editor"
-      && state.modal === renderedEditorModal ? app.querySelector("[data-editor]") : null;
+    // Sync and toast updates redraw the checklist while an editor or date picker
+    // may contain unsaved input. Keep the actual controls (and caret) intact.
+    const formSelector = state.modal?.type === "date" ? "[data-date-picker]" : "[data-editor]";
+    const editor = hasSession() && ["editor", "date"].includes(state.modal?.type)
+      && state.modal === renderedEditorModal ? app.querySelector(formSelector) : null;
     const focused = editor?.contains(document.activeElement) ? document.activeElement : null;
     const scrollTop = editor?.scrollTop;
     const search = hasSession() && document.activeElement?.matches("[data-search]")
       ? document.activeElement : null;
     hasSession() ? renderChecklist() : renderAuth();
     if (editor) {
-      app.querySelector("[data-editor]")?.replaceWith(editor);
+      app.querySelector(formSelector)?.replaceWith(editor);
       if (focused) focused.focus({ preventScroll: true });
       editor.scrollTop = scrollTop;
     }
@@ -1464,7 +1489,7 @@
       app.querySelector("[data-search]")?.replaceWith(search);
       search.focus({ preventScroll: true });
     }
-    renderedEditorModal = state.modal?.type === "editor" ? state.modal : null;
+    renderedEditorModal = ["editor", "date"].includes(state.modal?.type) ? state.modal : null;
     updateEditorScheduleControls(app.querySelector("[data-editor]"));
   }
 
@@ -2662,10 +2687,21 @@
     if (!target) return;
     if (target.classList.contains("scrim") && event.target !== target) return;
     const action = target.dataset.action;
-    if (action === "close") { state.modal = null; render(); }
+    if (action === "close") {
+      const wasDatePicker = state.modal?.type === "date";
+      state.modal = null;
+      render();
+      if (wasDatePicker) app.querySelector('[data-action="choose-date"]')?.focus({ preventScroll: true });
+    }
     if (action === "cancel-end-carryover") cancelEndCarryover();
     if (action === "previous") { state.selectedDate = addDays(state.selectedDate, -1); render(); }
     if (action === "next") { state.selectedDate = addDays(state.selectedDate, 1); render(); }
+    if (action === "choose-date") {
+      state.modal = { type: "date" };
+      render();
+      app.querySelector('[name="checklistDate"]')?.focus({ preventScroll: true });
+    }
+    if (action === "today") selectToday();
     if (action === "mode") { state.mode = target.dataset.mode; render(); }
     if (action === "clear-search") clearSearch();
     if (action === "toggle-completed") { state.completedCollapsed = !state.completedCollapsed; render(); }
@@ -2802,6 +2838,13 @@
   });
 
   app.addEventListener("keydown", (event) => {
+    if (event.key === 'Escape' && state.modal?.type === 'date') {
+      event.preventDefault();
+      state.modal = null;
+      render();
+      app.querySelector('[data-action="choose-date"]')?.focus({ preventScroll: true });
+      return;
+    }
     if (event.key === 'Escape' && event.target.matches('[data-search]') && state.search) {
       event.preventDefault();
       clearSearch();
@@ -2823,6 +2866,11 @@
   });
 
   app.addEventListener("submit", (event) => {
+    if (event.target.matches("[data-date-picker]")) {
+      event.preventDefault();
+      selectChecklistDate(event.target.elements.checklistDate.value);
+      return;
+    }
     if (!event.target.matches("[data-editor]")) return;
     event.preventDefault();
     saveEditor(event.target);

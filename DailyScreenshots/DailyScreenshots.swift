@@ -104,6 +104,48 @@ final class RitualCueScreenshots: XCTestCase {
         XCTAssertFalse(app.staticTexts["No matching rituals"].exists)
     }
 
+    func testDateChooserPreservesBrowsingUntilConfirmedAndReturnsToday() throws {
+        app.buttons["Next day"].tap()
+        XCTAssertTrue(app.buttons["Back to today"].waitForExistence(timeout: 5))
+        let chooser = app.buttons["choose-checklist-date"]
+        let selectedDay = chooser.value as? String
+        XCTAssertNotNil(selectedDay)
+        chooser.tap()
+        XCTAssertTrue(app.navigationBars["Choose date"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.datePickers.firstMatch.exists)
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: .now)
+        let tomorrow = try XCTUnwrap(calendar.date(byAdding: .day, value: 1, to: today))
+        let excludedDays: Set<Int> = [
+            calendar.component(.day, from: today),
+            calendar.component(.day, from: tomorrow)
+        ]
+        // Every displayed month has days 1–28, including when tomorrow starts a new month.
+        let chosenDay = try XCTUnwrap((1...28).first { !excludedDays.contains($0) })
+        let dayButton = app.datePickers.buttons.matching(NSPredicate(
+            format: "label MATCHES %@", "(^|.*[^0-9])\(chosenDay)([^0-9].*|$)"
+        )).firstMatch
+        XCTAssertTrue(dayButton.exists)
+        dayButton.tap()
+        snapshot("09-Date-Chooser")
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = "Ritual date chooser"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        app.buttons["Cancel"].tap()
+        XCTAssertEqual(chooser.value as? String, selectedDay)
+
+        chooser.tap()
+        dayButton.tap()
+        app.buttons["View day"].tap()
+        XCTAssertNotEqual(chooser.value as? String, selectedDay)
+        app.buttons["Back to today"].tap()
+        XCTAssertFalse(app.buttons["Back to today"].exists)
+        XCTAssertNotEqual(chooser.value as? String, selectedDay)
+        app.buttons["Archive"].tap()
+        XCTAssertFalse(chooser.exists)
+    }
+
     private func scrollToExistence(_ element: XCUIElement, maxSwipes: Int = 5) -> Bool {
         if element.waitForExistence(timeout: 1) { return true }
         for _ in 0..<maxSwipes {
