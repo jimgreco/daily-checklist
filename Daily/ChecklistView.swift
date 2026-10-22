@@ -11,6 +11,7 @@ struct ChecklistView: View {
     @State private var datePickerSelection = Date.now
     @State private var searchText = ""
     @State private var completedCollapsed = false
+    @State private var remainingOnly = false
     @State private var historyItem: ChecklistItem?
     @State private var isEditingChecklist = false
     @State private var draggingItemID: UUID?
@@ -29,7 +30,7 @@ struct ChecklistView: View {
     @FocusState private var searchIsFocused: Bool
 
     var body: some View {
-        let snapshot = Self.makeRenderSnapshot(store: store, searchText: searchText)
+        let snapshot = Self.makeRenderSnapshot(store: store, searchText: searchText, remainingOnly: remainingOnly)
 
         NavigationStack {
             ZStack(alignment: .bottomTrailing) {
@@ -42,6 +43,14 @@ struct ChecklistView: View {
                             header(snapshot: snapshot)
                             filter
                                 .padding(.top, 18)
+                            if store.scope == .today {
+                                Toggle("Remaining only", isOn: $remainingOnly)
+                                    .font(.subheadline.weight(.semibold))
+                                    .accessibilityIdentifier("remaining-only")
+                                    .accessibilityHint("Hides completed and skipped tasks for the selected day")
+                                    .padding(.horizontal, 6)
+                                    .padding(.top, 14)
+                            }
 
                             if snapshot.searchHasNoMatches {
                                 searchEmptyState
@@ -65,7 +74,7 @@ struct ChecklistView: View {
                                 section(
                                     title: "TO DO",
                                     items: snapshot.todoSectionItems,
-                                    emptyText: "Nothing left for now",
+                                    emptyText: remainingOnly && store.scope == .today ? snapshot.remainingEmptyText : "Nothing left for now",
                                     showsCompleteAll: store.scope == .today && snapshot.filteredTodoCount > 0,
                                     isCompletedSection: false,
                                     completeGroupIDs: snapshot.completeGroupIDs,
@@ -556,7 +565,8 @@ struct ChecklistView: View {
         return count == 1 ? "One thing left \(day)." : "\(count) things left \(day)."
     }
 
-    static func makeRenderSnapshot(store: ChecklistStore, searchText: String, now: Date = .now) -> ChecklistRenderSnapshot {
+    static func makeRenderSnapshot(store: ChecklistStore, searchText: String, remainingOnly: Bool = false, now: Date = .now) -> ChecklistRenderSnapshot {
+        let focusesRemaining = remainingOnly && store.scope == .today
         let visibleItems = store.visibleItems
         let isShowingCurrentToday = store.scope == .today && store.isSelectedDateToday
         let allCarryoverEntries = isShowingCurrentToday
@@ -617,9 +627,11 @@ struct ChecklistView: View {
                 || item.notes.localizedCaseInsensitiveContains(query)
         }
         let archiveMatches = visibleItems.filter(matchesSearch)
-        let todoMatches = todoSectionItems.filter(matchesSearch)
-        let completedMatches = completedSectionItems.filter(matchesSearch)
-        let skippedMatches = skippedItems.filter(matchesSearch)
+        // Focus the selected day's actionable rows, including unfinished quantities.
+        // Normal presentation still keeps mixed groups together.
+        let todoMatches = (focusesRemaining ? todoItems : todoSectionItems).filter(matchesSearch)
+        let completedMatches = focusesRemaining ? [] : completedSectionItems.filter(matchesSearch)
+        let skippedMatches = focusesRemaining ? [] : skippedItems.filter(matchesSearch)
         let matchingCarryoverEntries = carryoverEntries.filter { matchesSearch($0.item) }
         let searchResultCount = store.scope == .archive
             ? archiveMatches.count
@@ -1563,6 +1575,10 @@ struct ChecklistRenderSnapshot {
     let showsStillOpenSection: Bool
     let searchResultCount: Int
     let searchHasNoMatches: Bool
+
+    var remainingEmptyText: String {
+        showsStillOpenSection ? "No scheduled tasks remaining for this day" : "No remaining tasks for this day"
+    }
 }
 
 private struct RitualLoadingView: View {

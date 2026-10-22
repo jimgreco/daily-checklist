@@ -25,6 +25,7 @@
     sort: "manual",
     search: "",
     completedCollapsed: false,
+    remainingOnly: false,
     loaded: false,
     syncing: false,
     authLoaded: false,
@@ -1025,7 +1026,9 @@
   }
 
   function renderChecklist() {
-    const items = visibleItems();
+    const remainingOnly = state.remainingOnly && state.mode === "today";
+    const items = visibleItems().filter((item) => !remainingOnly
+      || (!complete(item) && !skipped(item) && !isPaused(item, state.selectedDate)));
     const showsCarryovers = state.mode === "today" && sameDay(state.selectedDate, new Date());
     const carryovers = showsCarryovers ? carryoverItems() : [];
     const carryoverCount = carryovers.length;
@@ -1101,6 +1104,7 @@
           <button class="${state.mode === "archive" ? "active" : ""}" data-action="mode" data-mode="archive">Archive</button>
         </div>
         <div class="toolbar">
+          ${state.mode === "today" ? `<button class="sort-button remaining-filter" data-action="toggle-remaining" aria-pressed="${Boolean(state.remainingOnly)}" title="Hide completed and skipped tasks for the selected day">${icon(state.remainingOnly ? "check" : "circle")} Remaining only</button>` : ""}
           <button class="sort-button" data-action="sort">${icon("arrowDownUp")} ${state.sort === "manual" ? "Manual" : state.sort === "name" ? "Name" : "Time"}</button>
         </div>
         <label class="search-field"><span>${icon("search")}</span><input data-search aria-label="Search tasks" placeholder="Search tasks" value="${escapeHTML(state.search)}"></label>
@@ -1110,7 +1114,7 @@
         <span class="section-label">To do</span>
         ${remaining ? `<button class="complete-all" data-action="complete-all">${icon("check")} All&nbsp;&nbsp;${remaining}</button>` : ""}
       </div>
-      ${todoBody || `<div class="empty">${completedBody ? "Everything is complete." : "Nothing is scheduled for this day."}</div>`}
+      ${todoBody || `<div class="empty">${remainingOnly ? (carryoverBody ? "No scheduled tasks remaining for this day." : "No remaining tasks for this day.") : completedBody ? "Everything is complete." : "Nothing is scheduled for this day."}</div>`}
       ${skippedBody ? `<div class="section-head"><span class="section-label">Skipped</span></div>${skippedBody}` : ""}
       ${completedBody ? `<div class="section-head"><span class="section-label">Completed · ${completedCount}</span>${!state.search.trim() ? `<button class="mini-button" data-action="toggle-completed" aria-expanded="${!completedHidden}" aria-controls="completed-tasks">${completedHidden ? "Show" : "Hide"} completed</button>` : ""}</div><div id="completed-tasks"${completedHidden ? " hidden" : ""}>${completedBody}</div>` : ""}`}
       <button class="fab" data-action="add" aria-label="Add checklist item">+</button>
@@ -2704,6 +2708,11 @@
     if (action === "today") selectToday();
     if (action === "mode") { state.mode = target.dataset.mode; render(); }
     if (action === "clear-search") clearSearch();
+    if (action === "toggle-remaining") {
+      state.remainingOnly = !state.remainingOnly;
+      render();
+      app.querySelector('[data-action="toggle-remaining"]')?.focus({ preventScroll: true });
+    }
     if (action === "toggle-completed") { state.completedCollapsed = !state.completedCollapsed; render(); }
     if (action === "sort") {
       state.sort = state.sort === "manual" ? "time" : state.sort === "time" ? "name" : "manual";

@@ -5,14 +5,14 @@ const path = require('node:path');
 const vm = require('node:vm');
 const source = fs.readFileSync(path.join(__dirname, '../web/app.js'), 'utf8');
 
-function fixture({ items = [], carryovers = [], mode = 'today', search = 'morning', completedCollapsed = false } = {}) {
+function fixture({ items = [], carryovers = [], mode = 'today', search = 'morning', completedCollapsed = false, remainingOnly = false } = {}) {
   const context = vm.createContext({
-    state: { mode, search, completedCollapsed, groups: [], selectedDate: new Date(), sort: 'manual' },
+    state: { mode, search, completedCollapsed, remainingOnly, groups: [], selectedDate: new Date(), sort: 'manual' },
     app: { innerHTML: '' }, visibleItems: () => items, carryoverItems: () => carryovers,
     sameDay: () => true, complete: item => item.done, skipped: item => item.skipped,
     isPaused: item => item.paused, escapeHTML: String, icon: () => '',
     renderCarryoverTask: () => '<article>Still open</article>',
-    renderGroup: (name, rows) => rows.length ? '<article>Tasks</article>' : '',
+    renderGroup: (name, rows) => rows.map(item => `<article data-row="${item.id || 'task'}">Tasks</article>`).join(''),
     renderAccountButton: () => '', renderModal: () => '',
   });
   vm.runInContext(source.slice(source.indexOf('  function renderSearchFeedback('), source.indexOf('  function renderAccountButton(')), context);
@@ -63,4 +63,46 @@ test('completed collapse preserves count and expands matching results during sea
 test('archive and empty completed sections never offer the collapse control', () => {
   assert.doesNotMatch(fixture({ mode: 'archive', items: [{ done: true }], search: '' }), /toggle-completed/);
   assert.doesNotMatch(fixture({ items: [{}], search: '' }), /toggle-completed/);
+});
+
+
+test('remaining focus excludes completed, skipped and paused rows while retaining unfinished quantities and carryovers', () => {
+  const html = fixture({ remainingOnly: true, items: [
+    { id: 'open' }, { id: 'partial', count: 1, quantity: 3 },
+    { id: 'done', done: true }, { id: 'skipped', skipped: true }, { id: 'paused', paused: true },
+  ], carryovers: [{}] });
+  assert.match(html, /3 matching tasks/);
+  assert.match(html, /data-row="open"/);
+  assert.match(html, /data-row="partial"/);
+  assert.match(html, /Still open/);
+  assert.doesNotMatch(html, /data-row="(?:done|skipped|paused)"/);
+  assert.match(html, /data-action="toggle-remaining" aria-pressed="true"/);
+});
+
+test('remaining focus has a clear empty state and combines with search', () => {
+  const items = [{ done: true }, { skipped: true }];
+  const empty = fixture({ remainingOnly: true, search: '', items });
+  assert.match(empty, /No remaining tasks for this day/);
+  assert.doesNotMatch(empty, /Nothing is scheduled|toggle-completed/);
+  const searching = fixture({ remainingOnly: true, search: 'done', items });
+  assert.match(searching, /0 matching tasks/);
+  assert.match(searching, /No matching rituals/);
+});
+
+for (const mode of ['all', 'archive']) {
+  test(`remaining focus does not filter ${mode} or offer its control`, () => {
+    const html = fixture({ mode, remainingOnly: true, items: [{ id: 'done', done: true }, { id: 'paused', paused: true }] });
+    assert.match(html, /2 matching tasks/);
+    assert.match(html, /data-row="done"/);
+    assert.match(html, /data-row="paused"/);
+    assert.doesNotMatch(html, /data-action="toggle-remaining"/);
+  });
+}
+
+
+test('remaining focus distinguishes an empty schedule from actionable still-open work', () => {
+  const html = fixture({ remainingOnly: true, search: '', items: [{ done: true }], carryovers: [{}] });
+  assert.match(html, /Still open/);
+  assert.match(html, /No scheduled tasks remaining for this day/);
+  assert.doesNotMatch(html, /No remaining tasks for this day/);
 });

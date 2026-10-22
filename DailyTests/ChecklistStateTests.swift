@@ -2054,6 +2054,77 @@ final class ChecklistStateTests: XCTestCase {
     }
 
     @MainActor
+    func testRemainingFocusHidesFinishedRowsInsideMixedGroupsWithoutChangingData() {
+        withSearchStore { store in
+            let key = DateKey.string(from: store.selectedDate)
+            let group = store.createGroup(named: "Morning")!
+            store.save(ChecklistItem(title: "Open review", groupID: group.id))
+            store.save(ChecklistItem(title: "Done review", completedDates: [key], groupID: group.id))
+            store.save(ChecklistItem(title: "Partial review", quantity: 3, completionCounts: [key: 1], groupID: group.id))
+            store.save(ChecklistItem(title: "Skipped review", skippedDates: [key]))
+            store.save(ChecklistItem(title: "Paused review", pauseWindows: [PauseWindow(startDate: key)]))
+            let before = store.items
+            let pending = store.pendingMutationCount
+            let focused = ChecklistView.makeRenderSnapshot(store: store, searchText: "review", remainingOnly: true)
+            XCTAssertEqual(Set(focused.todoSectionItems.map(\.title)), ["Open review", "Partial review"])
+            XCTAssertTrue(focused.completedSectionItems.isEmpty)
+            XCTAssertTrue(focused.skippedItems.isEmpty)
+            XCTAssertEqual(focused.searchResultCount, 2)
+            XCTAssertEqual(focused.filteredTodoCount, 2)
+            let full = ChecklistView.makeRenderSnapshot(store: store, searchText: "review")
+            XCTAssertTrue(full.todoSectionItems.contains { $0.title == "Done review" })
+            XCTAssertEqual(full.skippedItems.count, 1)
+            XCTAssertEqual(store.items, before)
+            XCTAssertEqual(store.pendingMutationCount, pending)
+        }
+    }
+
+    @MainActor
+    func testRemainingFocusTracksQuantityCompletionReopenAndSelectedDate() {
+        withSearchStore { store in
+            let item = ChecklistItem(title: "Review", quantity: 2)
+            store.save(item)
+            store.toggle(item)
+            XCTAssertEqual(ChecklistView.makeRenderSnapshot(store: store, searchText: "", remainingOnly: true).searchResultCount, 1)
+            store.toggle(item)
+            let completed = ChecklistView.makeRenderSnapshot(store: store, searchText: "review", remainingOnly: true)
+            XCTAssertEqual(completed.searchResultCount, 0)
+            XCTAssertEqual(completed.remainingEmptyText, "No remaining tasks for this day")
+            XCTAssertTrue(completed.searchHasNoMatches)
+            store.moveSelectedDate(by: 1)
+            XCTAssertEqual(ChecklistView.makeRenderSnapshot(store: store, searchText: "review", remainingOnly: true).searchResultCount, 1)
+            store.moveSelectedDate(by: -1)
+            XCTAssertEqual(ChecklistView.makeRenderSnapshot(store: store, searchText: "", remainingOnly: true).searchResultCount, 0)
+            store.toggle(item)
+            XCTAssertEqual(ChecklistView.makeRenderSnapshot(store: store, searchText: "review", remainingOnly: true).searchResultCount, 1)
+        }
+    }
+
+    @MainActor
+    func testRemainingFocusKeepsActionableCarryoversAndDoesNotAffectAllOrArchive() {
+        withSearchStore { store in
+            let now = Date.now
+            let yesterday = Calendar.current.date(byAdding: .day, value: -1, to: now)!
+            store.save(ChecklistItem(title: "Still open", schedule: .custom, customWeekdays: Set(1...7), createdAt: yesterday, missedBehavior: .keepUntilDone,
+                                     carryoverStartDate: DateKey.string(from: yesterday)))
+            let result = ChecklistView.makeRenderSnapshot(store: store, searchText: "Still", remainingOnly: true, now: now)
+            XCTAssertEqual(result.carryoverEntries.map(\.item.title), ["Still open"])
+            XCTAssertEqual(result.searchResultCount, 1)
+            XCTAssertTrue(result.todoSectionItems.isEmpty)
+            XCTAssertEqual(result.remainingEmptyText, "No scheduled tasks remaining for this day")
+            store.save(ChecklistItem(title: "Ended", endedAt: yesterday))
+            for scope in [ChecklistScope.all, .archive] {
+                store.scope = scope
+                let focused = ChecklistView.makeRenderSnapshot(store: store, searchText: "", remainingOnly: true)
+                let full = ChecklistView.makeRenderSnapshot(store: store, searchText: "")
+                XCTAssertEqual(focused.searchResultCount, full.searchResultCount)
+                XCTAssertEqual(focused.archiveItems, full.archiveItems)
+                XCTAssertEqual(focused.todoSectionItems, full.todoSectionItems)
+            }
+        }
+    }
+
+    @MainActor
     private func withSearchStore(_ body: (ChecklistStore) -> Void) {
         let accountID = "search-feedback-\(UUID().uuidString)"
         UserDefaults.standard.set(accountID, forKey: "activeAccountID")

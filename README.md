@@ -112,6 +112,8 @@ Per-date state is exclusive. For a given date, an item should not remain in more
 
 Visibility and streaks use the same tracked-day rule: a date counts for an item when the item either occurs by schedule or has any recorded state on that date. Recorded state can extend the tracked window earlier than the item's creation/start date, which lets manually backfilled Off -> Open -> Done history show up in streaks.
 
+The **Remaining only** control on Today/Scheduled focuses the selected day on unfinished tasks and actionable still-open occurrences. It hides completed rows (including those inside mixed groups) and skipped rows, keeps partially completed quantities visible, and works with search and date navigation. It is a view-only choice for the current session; All items and Archive retain their normal contents. Turning it off restores the full checklist without changing any completion history or queued edits.
+
 ## Publishing
 
 Every push to `main` runs server tests, deployment-guard tests, dependency audit, and a container build. The Web E2E workflow checks browser journeys.

@@ -231,6 +231,8 @@ h1 {
   font-weight: 740;
   box-shadow: 0 8px 22px rgba(31, 30, 43, 0.035);
 }
+.remaining-filter { margin-right: auto; min-height: 44px; }
+.remaining-filter[aria-pressed="true"] { background: var(--accent-wash); color: var(--accent); border-color: currentColor; }
 .search-field {
   display: flex;
   min-height: 50px;

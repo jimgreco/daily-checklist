@@ -55,6 +55,44 @@ final class RitualCueScreenshots: XCTestCase {
         snapshot("04-Sync")
     }
 
+    func testRemainingFocusHidesMixedGroupCompletionAndFollowsSelectedDate() throws {
+        let filter = app.switches["remaining-only"]
+        XCTAssertTrue(filter.waitForExistence(timeout: 5))
+        XCTAssertTrue(scrollToExistence(app.staticTexts["Take vitamins"]))
+        for _ in 0..<5 where !filter.isHittable { app.swipeDown() }
+        // SwiftUI exposes the whole labeled row as a switch. Tap its trailing control.
+        filter.coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.5)).tap()
+        let focusedScreen = XCTAttachment(screenshot: app.screenshot())
+        focusedScreen.name = "Remaining focused checklist"
+        focusedScreen.lifetime = .keepAlways
+        add(focusedScreen)
+        XCTAssertEqual(filter.value as? String, "1")
+        XCTAssertFalse(app.staticTexts["Take vitamins"].exists)
+        XCTAssertTrue(app.staticTexts["Review calendar"].exists)
+        snapshot("10-Remaining-Only")
+        app.buttons["Next day"].tap()
+        XCTAssertTrue(scrollToExistence(app.staticTexts["Take vitamins"]))
+        for _ in 0..<5 where !app.buttons["Previous day"].isHittable { app.swipeDown() }
+        app.buttons["Previous day"].tap()
+        XCTAssertFalse(app.staticTexts["Take vitamins"].exists)
+        XCTAssertEqual(filter.value as? String, "1")
+        app.buttons["All"].firstMatch.tap()
+        XCTAssertFalse(filter.exists)
+        XCTAssertTrue(scrollToExistence(app.staticTexts["Take vitamins"]))
+        for _ in 0..<5 where !app.buttons["Today"].firstMatch.isHittable { app.swipeDown() }
+        app.buttons["Today"].firstMatch.tap()
+        XCTAssertEqual(filter.value as? String, "1")
+        filter.coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.5)).tap()
+        XCTAssertTrue(scrollToExistence(app.staticTexts["Take vitamins"]))
+        for _ in 0..<5 where !filter.isHittable { app.swipeDown() }
+        filter.coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.5)).tap()
+        let completeAll = app.buttons["Complete all tasks"]
+        XCTAssertTrue(scrollToExistence(completeAll))
+        completeAll.tap()
+        XCTAssertTrue(app.staticTexts["No remaining tasks for this day"].waitForExistence(timeout: 5))
+        snapshot("11-Remaining-Empty")
+    }
+
     func testCompletedSectionCanCollapseWithoutHidingSearchMatches() throws {
         // The seeded Morning group stays together until both tasks are done.
         app.buttons["Check off"].firstMatch.tap()
