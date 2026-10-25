@@ -22,6 +22,18 @@ final class RitualCueScreenshots: XCTestCase {
         XCTAssertTrue(app.staticTexts["Review calendar"].waitForExistence(timeout: 15))
     }
 
+    func testCopyRemainingChecklist() throws {
+        let copy = app.buttons["copy-remaining"]
+        XCTAssertTrue(copy.waitForExistence(timeout: 5))
+        copy.tap()
+        XCTAssertTrue(app.staticTexts["Copied"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Review calendar"].exists)
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Remaining checklist copied"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+    }
+
     func testAppStoreScreenshots() throws {
         let editChecklistButton = app.buttons["Edit checklist"].firstMatch
         XCTAssertTrue(editChecklistButton.waitForExistence(timeout: 5))

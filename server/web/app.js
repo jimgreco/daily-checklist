@@ -1025,6 +1025,35 @@
     selectChecklistDate(dateKey(new Date()));
   }
 
+  function remainingChecklistSummary() {
+    if (state.mode !== "today") return "";
+    const rows = visibleItems().filter((item) => !complete(item) && !skipped(item) && !isPaused(item, state.selectedDate));
+    const carryovers = sameDay(state.selectedDate, new Date()) ? carryoverItems() : [];
+    const lines = [`Ritual Cue — Remaining for ${dateKey(state.selectedDate)}`];
+    if (state.search.trim()) lines.push(`Filtered by: ${state.search.trim()}`);
+    const taskLine = (item, count) => {
+      const target = quantity(item);
+      const remaining = Math.max(0, target - Math.max(0, count));
+      return `${item.title}${target > 1 ? ` (${remaining} of ${target} remaining)` : ""}`;
+    };
+    if (carryovers.length) {
+      lines.push("", "Still open");
+      for (const entry of carryovers) {
+        for (const occurrence of entry.occurrences) {
+          const recorded = occurrence.occurrence?.completionCount;
+          const count = Number.isInteger(recorded) ? recorded : completionCount(entry.item, dateFromInput(occurrence.scheduledDate));
+          lines.push(`- [ ] ${taskLine(entry.item, count)} — due ${occurrence.scheduledDate}`);
+        }
+      }
+    }
+    if (rows.length) {
+      lines.push("", "Scheduled");
+      rows.forEach((item) => lines.push(`- [ ] ${taskLine(item, completionCount(item, state.selectedDate))}`));
+    }
+    if (!rows.length && !carryovers.length) lines.push("", "Nothing remaining.");
+    return lines.join("\n");
+  }
+
   function renderChecklist() {
     const remainingOnly = state.remainingOnly && state.mode === "today";
     const items = visibleItems().filter((item) => !remainingOnly
@@ -1105,6 +1134,7 @@
         </div>
         <div class="toolbar">
           ${state.mode === "today" ? `<button class="sort-button remaining-filter" data-action="toggle-remaining" aria-pressed="${Boolean(state.remainingOnly)}" title="Hide completed and skipped tasks for the selected day">${icon(state.remainingOnly ? "check" : "circle")} Remaining only</button>` : ""}
+          ${state.mode === "today" ? `<button class="sort-button" data-action="copy-remaining" title="Copy remaining tasks for this day, including search results and still-open tasks">${icon("copy")} Copy remaining</button>` : ""}
           <button class="sort-button" data-action="sort">${icon("arrowDownUp")} ${state.sort === "manual" ? "Manual" : state.sort === "name" ? "Name" : "Time"}</button>
         </div>
         <label class="search-field"><span>${icon("search")}</span><input data-search aria-label="Search tasks" placeholder="Search tasks" value="${escapeHTML(state.search)}"></label>
@@ -1628,8 +1658,9 @@
     textarea.style.opacity = "0";
     document.body.appendChild(textarea);
     textarea.select();
-    document.execCommand("copy");
+    const copied = document.execCommand("copy");
     textarea.remove();
+    if (!copied) throw new Error("Clipboard unavailable");
   }
 
   async function copyDiagnostics() {
@@ -2763,6 +2794,13 @@
     if (action === "import-data") {
       const input = app.querySelector("[data-import-file]");
       if (input) input.click();
+    }
+    if (action === "copy-remaining") {
+      const summary = remainingChecklistSummary();
+      if (!summary) return;
+      try { await copyText(summary); showToast("Remaining checklist copied."); }
+      catch { showToast("Unable to copy. Please try again."); }
+      return;
     }
     if (action === "copy-diagnostics") {
       try { await copyDiagnostics(); } catch { showToast("Unable to copy diagnostics."); }

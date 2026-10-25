@@ -2054,6 +2054,48 @@ final class ChecklistStateTests: XCTestCase {
     }
 
     @MainActor
+    func testRemainingChecklistCopyIncludesPartialCountsAndSearchWithoutMutatingState() {
+        withSearchStore { store in
+            let key = DateKey.string(from: store.selectedDate)
+            store.save(ChecklistItem(title: "Water", notes: "Daily review", quantity: 3, completionCounts: [key: 1]))
+            store.save(ChecklistItem(title: "Done review", completedDates: [key]))
+            store.save(ChecklistItem(title: "Skipped review", skippedDates: [key]))
+            store.save(ChecklistItem(title: "Paused review", pauseWindows: [PauseWindow(startDate: key)]))
+            store.save(ChecklistItem(title: "Not matching"))
+            let before = store.items
+            let pending = store.pendingMutationCount
+            let text = ChecklistView.remainingChecklistSummary(store: store, searchText: "review")
+            XCTAssertTrue(text.contains("Remaining for \(key)"))
+            XCTAssertTrue(text.contains("Filtered by: review"))
+            XCTAssertTrue(text.contains("- [ ] Water (2 of 3 remaining)"))
+            for excluded in ["Done review", "Skipped review", "Paused review", "Not matching"] { XCTAssertFalse(text.contains(excluded)) }
+            XCTAssertEqual(store.items, before)
+            XCTAssertEqual(store.pendingMutationCount, pending)
+            XCTAssertTrue(ChecklistView.remainingChecklistSummary(store: store, searchText: "unknown").contains("Nothing remaining."))
+        }
+    }
+
+    @MainActor
+    func testRemainingChecklistCopyKeepsEveryCarryoverDateAndHistoricalDayScope() {
+        withSearchStore { store in
+            let now = Date.now
+            let yesterday = Calendar.current.date(byAdding: .day, value: -1, to: now)!
+            let yesterdayKey = DateKey.string(from: yesterday)
+            store.save(ChecklistItem(title: "Water plants", schedule: .custom, customWeekdays: Set(1...7), createdAt: yesterday,
+                                     missedBehavior: .keepUntilDone, carryoverStartDate: yesterdayKey))
+            let text = ChecklistView.remainingChecklistSummary(store: store, searchText: "", now: now)
+            XCTAssertTrue(text.contains("Still open"))
+            XCTAssertTrue(text.contains("— due \(yesterdayKey)"))
+            XCTAssertTrue(text.contains("— due \(DateKey.string(from: now))"))
+            XCTAssertFalse(text.contains("Scheduled"))
+            store.selectedDate = yesterday
+            XCTAssertFalse(ChecklistView.remainingChecklistSummary(store: store, searchText: "", now: now).contains("Still open"))
+            store.scope = .all
+            XCTAssertEqual(ChecklistView.remainingChecklistSummary(store: store, searchText: ""), "")
+        }
+    }
+
+    @MainActor
     func testRemainingFocusHidesFinishedRowsInsideMixedGroupsWithoutChangingData() {
         withSearchStore { store in
             let key = DateKey.string(from: store.selectedDate)

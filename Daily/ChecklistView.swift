@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import UniformTypeIdentifiers
 
 struct ChecklistView: View {
@@ -12,6 +13,7 @@ struct ChecklistView: View {
     @State private var searchText = ""
     @State private var completedCollapsed = false
     @State private var remainingOnly = false
+    @State private var copiedChecklist: String?
     @State private var historyItem: ChecklistItem?
     @State private var isEditingChecklist = false
     @State private var draggingItemID: UUID?
@@ -44,12 +46,25 @@ struct ChecklistView: View {
                             filter
                                 .padding(.top, 18)
                             if store.scope == .today {
-                                Toggle("Remaining only", isOn: $remainingOnly)
-                                    .font(.subheadline.weight(.semibold))
-                                    .accessibilityIdentifier("remaining-only")
-                                    .accessibilityHint("Hides completed and skipped tasks for the selected day")
-                                    .padding(.horizontal, 6)
-                                    .padding(.top, 14)
+                                HStack {
+                                    Toggle("Remaining only", isOn: $remainingOnly)
+                                        .accessibilityIdentifier("remaining-only")
+                                        .accessibilityHint("Hides completed and skipped tasks for the selected day")
+                                    Button {
+                                        let text = Self.remainingChecklistSummary(store: store, searchText: searchText)
+                                        UIPasteboard.general.string = text
+                                        copiedChecklist = text
+                                    } label: {
+                                        Label(copiedChecklist == Self.remainingChecklistSummary(store: store, searchText: searchText) ? "Copied" : "Copy", systemImage: "doc.on.doc")
+                                    }
+                                    .buttonStyle(.bordered)
+                                    .accessibilityLabel("Copy remaining checklist")
+                                    .accessibilityIdentifier("copy-remaining")
+                                    .accessibilityHint("Copies remaining tasks for this day, including search results and still-open tasks")
+                                }
+                                .font(.subheadline.weight(.semibold))
+                                .padding(.horizontal, 6)
+                                .padding(.top, 14)
                             }
 
                             if snapshot.searchHasNoMatches {
@@ -563,6 +578,34 @@ struct ChecklistView: View {
         if count == 0 { return "Everything is checked off." }
         let day = store.isSelectedDateToday ? "today" : "this day"
         return count == 1 ? "One thing left \(day)." : "\(count) things left \(day)."
+    }
+
+    static func remainingChecklistSummary(store: ChecklistStore, searchText: String, now: Date = .now) -> String {
+        guard store.scope == .today else { return "" }
+        let snapshot = makeRenderSnapshot(store: store, searchText: searchText, remainingOnly: true, now: now)
+        var lines = ["Ritual Cue — Remaining for \(DateKey.string(from: store.selectedDate))"]
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !query.isEmpty { lines.append("Filtered by: \(query)") }
+        func taskLine(_ item: ChecklistItem, count: Int) -> String {
+            let remaining = max(0, item.quantity - max(0, count))
+            return item.title + (item.quantity > 1 ? " (\(remaining) of \(item.quantity) remaining)" : "")
+        }
+        if !snapshot.carryoverEntries.isEmpty {
+            lines += ["", "Still open"]
+            for entry in snapshot.carryoverEntries {
+                for occurrence in entry.occurrences {
+                    let date = DateKey.date(from: occurrence.scheduledDateKey) ?? store.selectedDate
+                    let count = occurrence.state?.completionCount ?? entry.item.completionCount(on: date)
+                    lines.append("- [ ] \(taskLine(entry.item, count: count)) — due \(occurrence.scheduledDateKey)")
+                }
+            }
+        }
+        if !snapshot.todoSectionItems.isEmpty {
+            lines += ["", "Scheduled"]
+            lines += snapshot.todoSectionItems.map { "- [ ] \(taskLine($0, count: $0.completionCount(on: store.selectedDate)))" }
+        }
+        if snapshot.todoSectionItems.isEmpty && snapshot.carryoverEntries.isEmpty { lines += ["", "Nothing remaining."] }
+        return lines.joined(separator: "\n")
     }
 
     static func makeRenderSnapshot(store: ChecklistStore, searchText: String, remainingOnly: Bool = false, now: Date = .now) -> ChecklistRenderSnapshot {
