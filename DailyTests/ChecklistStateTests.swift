@@ -103,6 +103,80 @@ final class SyncBoundaryTests: XCTestCase {
 }
 
 final class ChecklistStateTests: XCTestCase {
+    func testDuplicateDraftPreservesSetupAndClearsHistoryPausesAndActiveDates() throws {
+        let now = try XCTUnwrap(DateKey.date(from: "2026-10-28"))
+        let oldDate = try XCTUnwrap(DateKey.date(from: "2026-06-01"))
+        var source = ChecklistItem(
+            title: "Water herbs", notes: "Kitchen plants", schedule: .custom, customWeekdays: [2, 5],
+            recurrence: .every(2, unit: .week, anchoredOn: oldDate), reminderMinutes: 540,
+            followUpPolicy: ReminderFollowUpPolicy(delayMinutes: 60, maximumCount: 2), quantity: 3,
+            completedDates: ["2026-09-30"], completionCounts: ["2026-09-30": 3],
+            skippedDates: ["2026-09-28"], openDates: ["2026-09-27"], createdAt: oldDate,
+            startDate: oldDate, endedAt: oldDate, groupID: UUID(), sortOrder: 10,
+            pauseWindows: [PauseWindow(startDate: "2026-10-01")], scheduleRevision: 7,
+            missedBehavior: .keepUntilDone, carryoverStartDate: "2026-06-01", carryoverResolvedThroughDate: "2026-09-30"
+        )
+        source.setOccurrence(ChecklistOccurrence(completionCount: 1, scheduleRevision: 7, scheduledDate: "2026-09-27"), scheduledDate: "2026-09-27")
+        let before = source
+        let copy = source.duplicateDraft(now: now)
+        XCTAssertNotEqual(copy.id, source.id)
+        XCTAssertEqual(copy.title, "Water herbs (copy)")
+        XCTAssertEqual(copy.notes, source.notes)
+        XCTAssertEqual(copy.schedule, source.schedule)
+        XCTAssertEqual(copy.customWeekdays, source.customWeekdays)
+        XCTAssertEqual(copy.recurrence, source.recurrence)
+        XCTAssertEqual(copy.reminderMinutes, source.reminderMinutes)
+        XCTAssertEqual(copy.followUpPolicy, source.followUpPolicy)
+        XCTAssertEqual(copy.quantity, source.quantity)
+        XCTAssertEqual(copy.groupID, source.groupID)
+        XCTAssertEqual(copy.createdAt, now)
+        XCTAssertEqual(copy.startDate, now)
+        XCTAssertNil(copy.endedAt)
+        XCTAssertNil(copy.sortOrder)
+        XCTAssertTrue(copy.completedDates.isEmpty)
+        XCTAssertTrue(copy.completionCounts.isEmpty)
+        XCTAssertTrue(copy.skippedDates.isEmpty)
+        XCTAssertTrue(copy.openDates.isEmpty)
+        XCTAssertTrue(copy.pauseWindows.isEmpty)
+        XCTAssertTrue(copy.occurrences.isEmpty)
+        XCTAssertEqual(copy.scheduleRevision, 0)
+        XCTAssertEqual(copy.missedBehavior, .keepUntilDone)
+        XCTAssertEqual(copy.carryoverStartDate, "2026-10-28")
+        XCTAssertNil(copy.carryoverResolvedThroughDate)
+        XCTAssertEqual(source, before)
+    }
+
+    @MainActor
+    func testDuplicateStaysUnsavedUntilSaveAndHasIndependentProgress() {
+        withSearchStore { store in
+            let today = DateKey.string(from: .now)
+            store.save(ChecklistItem(title: "Vitamins", quantity: 3, completedDates: [today], completionCounts: [today: 3]))
+            let source = store.items[0]
+            let pendingBefore = store.pendingMutationCount
+            let copy = source.duplicateDraft()
+            XCTAssertEqual(store.items.count, 1)
+            XCTAssertEqual(store.pendingMutationCount, pendingBefore)
+            store.save(copy)
+            XCTAssertEqual(store.items.count, 2)
+            XCTAssertEqual(store.pendingMutationCount, pendingBefore + 1)
+            XCTAssertEqual(store.items.first(where: { $0.id == source.id }), source)
+            store.toggle(copy)
+            XCTAssertEqual(store.items.first(where: { $0.id == copy.id })?.completionCount(on: .now), 1)
+            XCTAssertEqual(store.items.first(where: { $0.id == source.id }), source)
+        }
+    }
+
+    func testDailyDuplicateResetsCarryoverAndCapsCopyTitle() {
+        let copy = ChecklistItem(title: String(repeating: "a", count: 120), missedBehavior: .keepUntilDone).duplicateDraft()
+        XCTAssertEqual(copy.title.count, 120)
+        XCTAssertTrue(copy.title.hasSuffix(" (copy)"))
+        XCTAssertEqual(copy.missedBehavior, .markMissed)
+        XCTAssertNil(copy.carryoverStartDate)
+        let emojiCopy = ChecklistItem(title: String(repeating: "🌱", count: 60)).duplicateDraft()
+        XCTAssertEqual(emojiCopy.title, String(repeating: "🌱", count: 56) + " (copy)")
+        XCTAssertLessThanOrEqual(emojiCopy.title.utf16.count, 120)
+    }
+
     private var calendar: Calendar {
         Calendar.current
     }

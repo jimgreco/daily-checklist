@@ -114,6 +114,8 @@ Visibility and streaks use the same tracked-day rule: a date counts for an item 
 
 The **Remaining only** control on Today/Scheduled focuses the selected day on unfinished tasks and actionable still-open occurrences. It hides completed rows (including those inside mixed groups) and skipped rows, keeps partially completed quantities visible, and works with search and date navigation. It is a view-only choice for the current session; All items and Archive retain their normal contents. Turning it off restores the full checklist without changing any completion history or queued edits.
 
+**Duplicate routine** opens an editable copy from a task's long-press menu on iOS (or its Still Open actions) and the **Duplicate** button on web. The draft keeps notes, quantity, group, recurrence cadence and anchor, reminder settings, and missed-task behavior. It starts today with fresh history and no task pauses or end date, including when copied from Archive. Review or change the visible start date and other settings before saving; Cancel creates nothing. Saving creates a separate routine without changing the source.
+
 ## Publishing
 
 Every push to `main` runs server tests, deployment-guard tests, dependency audit, and a container build. The Web E2E workflow checks browser journeys.

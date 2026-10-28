@@ -59,6 +59,7 @@ struct ItemEditor: View {
     @State private var availableGroups: [ChecklistGroup]
     @State private var didManuallyChooseMissedBehavior = false
     private let isNewItem: Bool
+    private let isDuplicate: Bool
     let onSave: (ChecklistItem) -> Void
     let onCreateGroup: (String) -> ChecklistGroup?
     var onDelete: ((ChecklistItem) -> Void)?
@@ -66,6 +67,7 @@ struct ItemEditor: View {
     init(
         item: ChecklistItem,
         groups: [ChecklistGroup],
+        isDuplicate: Bool = false,
         onSave: @escaping (ChecklistItem) -> Void,
         onCreateGroup: @escaping (String) -> ChecklistGroup?,
         onDelete: ((ChecklistItem) -> Void)? = nil
@@ -91,6 +93,7 @@ struct ItemEditor: View {
         )
         _availableGroups = State(initialValue: groups)
         isNewItem = onDelete == nil
+        self.isDuplicate = isDuplicate
         self.onSave = onSave
         self.onCreateGroup = onCreateGroup
         self.onDelete = onDelete
@@ -135,6 +138,10 @@ struct ItemEditor: View {
                     }
                 } header: {
                     RitualFormSectionHeader(title: "Task", systemImage: "checklist")
+                } footer: {
+                    if isDuplicate {
+                        Text("This copy starts today with empty history and no task pauses or end date. Review its settings, then save.")
+                    }
                 }
 
                 Section {
@@ -258,7 +265,7 @@ struct ItemEditor: View {
                     .ignoresSafeArea()
             }
             .listSectionSpacing(18)
-            .navigationTitle(onDelete == nil ? "New item" : "Edit item")
+            .navigationTitle(isDuplicate ? "Duplicate item" : onDelete == nil ? "New item" : "Edit item")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

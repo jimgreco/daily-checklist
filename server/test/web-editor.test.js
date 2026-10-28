@@ -11,11 +11,11 @@ function editorFixture() {
     state: { selectedDate: new Date(2026, 9, 20) },
     quantity: item => item.quantity || 1,
     scheduleModeForItem: item => item.schedule || "everyDay",
-    normalizedRecurrence: value => value || null,
-    normalizedFollowUpPolicy: value => value || null,
+    normalizedRecurrence: value => value ? structuredClone(value) : null,
+    normalizedFollowUpPolicy: value => value ? structuredClone(value) : null,
   });
   vm.runInContext(source.slice(source.indexOf("  function startOfDay("), source.indexOf("  const recurrenceOrdinals")), context);
-  vm.runInContext(source.slice(source.indexOf("  function editorValues("), source.indexOf("  function updateFollowUpControls(")), context);
+  vm.runInContext(source.slice(source.indexOf("  function duplicateDraft("), source.indexOf("  function updateFollowUpControls(")), context);
   return context;
 }
 
@@ -101,4 +101,73 @@ test("a stale editor cannot recreate an item removed by sync", () => {
   assert.equal(context.state.items.length, 0);
   assert.equal(queued.length, 0);
   assert.equal(context.state.modal, null);
+});
+
+test("duplicate draft preserves setup but resets old dates and carries no identity or history", () => {
+  const context = editorFixture();
+  const now = new Date(2026, 9, 28, 9, 30);
+  const original = {
+    id: "source", title: "Water herbs", notes: "Kitchen plants", schedule: "custom", customWeekdays: [2, 5],
+    recurrence: { kind: "interval", interval: 2, unit: "week", anchorDate: "2026-06-01" },
+    reminderMinutes: 540, followUpPolicy: { delayMinutes: 60, maximumCount: 2 }, quantity: 3,
+    groupID: "home", missedBehavior: "keepUntilDone", createdAt: "2026-01-01T12:00:00Z",
+    startDate: "2026-01-01T12:00:00Z", endedAt: "2026-10-01T12:00:00Z",
+    completedDates: ["2026-09-30"], completionCounts: { "2026-09-30": 3 },
+    skippedDates: ["2026-09-28"], openDates: ["2026-09-27"], pauseWindows: [{ startDate: "2026-10-01" }],
+    scheduleRevision: 7, carryoverStartDate: "2026-01-01", carryoverResolvedThroughDate: "2026-09-30",
+    occurrences: { old: { outcome: "done", completionCount: 3 } }, sortOrder: 10,
+  };
+  const before = structuredClone(original);
+  const draft = context.duplicateDraft(original, now);
+  assert.equal(draft.title, "Water herbs (copy)");
+  assert.equal(draft.startDate, new Date(2026, 9, 28).toISOString());
+  for (const key of ["notes", "schedule", "reminderMinutes", "quantity", "groupID", "missedBehavior"]) {
+    assert.equal(draft[key], original[key]);
+  }
+  for (const key of ["customWeekdays", "recurrence", "followUpPolicy"]) {
+    assert.equal(JSON.stringify(draft[key]), JSON.stringify(original[key]));
+    assert.notEqual(draft[key], original[key]);
+  }
+  for (const key of ["id", "createdAt", "endedAt", "completedDates", "completionCounts", "skippedDates", "openDates", "pauseWindows", "scheduleRevision", "carryoverStartDate", "carryoverResolvedThroughDate", "occurrences", "sortOrder"]) {
+    assert.equal(draft[key], undefined, key);
+  }
+  assert.equal(context.editorValues(draft).start, "2026-10-28");
+  assert.equal(context.editorValues(draft).end, "");
+  assert.deepEqual(original, before);
+});
+
+test("saving a duplicate creates a fresh item and queues only the copy", () => {
+  const { context, item, form, queued } = saveFixture();
+  const before = structuredClone(item);
+  context.crypto = { randomUUID: () => "new-routine" };
+  const draft = context.duplicateDraft(item, new Date(2026, 9, 28));
+  context.state.modal = { type: "editor", item: null, draft };
+  assert.equal(context.state.items.length, 1);
+  assert.equal(queued.length, 0);
+  Object.assign(form.values, { title: draft.title, startDate: context.editorValues(draft).start });
+  context.saveEditor(form);
+  const copy = context.state.items[1];
+  assert.equal(copy.id, "new-routine");
+  assert.equal(copy.title, "Vitamins (copy)");
+  assert.equal(copy.startDate, new Date(2026, 9, 28).toISOString());
+  assert.equal(copy.endedAt, null);
+  assert.equal(copy.scheduleRevision, 0);
+  for (const key of ["completedDates", "skippedDates", "openDates", "pauseWindows"]) {
+    assert.equal(JSON.stringify(copy[key]), "[]");
+  }
+  for (const key of ["completionCounts", "occurrences"]) assert.equal(JSON.stringify(copy[key]), "{}");
+  assert.equal(queued.length, 1);
+  assert.equal(queued[0].kind, "upsert");
+  assert.equal(queued[0].itemID, "new-routine");
+  assert.deepEqual(context.state.items[0], before);
+});
+
+test("duplicate title stays within the editor limit and daily copies disable carryover", () => {
+  const draft = editorFixture().duplicateDraft({ title: "a".repeat(120), schedule: "everyDay", missedBehavior: "keepUntilDone" });
+  assert.equal(draft.title.length, 120);
+  assert.ok(draft.title.endsWith(" (copy)"));
+  assert.equal(draft.missedBehavior, "markMissed");
+  const emojiDraft = editorFixture().duplicateDraft({ title: "🌱".repeat(60), schedule: "everyDay" });
+  assert.equal(emojiDraft.title, "🌱".repeat(56) + " (copy)");
+  assert.ok(emojiDraft.title.length <= 120);
 });

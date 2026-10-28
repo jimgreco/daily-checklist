@@ -761,6 +761,34 @@ struct ChecklistItem: Identifiable, Codable, Hashable {
         self.occurrences = Self.migratedOccurrences(occurrences, itemID: id)
     }
 
+    /// Reuse routine settings without inheriting progress, pauses, or old active dates.
+    func duplicateDraft(now: Date = .now, calendar: Calendar = .current) -> ChecklistItem {
+        // The web title field counts UTF-16 units. Keep room for the suffix
+        // without splitting a surrogate pair (for example, an emoji).
+        var titlePrefix = ""
+        for scalar in title.unicodeScalars {
+            let character = String(scalar)
+            guard titlePrefix.utf16.count + character.utf16.count <= 113 else { break }
+            titlePrefix += character
+        }
+        return ChecklistItem(
+            title: titlePrefix + " (copy)",
+            notes: notes,
+            schedule: schedule,
+            customWeekdays: customWeekdays,
+            recurrence: recurrence,
+            reminderMinutes: reminderMinutes,
+            followUpPolicy: followUpPolicy,
+            quantity: quantity,
+            createdAt: now,
+            startDate: calendar.startOfDay(for: now),
+            groupID: groupID,
+            missedBehavior: schedule == .everyDay ? .markMissed : missedBehavior,
+            carryoverStartDate: schedule != .everyDay && missedBehavior == .keepUntilDone
+                ? DateKey.string(from: now) : nil
+        )
+    }
+
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(UUID.self, forKey: .id)

@@ -22,6 +22,31 @@ final class RitualCueScreenshots: XCTestCase {
         XCTAssertTrue(app.staticTexts["Review calendar"].waitForExistence(timeout: 15))
     }
 
+    func testDuplicateRoutineDraftCancelAndSave() throws {
+        let original = app.staticTexts["Review calendar"].firstMatch
+        original.press(forDuration: 1.2)
+        app.buttons["Duplicate routine"].tap()
+        XCTAssertTrue(app.navigationBars["Duplicate item"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.textFields["Title"].value as? String, "Review calendar (copy)")
+        let draftScreenshot = XCTAttachment(screenshot: app.screenshot())
+        draftScreenshot.name = "Duplicate routine draft"
+        draftScreenshot.lifetime = .keepAlways
+        add(draftScreenshot)
+        app.buttons["Cancel"].tap()
+        XCTAssertTrue(original.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.staticTexts["Review calendar (copy)"].exists)
+        original.press(forDuration: 1.2)
+        app.buttons["Duplicate routine"].tap()
+        XCTAssertTrue(app.navigationBars["Duplicate item"].waitForExistence(timeout: 5))
+        app.buttons["Save"].tap()
+        XCTAssertTrue(scrollToExistence(app.staticTexts["Review calendar (copy)"]))
+        XCTAssertTrue(original.exists)
+        let savedScreenshot = XCTAttachment(screenshot: app.screenshot())
+        savedScreenshot.name = "Duplicate routine saved"
+        savedScreenshot.lifetime = .keepAlways
+        add(savedScreenshot)
+    }
+
     func testCopyRemainingChecklist() throws {
         let copy = app.buttons["copy-remaining"]
         XCTAssertTrue(copy.waitForExistence(timeout: 5))

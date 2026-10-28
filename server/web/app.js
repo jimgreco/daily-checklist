@@ -931,6 +931,7 @@
         ${!isComplete && !isSkipped && !isPausedForDate && isFutureDate(state.selectedDate) ? `<button class="mini-button" data-action="bring-forward" data-id="${item.id}">${icon("startToday")} Today</button>` : ""}
         ${!isComplete && !isSkipped && !isPausedForDate ? `<button class="mini-button" data-action="delay" data-id="${item.id}">Delay</button>` : ""}
         <button class="mini-button" data-action="history" data-id="${item.id}" aria-label="History for ${escapeHTML(item.title)}">History</button>
+        <button class="mini-button" data-action="duplicate" data-id="${item.id}" aria-label="Duplicate ${escapeHTML(item.title)}">${icon("copy")} Duplicate</button>
         ${state.mode === "archive" ? `<button class="mini-button danger" data-action="delete-item" data-id="${item.id}" aria-label="Delete ${escapeHTML(item.title)} permanently">Delete</button>` : ""}
         <button class="edit-button" data-action="edit" data-id="${item.id}" aria-label="Edit ${escapeHTML(item.title)}">${icon("pencil")}</button>
       </div>
@@ -967,6 +968,7 @@
         <button class="mini-button" data-action="carryover-tomorrow" data-id="${item.id}" data-date="${latestDate}" data-occurrence="${escapeHTML(latestID)}">${icon("startTomorrow")} Tomorrow</button>
         <button class="mini-button" data-action="pause" data-id="${item.id}">${icon("pause")} Pause</button>
         <button class="mini-button" data-action="history" data-id="${item.id}" aria-label="History for ${escapeHTML(item.title)}">History</button>
+        <button class="mini-button" data-action="duplicate" data-id="${item.id}" aria-label="Duplicate ${escapeHTML(item.title)}">${icon("copy")} Duplicate</button>
         <button class="edit-button" data-action="edit" data-id="${item.id}" aria-label="Edit ${escapeHTML(item.title)}">${icon("pencil")}</button>
       </div>
     </article>`;
@@ -1178,6 +1180,27 @@
       ${state.toast ? `<div class="toast">${escapeHTML(state.toast)}</div>` : ""}
     </section>`;
     renderGoogleButton();
+  }
+
+  function duplicateDraft(item, now = new Date()) {
+    let titlePrefix = "";
+    for (const character of item.title) {
+      if (titlePrefix.length + character.length > 113) break;
+      titlePrefix += character;
+    }
+    return {
+      title: titlePrefix + " (copy)",
+      notes: item.notes || "",
+      schedule: item.schedule,
+      customWeekdays: [...(item.customWeekdays || [])],
+      recurrence: normalizedRecurrence(item.recurrence),
+      reminderMinutes: item.reminderMinutes ?? null,
+      followUpPolicy: normalizedFollowUpPolicy(item.followUpPolicy),
+      quantity: quantity(item),
+      startDate: startOfDay(now).toISOString(),
+      groupID: item.groupID || null,
+      missedBehavior: item.schedule === "everyDay" ? "markMissed" : item.missedBehavior,
+    };
   }
 
   function editorValues(item) {
@@ -1421,7 +1444,7 @@
         <div class="modal-actions"><span></span><button class="secondary" data-action="close">Done</button></div>
       </section></div>`;
     }
-    const item = editorValues(state.modal.item);
+    const item = editorValues(state.modal.item || state.modal.draft);
     const schedule = item.scheduleMode || "everyDay";
     const advancedSchedule = ["interval","monthlyDay","monthlyOrdinal"].includes(schedule);
     const weekdays = new Set(item.customWeekdays || []);
@@ -1431,7 +1454,8 @@
       ...(item.followUpPolicy ? [item.followUpPolicy.delayMinutes] : [])
     ])].sort((left, right) => left - right);
     return `<div class="scrim" data-action="close"><form class="modal" data-modal data-editor data-schedule-mode="${schedule}">
-      <h2>${state.modal.item ? "Edit item" : "New item"}</h2>
+      <h2>${state.modal.draft ? "Duplicate item" : state.modal.item ? "Edit item" : "New item"}</h2>
+      ${state.modal.draft ? '<p class="notes">This copy starts today with empty history and no task pauses or end date. Review its settings, then save.</p>' : ""}
       <label class="field">Title<input name="title" required maxlength="120" value="${escapeHTML(item.title || "")}" autofocus></label>
       <label class="field">Notes<textarea name="notes" maxlength="2000">${escapeHTML(item.notes || "")}</textarea></label>
       <label class="field">Quantity<input name="quantity" type="number" min="1" max="99" step="1" inputmode="numeric" value="${item.quantity}"></label>
@@ -2753,6 +2777,13 @@
     if (action === "edit") {
       state.modal = { type: "editor", item: state.items.find((item) => item.id === target.dataset.id) };
       render();
+    }
+    if (action === "duplicate") {
+      const item = state.items.find((item) => item.id === target.dataset.id);
+      if (item) {
+        state.modal = { type: "editor", item: null, draft: duplicateDraft(item) };
+        render();
+      }
     }
     if (action === "toggle") toggle(state.items.find((item) => item.id === target.dataset.id));
     if (action === "carryover-complete") completeCarryover(state.items.find((item) => item.id === target.dataset.id), target.dataset.occurrence || target.dataset.date);

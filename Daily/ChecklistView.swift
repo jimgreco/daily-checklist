@@ -6,6 +6,7 @@ struct ChecklistView: View {
     @EnvironmentObject private var store: ChecklistStore
     @EnvironmentObject private var authStore: AuthStore
     @State private var editingItem: ChecklistItem?
+    @State private var duplicateItem: ChecklistItem?
     @State private var showingNewItem = false
     @State private var showingAccount = false
     @State private var showingDatePicker = false
@@ -174,6 +175,15 @@ struct ChecklistView: View {
                 ItemEditor(
                     item: newItemTemplate,
                     groups: store.orderedGroups,
+                    onSave: { store.save($0) },
+                    onCreateGroup: { store.createGroup(named: $0) }
+                )
+            }
+            .sheet(item: $duplicateItem) { item in
+                ItemEditor(
+                    item: item,
+                    groups: store.orderedGroups,
+                    isDuplicate: true,
                     onSave: { store.save($0) },
                     onCreateGroup: { store.createGroup(named: $0) }
                 )
@@ -1058,6 +1068,7 @@ struct ChecklistView: View {
                             )
                         },
                         onEdit: { editingItem = entry.item },
+                        onDuplicate: { duplicateItem = entry.item.duplicateDraft() },
                         onHistory: { historyItem = entry.item }
                     )
                 }
@@ -1406,6 +1417,7 @@ struct ChecklistView: View {
                         showsEditButton: true,
                         onToggle: { store.toggle(item) },
                         onEdit: { editingItem = item },
+                        onDuplicate: { duplicateItem = item.duplicateDraft() },
                         onSkip: { store.setSkipped(item, skipped: true) },
                         onUnskip: { store.setSkipped(item, skipped: false) },
                         onPause: { store.pause(item) },
@@ -1450,6 +1462,7 @@ struct ChecklistView: View {
                         showsEditButton: isEditingChecklist,
                         onToggle: { store.toggle(item) },
                         onEdit: { editingItem = item },
+                        onDuplicate: { duplicateItem = item.duplicateDraft() },
                         onSkip: { store.setSkipped(item, skipped: true) },
                         onUnskip: { store.setSkipped(item, skipped: false) },
                         onPause: { store.pause(item) },
@@ -1730,6 +1743,7 @@ private struct CarryoverRow: View {
     let onPause: () -> Void
     let onSnooze: (ReminderSnoozePreset) -> Void
     let onEdit: () -> Void
+    let onDuplicate: () -> Void
     let onHistory: () -> Void
 
     private var oldestDate: Date {
@@ -1838,6 +1852,9 @@ private struct CarryoverRow: View {
                 Button(action: onEdit) {
                     Label("Edit", systemImage: "pencil")
                 }
+                Button(action: onDuplicate) {
+                    Label("Duplicate routine", systemImage: "doc.on.doc")
+                }
                 Button(action: onHistory) {
                     Label("History", systemImage: "calendar")
                 }
@@ -1870,6 +1887,7 @@ private struct CarryoverRow: View {
                 snoozeButtons
             }
             Button(action: onEdit) { Label("Edit", systemImage: "pencil") }
+            Button(action: onDuplicate) { Label("Duplicate routine", systemImage: "doc.on.doc") }
             Button(action: onHistory) { Label("History", systemImage: "calendar") }
         }
     }
@@ -1895,6 +1913,7 @@ private struct ItemRow: View {
     let showsEditButton: Bool
     let onToggle: () -> Void
     let onEdit: () -> Void
+    let onDuplicate: () -> Void
     let onSkip: () -> Void
     let onUnskip: () -> Void
     let onPause: () -> Void
@@ -2044,6 +2063,9 @@ private struct ItemRow: View {
             Button(action: onEdit) {
                 Label("Edit", systemImage: "pencil")
             }
+            Button(action: onDuplicate) {
+                Label("Duplicate routine", systemImage: "doc.on.doc")
+            }
             Button(action: onHistory) {
                 Label("History", systemImage: "calendar")
             }
@@ -2092,7 +2114,7 @@ private struct ItemRow: View {
                 }
             }
         }
-        .accessibilityHint("Long press for edit, history, pause, bring forward, delay, and skip actions")
+        .accessibilityHint("Long press for edit, duplicate, history, pause, bring forward, delay, and skip actions")
     }
 
     private func statusBadge(
