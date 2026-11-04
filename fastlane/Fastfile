@@ -88,6 +88,33 @@ platform :ios do
     )
   end
 
+  desc "Attach an uploaded build to the editable version and submit it for App Store review"
+  lane :submit_review do
+    build = ENV["REVIEW_BUILD"].to_s.strip
+    UI.user_error!("REVIEW_BUILD must be the exact uploaded build number") unless build.match?(/\A\d+\z/)
+    release = ENV["REVIEW_RELEASE"].to_s.strip
+    UI.user_error!("REVIEW_RELEASE must be automatic or manual") unless %w[automatic manual].include?(release)
+
+    upload_to_app_store(
+      api_key: app_store_api_key,
+      app_identifier: APP_IDENTIFIER,
+      app_version: app_store_version,
+      build_number: build,
+      metadata_path: METADATA_PATH,
+      skip_binary_upload: true,
+      skip_screenshots: true,
+      force: true,
+      run_precheck_before_submit: false,
+      submit_for_review: true,
+      automatic_release: release == "automatic",
+      submission_information: {
+        add_id_info_uses_idfa: false,
+        export_compliance_uses_encryption: false,
+        content_rights_contains_third_party_content: false
+      }
+    )
+  end
+
   desc "Capture screenshots, then upload them to App Store Connect"
   lane :screenshots_and_upload do
     screenshots

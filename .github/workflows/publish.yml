@@ -31,6 +31,26 @@ on:
         options:
           - "false"
           - "true"
+      submit_for_review:
+        description: Attach review_build to the editable App Store version (with source metadata) and submit it for review
+        required: true
+        type: choice
+        default: "false"
+        options:
+          - "false"
+          - "true"
+      review_build:
+        description: Exact uploaded build number to submit for review, e.g. 152
+        required: false
+        type: string
+      review_release:
+        description: After approval, release automatically or wait for a manual release
+        required: true
+        type: choice
+        default: manual
+        options:
+          - manual
+          - automatic
       app_store_version:
         description: Optional App Store version override; defaults to Xcode MARKETING_VERSION
         required: false
@@ -148,7 +168,7 @@ jobs:
             "python3 \"\$HOME/daily-checklist/server/scripts/deploy-service.py\" --release '$GITHUB_SHA'"
 
   app-store-assets:
-    if: ${{ github.event_name == 'workflow_dispatch' && (inputs.update_app_store_metadata == 'true' || inputs.update_app_store_screenshots == 'true') }}
+    if: ${{ github.event_name == 'workflow_dispatch' && (inputs.update_app_store_metadata == 'true' || inputs.update_app_store_screenshots == 'true' || inputs.submit_for_review == 'true') }}
     runs-on: macos-latest
     environment: production
     timeout-minutes: 45
@@ -218,6 +238,17 @@ jobs:
           APP_STORE_CONNECT_API_KEY: ${{ secrets.APP_STORE_CONNECT_API_KEY }}
           APP_STORE_VERSION: ${{ inputs.app_store_version }}
         run: bundle exec fastlane ios upload_screenshots
+
+      - name: Submit build for App Store review
+        if: ${{ inputs.submit_for_review == 'true' }}
+        env:
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APP_STORE_CONNECT_API_KEY: ${{ secrets.APP_STORE_CONNECT_API_KEY }}
+          APP_STORE_VERSION: ${{ inputs.app_store_version }}
+          REVIEW_BUILD: ${{ inputs.review_build }}
+          REVIEW_RELEASE: ${{ inputs.review_release }}
+        run: bundle exec fastlane ios submit_review
 
   testflight:
     if: (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish_testflight)) && github.ref == 'refs/heads/main'

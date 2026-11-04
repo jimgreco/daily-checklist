@@ -14,6 +14,7 @@ For a release-candidate build, set these manual inputs:
 - `update_app_store_screenshots`: `true` when screenshots should be regenerated from deterministic UI-test data and uploaded to App Store Connect.
 - `app_store_version`: leave blank unless App Store Connect has an editable version that differs from Xcode `MARKETING_VERSION`.
 - `screenshot_devices`: keep the default unless Apple requires another iPhone screenshot size.
+- `submit_for_review`: `true` attaches `review_build` (the exact uploaded build number) to the editable App Store version, uploads the source-controlled metadata, answers export compliance (standard encryption only), IDFA (not used) and third-party content (none), and submits it for review. `review_release` chooses whether Apple's approval releases it automatically or waits for a manual release.
 
 ## Automated Fields
 
@@ -43,7 +44,7 @@ Apple still requires some one-time or review-specific fields in App Store Connec
 - complete App Privacy answers using `docs/app-store-privacy.md`;
 - fill review contact information;
 - fill demo account notes if Apple requests credentials;
-- choose the uploaded build and submit for review.
+- choose the uploaded build and submit for review (or use the `submit_for_review` input above).
 
 Ritual Cue sets `ITSAppUsesNonExemptEncryption` to `false`, so the export-compliance answer should match standard platform encryption only.
 

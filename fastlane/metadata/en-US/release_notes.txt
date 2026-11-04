@@ -1,1 +1,1 @@
-Initial production release.
+Check off today's tasks right from your Home Screen with the new interactive widget. Also new: collapsible completed tasks, search improvements, direct date navigation, a remaining-only focus view, and routine duplication.
