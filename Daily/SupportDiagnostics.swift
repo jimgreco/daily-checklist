@@ -37,9 +37,10 @@ enum SupportDiagnostics {
         pendingMutationCount: Int,
         deviceID: String,
         apiBaseURL: URL = APIClient.configuredBaseURL,
-        generatedAt: Date = Date()
+        generatedAt: Date = Date(),
+        widgetLines: [String] = []
     ) -> String {
-        [
+        ([
             "Ritual Cue Diagnostics",
             "Generated: \(timestamp.string(from: generatedAt))",
             "Surface: iOS",
@@ -52,7 +53,7 @@ enum SupportDiagnostics {
             "API Origin: \(origin(from: apiBaseURL))",
             "Sync State: \(syncState)",
             "Pending Mutations: \(pendingMutationCount)"
-        ].joined(separator: "\n")
+        ] + widgetLines).joined(separator: "\n")
     }
 
     private static let timestamp: ISO8601DateFormatter = {

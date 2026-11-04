@@ -528,7 +528,8 @@ struct AccountView: View {
             user: authStore.user,
             syncState: store.syncState,
             pendingMutationCount: store.pendingMutationCount,
-            deviceID: store.diagnosticDeviceID
+            deviceID: store.diagnosticDeviceID,
+            widgetLines: store.widgetDiagnosticLines()
         )
         accountMessage = "Diagnostics copied."
     }

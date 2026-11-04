@@ -2184,6 +2184,13 @@ final class ChecklistStore: ObservableObject {
         syncState = "Restored from export"
     }
 
+    func widgetDiagnosticLines(now: Date = .now) -> [String] {
+        flushPendingPersistence()
+        let computed = widgetSnapshot(now: now)
+        return ["Widget Computed Today: remaining=\(computed.remainingCount) tasks=\(computed.tasks.count) items=\(items.count)"]
+            + RitualWidgetSnapshotStore.diagnosticLines(now: now)
+    }
+
     func widgetSnapshot(now: Date = .now) -> RitualWidgetSnapshot {
         maintenanceSnapshot.widgetSnapshots(now: now, days: 1).first
             ?? RitualWidgetSnapshot.empty(for: now)

@@ -155,6 +155,8 @@ enum RitualWidgetSnapshotStore {
 
     private static let snapshotKey = "ritualWidgetSnapshot.v1"
     private static let snapshotsKey = "ritualWidgetSnapshots.v2"
+    private static let lastSaveKey = "ritualWidgetLastSave.v1"
+    private static let lastReadKey = "ritualWidgetLastRead.v1"
 
     static func load(now: Date = .now) -> RitualWidgetSnapshot {
         guard let defaults = UserDefaults(suiteName: appGroupIdentifier) else {
@@ -179,14 +181,53 @@ enum RitualWidgetSnapshotStore {
 
     @discardableResult
     static func save(_ snapshots: [RitualWidgetSnapshot]) -> Bool {
-        guard let defaults = UserDefaults(suiteName: appGroupIdentifier),
-              let data = try? JSONEncoder().encode(snapshots)
-        else {
+        guard let defaults = UserDefaults(suiteName: appGroupIdentifier) else { return false }
+        guard let data = try? JSONEncoder().encode(snapshots) else {
+            defaults.set("failed \(Date().ISO8601Format())", forKey: lastSaveKey)
             return false
         }
         defaults.set(data, forKey: snapshotsKey)
         defaults.removeObject(forKey: snapshotKey)
+        let today = snapshots.first { $0.isCurrentDay() }
+        defaults.set(
+            "ok \(Date().ISO8601Format()) bytes=\(data.count) days=\(snapshots.count) todayTasks=\(today.map { String($0.tasks.count) } ?? "none")",
+            forKey: lastSaveKey
+        )
         return true
+    }
+
+    /// Called by the widget so diagnostics can show what it actually rendered.
+    static func recordRead(_ snapshot: RitualWidgetSnapshot, now: Date = .now) {
+        UserDefaults(suiteName: appGroupIdentifier)?.set(
+            "\(now.ISO8601Format()) date=\(snapshot.dateKey) remaining=\(snapshot.remainingCount) tasks=\(snapshot.tasks.count) hasChecklist=\(snapshot.hasChecklist)",
+            forKey: lastReadKey
+        )
+    }
+
+    /// Counts only, never task titles, for the support diagnostics text.
+    static func diagnosticLines(now: Date = .now) -> [String] {
+        guard let defaults = UserDefaults(suiteName: appGroupIdentifier) else {
+            return ["Widget Storage: App Group unavailable"]
+        }
+        var lines: [String] = []
+        if let data = defaults.data(forKey: snapshotsKey) {
+            do {
+                let snapshots = try JSONDecoder().decode([RitualWidgetSnapshot].self, from: data)
+                if let today = snapshots.first(where: { $0.isCurrentDay(now: now) }) {
+                    lines.append("Widget Stored Today: remaining=\(today.remainingCount) tasks=\(today.tasks.count) updated=\(today.updatedAt.ISO8601Format()) hasAccount=\(today.accountID != nil)")
+                } else {
+                    lines.append("Widget Stored Today: none of \(snapshots.count) snapshots match \(RitualWidgetDateKey.string(from: now))")
+                }
+            } catch {
+                lines.append("Widget Stored Today: decode failed (\(data.count) bytes): \(error)")
+            }
+        } else {
+            lines.append("Widget Stored Today: no data")
+        }
+        lines.append("Widget Last Save: \(defaults.string(forKey: lastSaveKey) ?? "never")")
+        lines.append("Widget Last Read: \(defaults.string(forKey: lastReadKey) ?? "never")")
+        lines.append("Widget Pending Taps: \(RitualWidgetActionInbox.load().count)")
+        return lines
     }
 }
 

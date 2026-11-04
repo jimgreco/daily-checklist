@@ -29,7 +29,9 @@ struct RitualCueTodayProvider: TimelineProvider {
 
     /// The app's snapshot plus any widget taps it has not applied yet.
     static func displaySnapshot(now: Date) -> RitualWidgetSnapshot {
-        RitualWidgetSnapshotStore.load(now: now).applying(RitualWidgetActionInbox.load())
+        let snapshot = RitualWidgetSnapshotStore.load(now: now).applying(RitualWidgetActionInbox.load())
+        RitualWidgetSnapshotStore.recordRead(snapshot, now: now)
+        return snapshot
     }
 }
 
