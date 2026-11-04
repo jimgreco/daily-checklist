@@ -1024,7 +1024,7 @@ final class ChecklistStateTests: XCTestCase {
     }
 
     @MainActor
-    func testWidgetSnapshotCountsTodayWithoutChecklistContent() throws {
+    func testWidgetSnapshotCountsTodayAndSharesOnlyOpenTaskTitles() throws {
         let accountID = "widget-snapshot-test-\(UUID().uuidString)"
         let now = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 7, day: 6, hour: 9)))
         let today = calendar.startOfDay(for: now)
@@ -1064,8 +1064,11 @@ final class ChecklistStateTests: XCTestCase {
         XCTAssertEqual(snapshot.nextReminderMinutes, 10 * 60)
         XCTAssertTrue(snapshot.hasChecklist)
 
+        // Only the still-open task's title is shared with the widget; the widget
+        // marks it privacy-sensitive so it is redacted while the device is locked.
+        XCTAssertEqual(snapshot.tasks.map(\.title), ["Medication"])
+        XCTAssertEqual(snapshot.accountID, accountID)
         let encoded = try XCTUnwrap(String(data: JSONEncoder().encode(snapshot), encoding: .utf8))
-        XCTAssertFalse(encoded.contains("Medication"))
         XCTAssertFalse(encoded.contains("Private completed task"))
         XCTAssertFalse(encoded.contains("Private skipped task"))
         XCTAssertFalse(encoded.contains("Private paused task"))
@@ -2251,6 +2254,181 @@ final class ChecklistStateTests: XCTestCase {
             UserDefaults.standard.removeObject(forKey: "activeAccountID")
         }
         body(store)
+    }
+
+    // MARK: Interactive widget
+
+    @MainActor
+    func testWidgetSnapshotListsCarryoversThenOpenTasksInManualOrder() throws {
+        let accountID = "widget-tasks-\(UUID().uuidString)"
+        let today = calendar.startOfDay(for: .now)
+        let yesterday = try XCTUnwrap(calendar.date(byAdding: .day, value: -1, to: today))
+        cleanCaches(for: [accountID])
+        defer {
+            cleanCaches(for: [accountID])
+            UserDefaults.standard.removeObject(forKey: "activeAccountID")
+        }
+        UserDefaults.standard.set(accountID, forKey: "activeAccountID")
+
+        let store = ChecklistStore()
+        let first = ChecklistItem(title: "Stretch", createdAt: today)
+        let second = ChecklistItem(title: "Water", quantity: 8, createdAt: today)
+        let carryover = ChecklistItem(
+            title: "Water plants",
+            schedule: .custom,
+            customWeekdays: [calendar.component(.weekday, from: yesterday)],
+            createdAt: yesterday,
+            startDate: yesterday,
+            missedBehavior: .keepUntilDone,
+            carryoverStartDate: DateKey.string(from: yesterday)
+        )
+        // New items take the next manual sort order, so save order is display order;
+        // the carryover is saved last but is listed first.
+        store.save(first)
+        store.save(second)
+        store.save(carryover)
+        store.selectedDate = today
+        let water = try XCTUnwrap(store.items.first { $0.id == second.id })
+        store.toggle(water)
+        store.toggle(try XCTUnwrap(store.items.first { $0.id == second.id }))
+
+        let snapshot = store.widgetSnapshot(now: .now)
+        XCTAssertEqual(snapshot.tasks.map(\.title), ["Water plants", "Stretch", "Water"])
+        XCTAssertTrue(snapshot.tasks[0].isCarryover)
+        XCTAssertNotNil(snapshot.tasks[0].occurrenceID)
+        XCTAssertEqual(snapshot.tasks[2].quantity, 8)
+        XCTAssertEqual(snapshot.tasks[2].completionCount, 2)
+    }
+
+    func testWidgetSnapshotOverlayHidesTappedTasksOnlyForMatchingAccountAndDay() {
+        let itemA = UUID()
+        let itemB = UUID()
+        let snapshot = RitualWidgetSnapshot(
+            remainingCount: 2,
+            scheduledCount: 2,
+            completedCount: 0,
+            skippedCount: 0,
+            reminderMinutes: [],
+            nextReminderMinutes: nil,
+            dateKey: "2026-11-04",
+            updatedAt: .now,
+            hasChecklist: true,
+            tasks: [
+                RitualWidgetTask(itemID: itemA, title: "A", quantity: 1, completionCount: 0, occurrenceID: nil, isCarryover: false),
+                RitualWidgetTask(itemID: itemB, title: "B", quantity: 3, completionCount: 1, occurrenceID: nil, isCarryover: false)
+            ],
+            accountID: "me"
+        )
+        func action(_ itemID: UUID, target: Int, account: String? = "me", day: String = "2026-11-04") -> RitualWidgetAction {
+            RitualWidgetAction(id: UUID(), itemID: itemID, occurrenceID: nil, isCarryover: false,
+                               dateKey: day, targetCount: target, accountID: account, createdAt: .now)
+        }
+
+        let applied = snapshot.applying([action(itemA, target: 1), action(itemB, target: 2)])
+        XCTAssertEqual(applied.tasks.map(\.title), ["B"])
+        XCTAssertEqual(applied.tasks[0].completionCount, 2)
+        XCTAssertEqual(applied.remainingCount, 1)
+        XCTAssertEqual(applied.completedCount, 1)
+
+        let ignored = snapshot.applying([action(itemA, target: 1, account: "someone-else"),
+                                         action(itemA, target: 1, day: "2026-11-03")])
+        XCTAssertEqual(ignored, snapshot)
+    }
+
+    @MainActor
+    func testDrainingWidgetActionsCompletesQueuesAndClearsInbox() throws {
+        let accountID = "widget-drain-\(UUID().uuidString)"
+        let today = calendar.startOfDay(for: .now)
+        let todayKey = DateKey.string(from: today)
+        let inboxURL = FileManager.default.temporaryDirectory.appending(path: "widget-inbox-\(UUID().uuidString).json")
+        cleanCaches(for: [accountID])
+        defer {
+            cleanCaches(for: [accountID])
+            try? FileManager.default.removeItem(at: inboxURL)
+            UserDefaults.standard.removeObject(forKey: "activeAccountID")
+        }
+        UserDefaults.standard.set(accountID, forKey: "activeAccountID")
+
+        let store = ChecklistStore()
+        let stretch = ChecklistItem(title: "Stretch", createdAt: today)
+        let water = ChecklistItem(title: "Water", quantity: 3, createdAt: today)
+        let skipped = ChecklistItem(title: "Run", createdAt: today)
+        store.save(stretch)
+        store.save(water)
+        store.save(skipped)
+        store.setSkipped(skipped, skipped: true, on: today)
+        let mutationsBefore = store.pendingMutationCount
+
+        func record(_ itemID: UUID, target: Int, account: String?, age: TimeInterval = 0) {
+            RitualWidgetActionInbox.append(RitualWidgetAction(
+                id: UUID(), itemID: itemID, occurrenceID: nil, isCarryover: false,
+                dateKey: todayKey, targetCount: target, accountID: account,
+                createdAt: Date.now.addingTimeInterval(-age)
+            ), to: inboxURL)
+        }
+        record(stretch.id, target: 1, account: accountID)
+        record(water.id, target: 1, account: accountID)
+        record(water.id, target: 2, account: accountID)
+        record(water.id, target: 2, account: accountID) // duplicate tap delivery
+        record(skipped.id, target: 1, account: accountID)
+        record(stretch.id, target: 1, account: "other-account")
+        record(water.id, target: 3, account: accountID, age: RitualWidgetActionInbox.maximumAge + 60)
+
+        store.drainWidgetActions(inboxURL: inboxURL)
+
+        let items = Dictionary(uniqueKeysWithValues: store.items.map { ($0.id, $0) })
+        XCTAssertTrue(try XCTUnwrap(items[stretch.id]).isComplete(on: today))
+        XCTAssertEqual(try XCTUnwrap(items[water.id]).completionCount(on: today), 2)
+        XCTAssertFalse(try XCTUnwrap(items[skipped.id]).isComplete(on: today), "a later skip wins")
+        XCTAssertTrue(try XCTUnwrap(items[skipped.id]).isSkipped(on: today))
+        XCTAssertGreaterThan(store.pendingMutationCount, mutationsBefore, "widget taps must sync")
+        XCTAssertTrue(RitualWidgetActionInbox.load(from: inboxURL).isEmpty)
+        XCTAssertTrue(store.widgetSnapshot(now: .now).tasks.allSatisfy { $0.itemID != stretch.id })
+
+        // Replaying an already-applied tap changes nothing.
+        let mutationsAfter = store.pendingMutationCount
+        record(water.id, target: 2, account: accountID)
+        store.drainWidgetActions(inboxURL: inboxURL)
+        XCTAssertEqual(store.pendingMutationCount, mutationsAfter)
+    }
+
+    @MainActor
+    func testDrainingWidgetActionResolvesCarryoverOccurrence() throws {
+        let accountID = "widget-carryover-\(UUID().uuidString)"
+        let today = calendar.startOfDay(for: .now)
+        let yesterday = try XCTUnwrap(calendar.date(byAdding: .day, value: -1, to: today))
+        let yesterdayKey = DateKey.string(from: yesterday)
+        let inboxURL = FileManager.default.temporaryDirectory.appending(path: "widget-inbox-\(UUID().uuidString).json")
+        cleanCaches(for: [accountID])
+        defer {
+            cleanCaches(for: [accountID])
+            try? FileManager.default.removeItem(at: inboxURL)
+            UserDefaults.standard.removeObject(forKey: "activeAccountID")
+        }
+        UserDefaults.standard.set(accountID, forKey: "activeAccountID")
+
+        let store = ChecklistStore()
+        store.save(ChecklistItem(
+            title: "Water plants",
+            schedule: .custom,
+            customWeekdays: [calendar.component(.weekday, from: yesterday)],
+            createdAt: yesterday,
+            startDate: yesterday,
+            missedBehavior: .keepUntilDone,
+            carryoverStartDate: yesterdayKey
+        ))
+        let task = try XCTUnwrap(store.widgetSnapshot(now: .now).tasks.first)
+        XCTAssertTrue(task.isCarryover)
+
+        RitualWidgetActionInbox.append(RitualWidgetAction(
+            id: UUID(), itemID: task.itemID, occurrenceID: task.occurrenceID, isCarryover: true,
+            dateKey: DateKey.string(from: today), targetCount: 1, accountID: accountID, createdAt: .now
+        ), to: inboxURL)
+        store.drainWidgetActions(inboxURL: inboxURL)
+
+        XCTAssertTrue(store.carryoverEntries.isEmpty)
+        XCTAssertEqual(store.items[0].occurrence(scheduledDate: yesterdayKey)?.outcome, .done)
+        XCTAssertEqual(store.widgetSnapshot(now: .now).carryoverCount, 0)
     }
 
     private func cleanCaches(for accountIDs: [String]) {

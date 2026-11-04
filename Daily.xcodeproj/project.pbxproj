@@ -17,15 +17,19 @@
 		4403380735BDEBE57A870733 /* ChecklistView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CEEFE571E0BAFE77D62FD109 /* ChecklistView.swift */; };
 		4648D0995FED0B02548C4DD8 /* RitualWidgetSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = 99D7B2CA7FB82847776BFE18 /* RitualWidgetSnapshot.swift */; };
 		4F5F4E362BA0DA8E375F604E /* SupportDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 15C282123C1491A425CFE064 /* SupportDiagnostics.swift */; };
+		66C98054BF1B416931C4B948 /* CompleteRitualTaskIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1D677265AE911BEF2A4ECFC /* CompleteRitualTaskIntent.swift */; };
 		691F8C9E85AF2CF5B8B5E1AF /* RitualWidgetSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = 99D7B2CA7FB82847776BFE18 /* RitualWidgetSnapshot.swift */; };
 		8935C1F6072250846C42A8E8 /* AuthStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6296E6DE360FB5DBF00638A4 /* AuthStore.swift */; };
 		93746D3DD7AA23022BA1C55D /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = C0BF8AD72B19D5F262801193 /* Assets.xcassets */; };
+		A0EA4A708F283C32E0EE95D7 /* RitualWidgetActionInbox.swift in Sources */ = {isa = PBXBuildFile; fileRef = 53C6B5412F428C57469779B8 /* RitualWidgetActionInbox.swift */; };
 		A2E6D9DF83D18010BCB9BD47 /* RitualCueTodayWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A65503FBACE25B70F68FCFE /* RitualCueTodayWidget.swift */; };
+		A7B4755EC5D980D2B91CDA5A /* RitualWidgetActionInbox.swift in Sources */ = {isa = PBXBuildFile; fileRef = 53C6B5412F428C57469779B8 /* RitualWidgetActionInbox.swift */; };
 		AA90A6CE28B7B93E61C65088 /* AppIcon.icon in Resources */ = {isa = PBXBuildFile; fileRef = B9FD2567CD66DF3B64A11ACF /* AppIcon.icon */; };
 		AE9E912BEC0AE5D52EB52DFD /* ChecklistStateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A41EE58486533D38C68B25F /* ChecklistStateTests.swift */; };
 		C172FF5C70D0357DB558884F /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 9224F7E2196FA2D3D19C2740 /* PrivacyInfo.xcprivacy */; };
 		CE6DEE12289CF5C63E2D2E1D /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 56B43CDEAB88147B7130CE27 /* Models.swift */; };
 		D57BCA9E8222E7335B3566AF /* DailyScreenshots.swift in Sources */ = {isa = PBXBuildFile; fileRef = F509E8CDBEA8C5109FB98F7F /* DailyScreenshots.swift */; };
+		D73220D6B75BEB4E84FB6907 /* CompleteRitualTaskIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1D677265AE911BEF2A4ECFC /* CompleteRitualTaskIntent.swift */; };
 		F0C19FD7E219FF13A856AC7E /* RitualCueWidgetBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9EA7EE401999214622A0E348 /* RitualCueWidgetBundle.swift */; };
 		F9F897C01D85E48C26BE9058 /* ScreenshotSeedData.swift in Sources */ = {isa = PBXBuildFile; fileRef = 183CA8B509846F26B48AC906 /* ScreenshotSeedData.swift */; };
 		FDF8B9215945601581232C91 /* NotificationManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = D2E003FC6837E3D09EE90157 /* NotificationManager.swift */; };
@@ -81,6 +85,7 @@
 		4162467A71517BA6F53716B1 /* AccountView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountView.swift; sourceTree = "<group>"; };
 		4A65503FBACE25B70F68FCFE /* RitualCueTodayWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RitualCueTodayWidget.swift; sourceTree = "<group>"; };
 		5249D5CADB178F98244A2F6C /* ChecklistStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChecklistStore.swift; sourceTree = "<group>"; };
+		53C6B5412F428C57469779B8 /* RitualWidgetActionInbox.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RitualWidgetActionInbox.swift; sourceTree = "<group>"; };
 		5451BA5CFBB1BB1D77988B59 /* ItemEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ItemEditor.swift; sourceTree = "<group>"; };
 		56B43CDEAB88147B7130CE27 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		6296E6DE360FB5DBF00638A4 /* AuthStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthStore.swift; sourceTree = "<group>"; };
@@ -97,6 +102,7 @@
 		CEEFE571E0BAFE77D62FD109 /* ChecklistView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChecklistView.swift; sourceTree = "<group>"; };
 		D2E003FC6837E3D09EE90157 /* NotificationManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationManager.swift; sourceTree = "<group>"; };
 		E1440B860E7836764524A860 /* Daily.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Daily.entitlements; sourceTree = "<group>"; };
+		F1D677265AE911BEF2A4ECFC /* CompleteRitualTaskIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompleteRitualTaskIntent.swift; sourceTree = "<group>"; };
 		F3BF5A47CD145BD020886179 /* DailyTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = DailyTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		F509E8CDBEA8C5109FB98F7F /* DailyScreenshots.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DailyScreenshots.swift; sourceTree = "<group>"; };
 		F8517CFC06F68AA398338FB1 /* DailyWidget.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = DailyWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -126,6 +132,8 @@
 		4A4948463B2921DE6A3659F3 /* DailyShared */ = {
 			isa = PBXGroup;
 			children = (
+				F1D677265AE911BEF2A4ECFC /* CompleteRitualTaskIntent.swift */,
+				53C6B5412F428C57469779B8 /* RitualWidgetActionInbox.swift */,
 				99D7B2CA7FB82847776BFE18 /* RitualWidgetSnapshot.swift */,
 			);
 			path = DailyShared;
@@ -349,10 +357,12 @@
 				8935C1F6072250846C42A8E8 /* AuthStore.swift in Sources */,
 				2FFC471A6EE71358BDF7E534 /* ChecklistStore.swift in Sources */,
 				4403380735BDEBE57A870733 /* ChecklistView.swift in Sources */,
+				D73220D6B75BEB4E84FB6907 /* CompleteRitualTaskIntent.swift in Sources */,
 				0A48FA099729AE1C4FD897A4 /* DailyApp.swift in Sources */,
 				3DE80678325E1D0817A04EA7 /* ItemEditor.swift in Sources */,
 				CE6DEE12289CF5C63E2D2E1D /* Models.swift in Sources */,
 				FDF8B9215945601581232C91 /* NotificationManager.swift in Sources */,
+				A0EA4A708F283C32E0EE95D7 /* RitualWidgetActionInbox.swift in Sources */,
 				4648D0995FED0B02548C4DD8 /* RitualWidgetSnapshot.swift in Sources */,
 				F9F897C01D85E48C26BE9058 /* ScreenshotSeedData.swift in Sources */,
 				4F5F4E362BA0DA8E375F604E /* SupportDiagnostics.swift in Sources */,
@@ -371,8 +381,10 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				66C98054BF1B416931C4B948 /* CompleteRitualTaskIntent.swift in Sources */,
 				A2E6D9DF83D18010BCB9BD47 /* RitualCueTodayWidget.swift in Sources */,
 				F0C19FD7E219FF13A856AC7E /* RitualCueWidgetBundle.swift in Sources */,
+				A7B4755EC5D980D2B91CDA5A /* RitualWidgetActionInbox.swift in Sources */,
 				691F8C9E85AF2CF5B8B5E1AF /* RitualWidgetSnapshot.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

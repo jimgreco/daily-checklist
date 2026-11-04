@@ -42,6 +42,7 @@ struct RitualCueApp: App {
                 }
                 .onChange(of: scenePhase) { _, phase in
                     if phase == .active {
+                        store.applyPendingWidgetActions()
                         Task {
                             await store.sync(using: authStore)
                             await store.refreshNotificationSchedule()

@@ -290,6 +290,10 @@ private struct ChecklistMaintenanceSnapshot {
     let groups: [ChecklistGroup]
     let eveningReminderMinutes: Int?
     let notificationGroupFilter: NotificationGroupFilter
+    var accountID: String? = nil
+
+    /// How many open tasks the snapshot carries for the interactive widget.
+    static let widgetTaskLimit = 8
 
     func widgetSnapshots(now: Date = .now, days: Int = 7) -> [RitualWidgetSnapshot] {
         let calendar = Calendar.current
@@ -362,8 +366,57 @@ private struct ChecklistMaintenanceSnapshot {
             ),
             dateKey: dayKey,
             updatedAt: now,
-            hasChecklist: !items.isEmpty
+            hasChecklist: !items.isEmpty,
+            tasks: widgetTasks(
+                remainingItems: remainingItems,
+                carryovers: carryovers,
+                day: day,
+                groupsByID: groupsByID
+            ),
+            accountID: accountID
         )
+    }
+
+    /// Carryovers first (oldest obligation first), then today's open tasks in
+    /// manual group and item order, matching the checklist's default layout.
+    private func widgetTasks(
+        remainingItems: [ChecklistItem],
+        carryovers: [CarryoverEntry],
+        day: Date,
+        groupsByID: [UUID: ChecklistGroup]
+    ) -> [RitualWidgetTask] {
+        let carryoverTasks = carryovers.map { entry in
+            RitualWidgetTask(
+                itemID: entry.item.id,
+                title: entry.item.title,
+                quantity: max(1, entry.item.quantity),
+                completionCount: entry.latestCompletionCount,
+                occurrenceID: entry.latestOccurrenceID,
+                isCarryover: true
+            )
+        }
+        func groupOrder(_ item: ChecklistItem) -> Double {
+            guard let groupID = item.groupID else { return -Double.greatestFiniteMagnitude }
+            return groupsByID[groupID]?.sortOrder ?? Double.greatestFiniteMagnitude
+        }
+        let todayTasks = remainingItems
+            .sorted { lhs, rhs in
+                let left = groupOrder(lhs)
+                let right = groupOrder(rhs)
+                if left != right { return left < right }
+                return ChecklistStore.isOrderedBefore(lhs, rhs)
+            }
+            .map { item in
+                RitualWidgetTask(
+                    itemID: item.id,
+                    title: item.title,
+                    quantity: max(1, item.quantity),
+                    completionCount: item.completionCount(on: day),
+                    occurrenceID: nil,
+                    isCarryover: false
+                )
+            }
+        return Array((carryoverTasks + todayTasks).prefix(Self.widgetTaskLimit))
     }
 
     private func widgetReminderMinutes(
@@ -691,6 +744,7 @@ final class ChecklistStore: ObservableObject {
         hasStarted = true
         loadCache()
         hasLoaded = true
+        applyPendingWidgetActions()
         scheduleWidgetSnapshot(reloadTimelines: true)
         let permission = await notifications.requestAuthorization()
         notificationSchedulingStatus.permission = permission
@@ -805,6 +859,71 @@ final class ChecklistStore: ObservableObject {
         items[index].skippedDates.remove(key)
         items[index].openDates.remove(key)
         pendingMutations.append(.completion(itemID: itemID, date: key, completed: true, count: items[index].quantity))
+        queueDaySetMutationIfNeeded(for: items[index], wasSkipped: wasSkipped, wasOpen: wasOpen, key: key)
+        queueOccurrenceState(for: index, key: key)
+        persistAndSchedule()
+    }
+
+    /// Applies checkbox taps recorded by the interactive widget. Each tap carries
+    /// the count it moves the task to, so replaying one the app already reflects
+    /// is a no-op. Taps for another account, a malformed date, or older than the
+    /// inbox's maximum age are discarded.
+    func applyPendingWidgetActions() {
+        // Before the cache loads there is nothing to apply taps to, and draining
+        // would discard them.
+        guard hasLoaded else { return }
+        drainWidgetActions()
+    }
+
+    func drainWidgetActions(
+        inboxURL: URL? = RitualWidgetActionInbox.defaultURL,
+        now: Date = .now
+    ) {
+        let actions = RitualWidgetActionInbox.load(from: inboxURL)
+        guard !actions.isEmpty else { return }
+        for action in actions.sorted(by: { $0.createdAt < $1.createdAt })
+        where (action.accountID ?? "anonymous") == activeAccountID
+            && now.timeIntervalSince(action.createdAt) <= RitualWidgetActionInbox.maximumAge {
+            applyWidgetAction(action)
+        }
+        RitualWidgetActionInbox.remove(ids: Set(actions.map(\.id)), from: inboxURL)
+    }
+
+    private func applyWidgetAction(_ action: RitualWidgetAction) {
+        guard let date = DateKey.date(from: action.dateKey) else { return }
+        if action.isCarryover, let occurrenceID = action.occurrenceID {
+            guard let entry = CarryoverResolver.entries(
+                items: items,
+                groups: groups,
+                asOf: date,
+                includeHidden: true
+            ).first(where: {
+                $0.item.id == action.itemID && $0.occurrences.contains(where: { $0.id == occurrenceID })
+            }) else { return }
+            let current = entry.occurrences.first(where: { $0.id == occurrenceID })?.state?.completionCount ?? 0
+            guard action.targetCount > current else { return }
+            resolveCarryover(entry, targetOccurrenceID: occurrenceID, completedCount: action.targetCount)
+            return
+        }
+
+        guard let index = items.firstIndex(where: { $0.id == action.itemID }) else { return }
+        let item = items[index]
+        let key = action.dateKey
+        let currentCount = item.completionCount(on: date)
+        // A skip or pause recorded after the tap (for example from another device) wins.
+        guard action.targetCount > currentCount,
+              !item.isSkipped(on: date),
+              !isPaused(item, on: date) else { return }
+        let wasSkipped = item.skippedDates.contains(key)
+        let wasOpen = item.openDates.contains(key)
+        items[index].setCompletionCount(min(action.targetCount, item.quantity), forKey: key)
+        items[index].openDates.remove(key)
+        pendingMutations.append(.completion(
+            itemID: item.id,
+            date: key,
+            completed: items[index].isComplete(on: date),
+            count: items[index].completionCount(on: date)
+        ))
         queueDaySetMutationIfNeeded(for: items[index], wasSkipped: wasSkipped, wasOpen: wasOpen, key: key)
         queueOccurrenceState(for: index, key: key)
         persistAndSchedule()
@@ -2170,7 +2289,8 @@ final class ChecklistStore: ObservableObject {
             items: items,
             groups: groups,
             eveningReminderMinutes: eveningReminderMinutes,
-            notificationGroupFilter: notificationFilterForScheduling
+            notificationGroupFilter: notificationFilterForScheduling,
+            accountID: activeAccountID
         )
     }
 
@@ -2268,7 +2388,7 @@ final class ChecklistStore: ObservableObject {
             .map { (id: $0.key, occurrence: $0.value) }
     }
 
-    private static func isOrderedBefore(_ lhs: ChecklistItem, _ rhs: ChecklistItem) -> Bool {
+    nonisolated static func isOrderedBefore(_ lhs: ChecklistItem, _ rhs: ChecklistItem) -> Bool {
         switch (lhs.sortOrder, rhs.sortOrder) {
         case let (left?, right?) where left != right:
             return left < right

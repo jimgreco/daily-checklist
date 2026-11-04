@@ -1,3 +1,4 @@
+import AppIntents
 import SwiftUI
 import WidgetKit
 
@@ -12,18 +13,23 @@ struct RitualCueTodayProvider: TimelineProvider {
     }
 
     func getSnapshot(in context: Context, completion: @escaping (RitualCueTodayEntry) -> Void) {
-        completion(RitualCueTodayEntry(date: .now, snapshot: RitualWidgetSnapshotStore.load()))
+        completion(RitualCueTodayEntry(date: .now, snapshot: Self.displaySnapshot(now: .now)))
     }
 
     func getTimeline(in context: Context, completion: @escaping (Timeline<RitualCueTodayEntry>) -> Void) {
         let now = Date()
-        let entry = RitualCueTodayEntry(date: now, snapshot: RitualWidgetSnapshotStore.load(now: now))
+        let entry = RitualCueTodayEntry(date: now, snapshot: Self.displaySnapshot(now: now))
         let refresh = Calendar.current.nextDate(
             after: now,
             matching: DateComponents(hour: 0, minute: 1),
             matchingPolicy: .nextTime
         ) ?? now.addingTimeInterval(60 * 60)
         completion(Timeline(entries: [entry], policy: .after(refresh)))
+    }
+
+    /// The app's snapshot plus any widget taps it has not applied yet.
+    static func displaySnapshot(now: Date) -> RitualWidgetSnapshot {
+        RitualWidgetSnapshotStore.load(now: now).applying(RitualWidgetActionInbox.load())
     }
 }
 
@@ -37,7 +43,7 @@ struct RitualCueTodayWidget: Widget {
                 .widgetURL(RitualWidgetSnapshotStore.appURL)
         }
         .configurationDisplayName("Ritual Cue")
-        .description("See how many tasks are left today.")
+        .description("Check off today's tasks and see how many are left.")
         .supportedFamilies([
             .systemSmall,
             .systemMedium,
@@ -67,9 +73,9 @@ private struct RitualCueWidgetView: View {
             case .accessoryRectangular:
                 accessoryRectangular
             case .systemMedium:
-                systemMedium
+                if snapshot.tasks.isEmpty { systemMedium } else { interactiveMedium }
             default:
-                systemSmall
+                if let task = snapshot.tasks.first { interactiveSmall(task) } else { systemSmall }
             }
         }
     }
@@ -239,6 +245,117 @@ private struct RitualCueWidgetView: View {
         }
         .padding(16)
         .containerBackground(widgetBackground, for: .widget)
+    }
+
+    private func interactiveSmall(_ task: RitualWidgetTask) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                Text(countText)
+                    .font(.system(size: 30, weight: .bold, design: .rounded))
+                    .foregroundStyle(widgetInk)
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .contentTransition(.numericText())
+                Text("left")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(widgetSecondary)
+                Spacer(minLength: 0)
+                Image(systemName: "checklist")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(widgetPurple)
+            }
+            progressBar
+            Spacer(minLength: 0)
+            Text(task.isCarryover ? "Still open" : "Up next")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(task.isCarryover ? widgetAmber : widgetSecondary)
+            taskButton(task, prominent: true)
+        }
+        .padding(14)
+        .containerBackground(widgetBackground, for: .widget)
+    }
+
+    private var interactiveMedium: some View {
+        let visible = Array(snapshot.tasks.prefix(3))
+        let hiddenCount = max(0, snapshot.remainingCount - visible.count)
+        return VStack(alignment: .leading, spacing: 7) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Label("Ritual Cue", systemImage: "checklist")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(widgetPurple)
+                    .symbolRenderingMode(.hierarchical)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+                Text("\(countText) \(taskLabel)")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(widgetInk)
+                    .monospacedDigit()
+                    .contentTransition(.numericText())
+                    .lineLimit(1)
+            }
+            progressBar
+            VStack(alignment: .leading, spacing: 3) {
+                ForEach(visible) { task in
+                    taskButton(task, prominent: false)
+                }
+            }
+            Spacer(minLength: 0)
+            HStack(spacing: 6) {
+                if hiddenCount > 0 {
+                    Text("+\(hiddenCount) more")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(widgetInk)
+                }
+                Text(nextReminderText)
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(widgetSecondary)
+            }
+            .lineLimit(1)
+            .minimumScaleFactor(0.8)
+        }
+        .padding(14)
+        .containerBackground(widgetBackground, for: .widget)
+    }
+
+    private func taskButton(_ task: RitualWidgetTask, prominent: Bool) -> some View {
+        Button(intent: CompleteRitualTaskIntent(
+            task: task,
+            dateKey: snapshot.dateKey,
+            accountID: snapshot.accountID
+        )) {
+            HStack(spacing: 8) {
+                Image(systemName: task.completionCount > 0 ? "circle.dotted.circle" : "circle")
+                    .font(.system(size: prominent ? 20 : 18, weight: .semibold))
+                    .foregroundStyle(task.isCarryover ? widgetAmber : widgetPurple)
+                    .widgetAccentable()
+                Text(task.title)
+                    .font(prominent ? .system(size: 14, weight: .semibold) : .footnote.weight(.semibold))
+                    .foregroundStyle(widgetInk)
+                    .lineLimit(prominent ? 2 : 1)
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: prominent)
+                Spacer(minLength: 0)
+                if task.hasQuantity {
+                    Text("\(task.completionCount)/\(task.quantity)")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(widgetSecondary)
+                        .monospacedDigit()
+                        .contentTransition(.numericText())
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        // Task names are hidden while the device is locked. This must wrap the
+        // Button: inside the label it moves the title into a separate redaction
+        // layer and taps fall through to the widget URL instead of the intent.
+        .privacySensitive()
+        .accessibilityLabel(
+            task.hasQuantity
+                ? "Add one to \(task.title), \(task.completionCount) of \(task.quantity) done"
+                : "Mark \(task.title) done"
+        )
     }
 
     private var accessoryInline: some View {
