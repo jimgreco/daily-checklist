@@ -1,11 +1,11 @@
 # Production App Store Release
 
-Pushes to `main` run server tests, dependency audit, and a container build. The separate Web E2E workflow checks browser journeys. Server deployment requires an explicit manual Publish run. Main pushes run the guarded iOS-only TestFlight path using existing signing assets.
+Pushes to `main` run server tests, dependency audit, and a container build. The separate Web E2E workflow checks browser journeys. Main pushes also deploy the server and run the guarded iOS TestFlight path using existing signing assets. The uploaded build is App Store-eligible (`buildAudience` in `.github/scripts/release-policy.json`): it is distributed only to the approved internal TestFlight group and can be selected for App Store review. Submitting for review stays manual.
 
 Manual Publish inputs default to validation only:
 
-- `deploy_server=false`: set true only for a coordinated server replacement with existing pinned SSH trust. This replaces only the existing `daily` service and preserves its effective runtime configuration. See [isolated server release](server-release.md).
-- `publish_testflight=false`: set true only after native distribution and signing/profile actions are approved. This runs iOS tests, validates the pinned existing profiles without changing Apple resources, archives the app, and uploads for internal TestFlight only. See [existing-assets-only release](native-testflight-existing-assets.md). A successful upload does not mean an App Store release or device acceptance.
+- `deploy_server=false`: set true to deploy the server without a push, for example to redeploy an exact SHA with existing pinned SSH trust. This replaces only the existing `daily` service and preserves its effective runtime configuration. See [isolated server release](server-release.md).
+- `publish_testflight=false`: set true only after native distribution and signing/profile actions are approved. This runs iOS tests, validates the pinned existing profiles without changing Apple resources, archives the app, and uploads an App Store-eligible build to TestFlight for the approved internal group. See [existing-assets-only release](native-testflight-existing-assets.md). A successful upload does not mean an App Store release or device acceptance.
 - App Store listing and screenshot updates remain separate opt-in inputs.
 
 For a release-candidate build, set these manual inputs:

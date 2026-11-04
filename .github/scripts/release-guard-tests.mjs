@@ -118,14 +118,22 @@ test('certificate uses pinned public bytes and rejects expired/inactive/wrong ty
     const changed = clone(resource); changed.attributes[key] = value; assert.throws(() => validateCertificate(changed, der, now, p));
   }
 });
-test('processing success requires intended version, internal-only audience and approved group', async () => {
+test('processing success requires intended version, policy audience and approved group', async () => {
   const f = fixture(), id = 'uploaded';
-  f.routes['/v1/preReleaseVersions/ios-train/builds?limit=200'].data = [{ type: 'builds', id, attributes: { version: '3', processingState: 'VALID', expired: false, buildAudienceType: 'INTERNAL_ONLY' } }];
+  assert.equal(f.p.buildAudience, 'APP_STORE_ELIGIBLE');
+  f.routes['/v1/preReleaseVersions/ios-train/builds?limit=200'].data = [{ type: 'builds', id, attributes: { version: '3', processingState: 'VALID', expired: false, buildAudienceType: 'APP_STORE_ELIGIBLE' } }];
   f.routes[`/v1/betaGroups/${f.p.groups[0].id}/builds?limit=200`] = { data: [{ id, type: 'builds' }] };
   f.routes[`/v1/builds/${id}/individualTesters?limit=200`] = { data: [] };
   assert.equal((await verifyUploaded(f.client, '3', 'a'.repeat(40), f.p)).approvedGroupAttached, true);
   f.routes[`/v1/betaGroups/${f.p.groups[0].id}/builds?limit=200`].data = [];
   assert.equal(await verifyUploaded(f.client, '3', 'a'.repeat(40), f.p), null);
+  f.routes[`/v1/betaGroups/${f.p.groups[0].id}/builds?limit=200`].data = [{ id, type: 'builds' }];
+  assert.equal((await verifyUploaded(f.client, '3', 'a'.repeat(40), f.p)).audience, 'APP_STORE_ELIGIBLE');
+  // A build whose audience differs from policy is rejected in either direction.
+  f.routes['/v1/preReleaseVersions/ios-train/builds?limit=200'].data[0].attributes.buildAudienceType = 'INTERNAL_ONLY';
+  await assert.rejects(() => verifyUploaded(f.client, '3', 'a'.repeat(40), f.p));
+  f.p.buildAudience = 'INTERNAL_ONLY';
+  assert.equal((await verifyUploaded(f.client, '3', 'a'.repeat(40), f.p)).audience, 'INTERNAL_ONLY');
   f.routes['/v1/preReleaseVersions/ios-train/builds?limit=200'].data[0].attributes.buildAudienceType = 'APP_STORE_ELIGIBLE';
   await assert.rejects(() => verifyUploaded(f.client, '3', 'a'.repeat(40), f.p));
 });

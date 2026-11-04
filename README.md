@@ -120,7 +120,7 @@ The **Remaining only** control on Today/Scheduled focuses the selected day on un
 
 Every push to `main` runs server tests, deployment-guard tests, dependency audit, and a container build. The Web E2E workflow checks browser journeys.
 
-Server deployment is manual with `deploy_server=true`; iOS distribution is separately manual with `publish_testflight=true`. Both default to false. Server deployment preserves the existing effective live configuration, retains a rollback image, and replaces only the `daily` service. It never updates runtime credentials, starts dependencies, migrates legacy JSON, creates databases, or prunes shared images. See [`docs/server-release.md`](docs/server-release.md).
+A push to `main` releases everything: the server is deployed and the iOS app is uploaded to TestFlight as an App Store-eligible build, ready to select for review in App Store Connect. Manual Publish runs can still deploy the server (`deploy_server=true`) or upload iOS (`publish_testflight=true`) on their own; both default to false. Server deployment preserves the existing effective live configuration, retains a rollback image, and replaces only the `daily` service. It never updates runtime credentials, starts dependencies, migrates legacy JSON, creates databases, or prunes shared images. See [`docs/server-release.md`](docs/server-release.md).
 
 Native distribution creates current provisioning profiles and uploads to TestFlight after its iOS tests pass. Manual Publish runs can separately upload source-controlled App Store listing metadata and deterministic screenshots. See [`docs/app-store-production.md`](docs/app-store-production.md).
 

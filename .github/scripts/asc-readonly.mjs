@@ -145,8 +145,9 @@ export async function verifyUploaded(client, build, sha, p = policy) {
   check(matches.length <= 1, 'Uploaded build identity is ambiguous.');
   if (!matches.length || matches[0].attributes.processingState === 'PROCESSING') return null;
   const b = matches[0];
+  const expectedAudience = p.buildAudience ?? 'INTERNAL_ONLY';
   check(b.marketingVersion === p.marketingVersion && b.attributes.processingState === 'VALID'
-    && b.attributes.expired === false && b.attributes.buildAudienceType === 'INTERNAL_ONLY', 'Uploaded build failed processing or is not the intended internal-only iOS version.');
+    && b.attributes.expired === false && b.attributes.buildAudienceType === expectedAudience, `Uploaded build failed processing or is not the intended ${expectedAudience} iOS version.`);
   // Apple supports GET betaGroups/{id}/builds, not GET builds/{id}/betaGroups.
   // audience() above already proved the complete app group set is exactly pinned.
   const groups = [];
@@ -158,7 +159,7 @@ export async function verifyUploaded(client, build, sha, p = policy) {
   const testers = await client.list(`/v1/builds/${encodeURIComponent(b.id)}/individualTesters?limit=200`);
   check(testers.length <= 1 && testers.every(t => isApprovedTester(t, p)), 'Uploaded build has an unapproved individual tester.');
   if (!groups.some(g => g.id === p.groups.find(e => e.testers === 1).id)) return null;
-  return { sha, build, appId: p.appId, processing: 'VALID', audience: 'INTERNAL_ONLY', approvedGroupAttached: true };
+  return { sha, build, appId: p.appId, processing: 'VALID', audience: expectedAudience, approvedGroupAttached: true };
 }
 function arg(name) {
   const i = process.argv.indexOf(`--${name}`); check(i >= 0 && process.argv[i + 1], `Missing --${name}.`); return process.argv[i + 1];

@@ -1,6 +1,6 @@
 # Isolated Ritual Cue server release
 
-Pushes validate the server; deployment is manual and serialized with all other shared-host work. Native TestFlight upload and App Store assets are separate manual choices. Do not run the Production Monitor as a read-only smoke test: it performs a synthetic database mutation and can send an alert webhook.
+Every push to `main` validates and then deploys the server through the guarded helper below; a manual Publish run with `deploy_server=true` does the same for an explicit SHA. Runs are serialized by the Publish concurrency group, and the helper's preflight still blocks on configuration drift or a missing rollback revision. App Store listing assets remain manual choices. Do not run the Production Monitor as a read-only smoke test: it performs a synthetic database mutation and can send an alert webhook.
 
 The helper `server/scripts/deploy-service.py` uses the running `deploy/daily` container's recorded Compose files. It requires Docker Compose v2 through `docker-compose`, Python 3, exactly one running Daily container, and unchanged effective service configuration. It compares the current Compose configuration hash and complete resolved environment with the running container in memory. Configuration values are never printed or saved. Existing `SESSION_SECRET` must meet the audited startup requirement, and the existing runtime must use production Postgres. Missing or changed configuration is a blocker for coordinated reconciliation; the helper never rewrites `.env` or creates credentials.
 

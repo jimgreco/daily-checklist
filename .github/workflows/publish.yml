@@ -79,7 +79,8 @@ jobs:
         run: docker build -t daily-server-ci server
 
   deploy-server:
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.deploy_server }}
+    # Every push to main deploys the server; manual runs deploy only when asked.
+    if: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && inputs.deploy_server) }}
     needs: verify-server
     runs-on: ubuntu-latest
     environment: production
@@ -445,7 +446,7 @@ jobs:
         API_BASE_URL: ${{ secrets.IOS_API_BASE_URL }}
         GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_IOS_CLIENT_ID }}
         GOOGLE_REVERSED_CLIENT_ID: ${{ secrets.GOOGLE_IOS_REVERSED_CLIENT_ID }}
-    - name: Export internal-only IPA without provisioning updates
+    - name: Export App Store-eligible IPA without provisioning updates
       run: |
         set -euo pipefail
         python3 .github/scripts/verify-release.py export-options --output "$RELEASE_TEMP/ExportOptions.plist"
