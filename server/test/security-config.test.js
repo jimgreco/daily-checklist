@@ -50,3 +50,31 @@ test('monitor access fails closed and requires an exact configured token', (t) =
   assert.equal(hasMonitorToken(request('synthetic-test-token')), false);
   assert.equal(hasMonitorToken(request('synthetic-generic-token')), true);
 });
+
+test('weekly summary access fails closed and accepts only the hashed bearer token', (t) => {
+  const crypto = require('node:crypto');
+  const { hasWeeklySummaryToken } = require('../src/server');
+  const names = ['WEEKLY_SUMMARY_TOKEN_SHA256', 'WEEKLY_SUMMARY_EMAIL'];
+  const before = names.map((name) => process.env[name]);
+  t.after(() => {
+    names.forEach((name, index) => {
+      if (before[index] === undefined) delete process.env[name];
+      else process.env[name] = before[index];
+    });
+  });
+  names.forEach((name) => delete process.env[name]);
+  const token = 'synthetic-weekly-summary-token';
+  const digest = crypto.createHash('sha256').update(token).digest('hex');
+  const request = (authorization) => ({ headers: authorization === undefined ? {} : { authorization } });
+  assert.equal(hasWeeklySummaryToken(request(`Bearer ${token}`)), false);
+  process.env.WEEKLY_SUMMARY_TOKEN_SHA256 = digest;
+  assert.equal(hasWeeklySummaryToken(request(`Bearer ${token}`)), false, 'email is also required');
+  process.env.WEEKLY_SUMMARY_EMAIL = 'owner@example.test';
+  assert.equal(hasWeeklySummaryToken(request(`Bearer ${token}`)), true);
+  assert.equal(hasWeeklySummaryToken(request(`Bearer ${digest}`)), false);
+  assert.equal(hasWeeklySummaryToken(request('Bearer wrong')), false);
+  assert.equal(hasWeeklySummaryToken(request(token)), false);
+  assert.equal(hasWeeklySummaryToken(request()), false);
+  process.env.WEEKLY_SUMMARY_TOKEN_SHA256 = 'not-a-sha256-digest';
+  assert.equal(hasWeeklySummaryToken(request(`Bearer ${token}`)), false);
+});

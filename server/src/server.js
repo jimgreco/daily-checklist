@@ -1849,6 +1849,112 @@ function hasMonitorToken(request) {
     && crypto.timingSafeEqual(expectedBytes, providedBytes);
 }
 
+// Weekly summary (read-only, consumed by the weekly-review routine). The
+// response `data` mirrors weekly-review's src/sources/checklist.js
+// collectChecklist, but day outcomes come from this server's own reconciliation.
+function hasWeeklySummaryToken(request) {
+  const expected = envValue("WEEKLY_SUMMARY_TOKEN_SHA256").toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(expected) || !envValue("WEEKLY_SUMMARY_EMAIL")) return false;
+  const match = firstHeaderValue(request.headers.authorization).match(/^Bearer (.+)$/);
+  if (!match) return false;
+  const providedBytes = Buffer.from(hash(match[1]), "hex");
+  const expectedBytes = Buffer.from(expected, "hex");
+  return providedBytes.length === expectedBytes.length
+    && crypto.timingSafeEqual(expectedBytes, providedBytes);
+}
+
+function addDateDays(dateKey, days) {
+  const date = new Date(`${dateKey}T00:00:00.000Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+function weekRangeFrom(monday) {
+  const days = Array.from({ length: 7 }, (_, index) => addDateDays(monday, index));
+  return { start: monday, end: days[6], days };
+}
+
+function isMondayDateKey(value) {
+  return validDateKey(value) && new Date(`${value}T00:00:00.000Z`).getUTCDay() === 1;
+}
+
+// Day outcome ("done" | "skipped" | "missed") per scheduled date for one raw
+// item record, following materializeAccount's reconciliation. Works on a deep
+// clone because migrateRecordOccurrences rewrites record.occurrences in place.
+function weeklySummaryDayOutcomes(rawRecord) {
+  const record = structuredClone(rawRecord);
+  record.fields ||= {};
+  migrateRecordOccurrences(record);
+  const value = {};
+  for (const field of itemFields) value[field] = record.fields[field]?.value ?? null;
+  const quantity = Number.isInteger(value.quantity) && value.quantity > 0 ? Math.min(value.quantity, 99) : 1;
+  const legacyDayState = reconciledLegacyDayState(record, value, quantity);
+  const outcomes = {};
+  for (const date of legacyDayState.skippedDates) outcomes[date] = "skipped";
+  for (const date of legacyDayState.completedDates) outcomes[date] = "done";
+  // The legacy state never reports missed; read it from the authoritative occurrence.
+  for (const [date, { state }] of authoritativeOccurrenceStates(record)) {
+    if (state.value.outcome === "missed") outcomes[date] = "missed";
+  }
+  return outcomes;
+}
+
+function summarizeWeeklyChecklist(items, groups, week, prev) {
+  const live = Object.values(items || {})
+    .filter((record) => record && !record.deleted)
+    .map((record) => ({ record, outcomes: weeklySummaryDayOutcomes(record) }));
+  const field = (record, name) => record.fields?.[name]?.value ?? null;
+  const countIn = (outcomes, range, kind) => range.days.filter((date) => outcomes[date] === kind).length;
+  const rows = [];
+  for (const { record, outcomes } of live) {
+    const endedAt = field(record, "endedAt");
+    if (endedAt && String(endedAt).slice(0, 10) < prev.start) continue;
+    const groupID = field(record, "groupID");
+    rows.push({
+      title: field(record, "title") || "Untitled",
+      group: groupID ? groups?.[groupID]?.fields?.name?.value ?? null : null,
+      done: countIn(outcomes, week, "done"),
+      missed: countIn(outcomes, week, "missed"),
+      skipped: countIn(outcomes, week, "skipped"),
+      donePrev: countIn(outcomes, prev, "done")
+    });
+  }
+  const active = rows.filter((row) => row.done + row.missed + row.skipped + row.donePrev > 0);
+  const total = (key) => active.reduce((sum, row) => sum + row[key], 0);
+  return {
+    trackedItems: active.length,
+    doneCount: total("done"),
+    doneCountPrev: total("donePrev"),
+    missedCount: total("missed"),
+    perDayDone: week.days.map((date) => ({
+      date,
+      done: live.filter(({ outcomes }) => outcomes[date] === "done").length
+    })),
+    mostConsistent: [...active].sort((left, right) => right.done - left.done).filter((row) => row.done > 0).slice(0, 4),
+    slipping: active.filter((row) => row.donePrev >= 2 && row.done === 0).map((row) => row.title),
+    mostMissed: active.filter((row) => row.missed > 0).sort((left, right) => right.missed - left.missed).slice(0, 3)
+  };
+}
+
+function weeklySummary(database, email, monday) {
+  const week = weekRangeFrom(monday);
+  const prev = weekRangeFrom(addDateDays(monday, -7));
+  const wanted = normalizeEmail(email);
+  const userID = Object.entries(database.users || {})
+    .find(([, user]) => normalizeEmail(user?.email) === wanted)?.[0];
+  const account = userID ? database.accounts?.[userID] : null;
+  const data = userID
+    ? { status: "ok", ...summarizeWeeklyChecklist(account?.items, account?.groups, week, prev) }
+    : { status: "no-account" };
+  return {
+    version: 1,
+    app: "checklist",
+    week: { start: week.start, end: week.end },
+    generatedAt: new Date().toISOString(),
+    data
+  };
+}
+
 function runMonitorSyncProbe(database) {
   const now = new Date().toISOString();
   const user = upsertUser(database, "monitor", "production-sync", {
@@ -2120,6 +2226,20 @@ const server = http.createServer(async (request, response) => {
       const result = await store.update((database) => runMonitorSyncProbe(database));
       return send(response, 200, result);
     }
+    if (request.method === "GET" && pathname === "/api/weekly-summary") {
+      if (await enforceRateLimit(request, response, "api-weekly-summary", { limit: 30, windowMs: 15 * 60_000 })) return;
+      // Only the summary token is accepted here; user session JWTs are never checked.
+      if (!hasWeeklySummaryToken(request)) return send(response, 404, { error: "Not found" });
+      const monday = requestURL.searchParams.get("week");
+      if (!isMondayDateKey(monday)) return send(response, 400, { error: "week must be a Monday (YYYY-MM-DD)" });
+      try {
+        const database = await store.read();
+        return send(response, 200, weeklySummary(database, envValue("WEEKLY_SUMMARY_EMAIL"), monday));
+      } catch (error) {
+        console.error(error);
+        return send(response, 500, { error: "internal" });
+      }
+    }
     const disableMatch = pathname.match(/^\/api\/admin\/users\/([^/]+)\/disable$/);
     if (request.method === "POST" && disableMatch) {
       if (await enforceRateLimit(request, response, "api-admin-disable", { limit: 20, windowMs: 15 * 60_000 })) return;
@@ -2307,5 +2427,7 @@ module.exports = {
   trustedProxyHops,
   recurrenceMatchesDate,
   nextRecurrenceDates,
-  hasMonitorToken
+  hasMonitorToken,
+  hasWeeklySummaryToken,
+  summarizeWeeklyChecklist
 };
