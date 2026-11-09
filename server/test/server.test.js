@@ -181,6 +181,207 @@ test("monitor sync probe rejects the monitor header when no runtime token is con
   }
 });
 
+const weeklySummaryEnvNames = ["WEEKLY_SUMMARY_TOKEN_SHA256", "WEEKLY_SUMMARY_EMAIL"];
+
+async function withWeeklySummaryEnv(values, run) {
+  const previous = weeklySummaryEnvNames.map((name) => process.env[name]);
+  for (const name of weeklySummaryEnvNames) {
+    if (values[name] === undefined) delete process.env[name];
+    else process.env[name] = values[name];
+  }
+  try {
+    return await run();
+  } finally {
+    weeklySummaryEnvNames.forEach((name, index) => restoreEnv(name, previous[index]));
+  }
+}
+
+function weeklySummaryFetch(week, token) {
+  const headers = token === undefined ? {} : { authorization: `Bearer ${token}` };
+  return fetch(`${baseURL}/api/weekly-summary?week=${encodeURIComponent(week)}`, { headers });
+}
+
+function weeklySummaryDataFile() {
+  return process.env.DATA_FILE || require("node:path").join(__dirname, "..", "data", "database.json");
+}
+
+test("weekly summary is a 404 unless its token and email are configured and presented", async (t) => {
+  resetRateLimits();
+  // Leave later tests the auth-dev budget they expect.
+  t.after(() => resetRateLimits());
+  const token = `weekly-${crypto.randomUUID()}`;
+  const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+  const auth = await devLogin(`weekly-auth-${crypto.randomUUID()}@ritualcue.local`, "Weekly Auth");
+
+  await withWeeklySummaryEnv({}, async () => {
+    assert.equal((await weeklySummaryFetch("2026-10-26", token)).status, 404);
+  });
+  await withWeeklySummaryEnv({ WEEKLY_SUMMARY_TOKEN_SHA256: tokenHash }, async () => {
+    assert.equal((await weeklySummaryFetch("2026-10-26", token)).status, 404);
+  });
+  await withWeeklySummaryEnv({ WEEKLY_SUMMARY_TOKEN_SHA256: "  ", WEEKLY_SUMMARY_EMAIL: "a@b.c" }, async () => {
+    assert.equal((await weeklySummaryFetch("2026-10-26", token)).status, 404);
+  });
+  await withWeeklySummaryEnv({ WEEKLY_SUMMARY_TOKEN_SHA256: tokenHash, WEEKLY_SUMMARY_EMAIL: "a@b.c" }, async () => {
+    const missing = await weeklySummaryFetch("2026-10-26");
+    assert.equal(missing.status, 404);
+    assert.deepEqual(await missing.json(), { error: "Not found" });
+    assert.equal((await weeklySummaryFetch("2026-10-26", `${token}x`)).status, 404);
+    // The plaintext hash itself is not a valid bearer token.
+    assert.equal((await weeklySummaryFetch("2026-10-26", tokenHash)).status, 404);
+    // A valid user session JWT is never accepted on this route.
+    assert.equal((await weeklySummaryFetch("2026-10-26", auth.token)).status, 404);
+    // The summary token is not accepted on user routes.
+    assert.equal((await fetch(`${baseURL}/auth/me`, { headers: { authorization: `Bearer ${token}` } })).status, 401);
+
+    for (const week of ["2026-10-27", "2026-02-30", "2026-10-26T00:00:00Z", "", "garbage"]) {
+      const bad = await weeklySummaryFetch(week, token);
+      assert.equal(bad.status, 400, week);
+      assert.deepEqual(await bad.json(), { error: "week must be a Monday (YYYY-MM-DD)" });
+    }
+    const noWeek = await fetch(`${baseURL}/api/weekly-summary`, { headers: { authorization: `Bearer ${token}` } });
+    assert.equal(noWeek.status, 400);
+  });
+
+  // An uppercase configured hash still matches.
+  await withWeeklySummaryEnv({ WEEKLY_SUMMARY_TOKEN_SHA256: tokenHash.toUpperCase(), WEEKLY_SUMMARY_EMAIL: "nobody@ritualcue.local" }, async () => {
+    const response = await weeklySummaryFetch("2026-10-26", token);
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.deepEqual(body.data, { status: "no-account" });
+  });
+});
+
+test("weekly summary reports reconciled checklist outcomes without writing the store", async (t) => {
+  resetRateLimits();
+  // Leave later tests the auth-dev budget they expect.
+  t.after(() => resetRateLimits());
+  const suffix = crypto.randomUUID();
+  const email = `Weekly-${suffix}@RitualCue.local`;
+  const auth = await devLogin(email, "Weekly Summary");
+  const token = `weekly-${crypto.randomUUID()}`;
+  const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+  const stamp = (minute) => `2026-11-01T10:${String(minute).padStart(2, "0")}:00.000Z`;
+  let sequence = 0;
+  const upsert = (itemID, item) => ({
+    id: `weekly-upsert-${suffix}-${sequence += 1}`,
+    itemID,
+    kind: "upsert",
+    stamp: stamp(1),
+    changedFields: Object.keys(item),
+    item: { createdAt: "2026-10-01T09:00:00.000Z", ...item }
+  });
+  const completion = (itemID, completionDate, minute = 2) => ({
+    id: `weekly-completion-${suffix}-${sequence += 1}`,
+    itemID,
+    kind: "completion",
+    stamp: stamp(minute),
+    completionDate,
+    completed: true
+  });
+  const occurrence = (itemID, occurrenceDate, outcome, minute = 3) => ({
+    id: `weekly-occurrence-${suffix}-${sequence += 1}`,
+    itemID,
+    kind: "occurrence",
+    stamp: stamp(minute),
+    occurrenceDate,
+    occurrence: {
+      outcome,
+      completionCount: outcome === "done" ? 1 : 0,
+      resolvedDate: outcome === "open" ? null : occurrenceDate,
+      hiddenUntil: null
+    }
+  });
+  const walk = `walk-${suffix}`;
+  const read = `read-${suffix}`;
+  const stretch = `stretch-${suffix}`;
+  const gone = `gone-${suffix}`;
+  const reopened = `reopened-${suffix}`;
+  const groupID = `health-${suffix}`;
+
+  await syncDevice(auth.token, "weekly-device-a", [
+    {
+      id: `weekly-group-${suffix}`,
+      groupID,
+      kind: "groupUpsert",
+      stamp: stamp(0),
+      changedFields: ["name", "sortOrder", "isCollapsed"],
+      group: { name: "Health", sortOrder: 0, isCollapsed: false }
+    },
+    upsert(walk, { title: "Walk", groupID }),
+    completion(walk, "2026-10-20"),
+    completion(walk, "2026-10-26"),
+    completion(walk, "2026-10-27"),
+    completion(walk, "2026-10-28"),
+    occurrence(walk, "2026-10-29", "missed"),
+    completion(walk, "2026-11-02"),
+    upsert(read, { title: "Read" }),
+    completion(read, "2026-10-19"),
+    completion(read, "2026-10-20"),
+    completion(read, "2026-10-21"),
+    // Legacy skippedDates count as skipped (server semantics).
+    upsert(stretch, { title: "Stretch", skippedDates: ["2026-10-27"] }),
+    occurrence(stretch, "2026-10-28", "skipped"),
+    completion(stretch, "2026-10-30"),
+    occurrence(stretch, "2026-10-30", "missed"),
+    occurrence(stretch, "2026-10-31", "missed"),
+    upsert(gone, { title: "Gone" }),
+    completion(gone, "2026-10-26"),
+    completion(gone, "2026-10-27"),
+    { id: `weekly-delete-${suffix}`, itemID: gone, kind: "delete", stamp: stamp(9) },
+    // An open occurrence overrides a legacy completion.
+    upsert(reopened, { title: "Reopened" }),
+    completion(reopened, "2026-10-26"),
+    occurrence(reopened, "2026-10-26", "open")
+  ]);
+
+  await withWeeklySummaryEnv({ WEEKLY_SUMMARY_TOKEN_SHA256: tokenHash, WEEKLY_SUMMARY_EMAIL: ` ${email.toLowerCase()} ` }, async () => {
+    const before = await require("node:fs/promises").readFile(weeklySummaryDataFile());
+    const response = await weeklySummaryFetch("2026-10-26", token);
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get("content-type"), /^application\/json/);
+    assert.equal(response.headers.get("cache-control"), "no-store");
+    const body = await response.json();
+    const after = await require("node:fs/promises").readFile(weeklySummaryDataFile());
+    assert.ok(before.equals(after), "weekly summary must not write the store");
+
+    assert.equal(body.version, 1);
+    assert.equal(body.app, "checklist");
+    assert.deepEqual(body.week, { start: "2026-10-26", end: "2026-11-01" });
+    assert.ok(!Number.isNaN(Date.parse(body.generatedAt)));
+    const walkRow = { title: "Walk", group: "Health", done: 3, missed: 1, skipped: 0, donePrev: 1 };
+    const stretchRow = { title: "Stretch", group: null, done: 0, missed: 2, skipped: 2, donePrev: 0 };
+    assert.deepEqual(body.data, {
+      status: "ok",
+      trackedItems: 3,
+      doneCount: 3,
+      doneCountPrev: 4,
+      missedCount: 3,
+      perDayDone: [
+        { date: "2026-10-26", done: 1 },
+        { date: "2026-10-27", done: 1 },
+        { date: "2026-10-28", done: 1 },
+        { date: "2026-10-29", done: 0 },
+        { date: "2026-10-30", done: 0 },
+        { date: "2026-10-31", done: 0 },
+        { date: "2026-11-01", done: 0 }
+      ],
+      mostConsistent: [walkRow],
+      slipping: ["Read"],
+      mostMissed: [stretchRow, walkRow]
+    });
+
+    const nextWeek = await (await weeklySummaryFetch("2026-11-02", token)).json();
+    assert.equal(nextWeek.data.doneCount, 1);
+    assert.equal(nextWeek.data.doneCountPrev, 3);
+    // Walk was done 3 times last week and once this week, so it is not slipping.
+    assert.deepEqual(nextWeek.data.slipping, []);
+    assert.deepEqual(nextWeek.data.mostConsistent.map((row) => [row.title, row.done, row.donePrev]), [["Walk", 1, 3]]);
+    const after2 = await require("node:fs/promises").readFile(weeklySummaryDataFile());
+    assert.ok(before.equals(after2));
+  });
+});
+
 test("rate limits use direct addresses unless trusted proxy hops are explicit", () => {
   const previousTrustProxy = process.env.TRUST_PROXY;
   const previousTrustProxyHops = process.env.TRUST_PROXY_HOPS;

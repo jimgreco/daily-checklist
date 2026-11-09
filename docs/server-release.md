@@ -18,6 +18,19 @@ The rollback commit normally comes from the running container's `deployment.json
 
 The helper does not start dependencies, migrate legacy JSON, create databases, change database grants, prune images, change network settings, or send provider requests. A process failure after replacement leaves the rollback image and `~/deploy/release-records/daily-<sha>.json` intact. It never automatically restores a database or retries a partially recorded release.
 
+## Weekly summary endpoint
+
+`GET /api/weekly-summary?week=<monday>` is a read-only report for the weekly-review routine (contract: `weekly-review/docs/weekly-summary-contract.md`). It reads two runtime variables:
+
+| Variable | Meaning |
+|---|---|
+| `WEEKLY_SUMMARY_TOKEN_SHA256` | Lowercase hex SHA-256 of the routine's bearer token. The plaintext token is never stored on the server. |
+| `WEEKLY_SUMMARY_EMAIL` | The one account the endpoint reports on, matched case-insensitively. |
+
+If either is unset, the route answers 404, so shipping the code is inert. The route accepts only this token (never a user session JWT), is rate-limited per client, and uses `store.read()` only: no audit events, sessions, or account changes.
+
+Enabling it is a separate owner step, not part of a release. Generate the token with `openssl rand -base64 32 | tr -d '=+/' | cut -c1-40`, put `printf %s "$TOKEN" | shasum -a 256 | cut -d' ' -f1` and the email into the live `deploy/daily` Compose environment, and recreate the container so the running environment matches. Because `deploy-service.py` fails on any difference between the configured and running environment, do not edit the Compose environment without recreating the container, and do not combine this with a release. Store `$TOKEN` only in the weekly-review routine's environment.
+
 ## Recovery
 
 Inspect the non-secret recovery record. If replacement failed, retain all images and serialize rollback with the coordinator. Confirm current effective configuration has not drifted. If `previousImageName` is a mutable tag, retag `previousImage` as that name; if it is already the same immutable image ID, no retag is needed. Invoke the record's original `compose` command (without the new image override) with `up -d --no-deps --no-build daily`. Verify `/health`, the restored immutable image ID, and the record's `previousSha` using its recorded metadata or image-label source. Those actions restore only the prior app image; they do not restore or alter user data. This audit introduces no database migration, so no database rollback is needed.
