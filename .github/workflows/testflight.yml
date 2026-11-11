@@ -24,7 +24,7 @@ jobs:
     - uses: actions/setup-node@v5
       with:
         node-version: 22
-    - uses: jimgreco/release-tools/ios/prepare@ff61f1c6a6eb51ea982246473203bcc903ce8153
+    - uses: jimgreco/release-tools/ios/prepare@082f38d35995b50526c43da11fa6a9e73300fd4d
       with:
         policy: .github/scripts/release-policy.json
         app-store-connect-key-id: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
@@ -34,7 +34,7 @@ jobs:
         dist-cert-password: ${{ secrets.IOS_DIST_CERT_PASSWORD }}
         keychain-password: ${{ secrets.KEYCHAIN_PASSWORD }}
     # No configure-plist step: Ritual Cue injects its values through build settings.
-    - uses: jimgreco/release-tools/ios/upload@ff61f1c6a6eb51ea982246473203bcc903ce8153
+    - uses: jimgreco/release-tools/ios/upload@082f38d35995b50526c43da11fa6a9e73300fd4d
       env:
         API_BASE_URL: ${{ secrets.IOS_API_BASE_URL }}
         GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_IOS_CLIENT_ID }}
@@ -49,5 +49,5 @@ jobs:
           API_BASE_URL=@ENV:API_BASE_URL@
           GOOGLE_CLIENT_ID=@ENV:GOOGLE_CLIENT_ID@
           GOOGLE_REVERSED_CLIENT_ID=@ENV:GOOGLE_REVERSED_CLIENT_ID@
-    - uses: jimgreco/release-tools/ios/cleanup@ff61f1c6a6eb51ea982246473203bcc903ce8153
+    - uses: jimgreco/release-tools/ios/cleanup@082f38d35995b50526c43da11fa6a9e73300fd4d
       if: always()
