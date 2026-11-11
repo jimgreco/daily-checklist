@@ -1,6 +1,6 @@
 # Existing-assets-only iOS TestFlight release
 
-This path uploads only the iOS app and its approved extensions to the existing App Store Connect record. `release-policy.json` pins the existing profile UUIDs and public certificate fingerprint, app identity, production origin, marketing version, and Jim-only internal audience verified on 2026-10-03. Empty existing groups are allowed only as explicitly listed. Every Apple preflight request is GET. Missing or changed signing assets, audience, build history, or authentication stop the release; they never trigger account repair.
+This path uploads only the iOS app and its approved extensions to the existing App Store Connect record. The engine is the shared `jimgreco/release-tools/ios` actions (`prepare`, `upload`, `cleanup`), pinned by commit in the Publish `testflight` job; this repository keeps only its policy, `.github/scripts/release-policy.json`. The policy pins the existing profile UUIDs and public certificate fingerprint, app identity, production origin, marketing version, and Jim-only internal audience verified on 2026-10-03. Empty existing groups are allowed only as explicitly listed. Every Apple preflight request is GET. Missing or changed signing assets, audience, build history, or authentication stop the release; they never trigger account repair.
 
 The workflow imports this repository's existing signing identity into a temporary runner keychain. It downloads the pinned existing profiles, verifies live certificate/profile resources and decoded entitlements, preserves any cached profile with the same UUID, and signs/exports manually without provisioning-update flags. Export is App Store-eligible as set by `buildAudience` in the release policy (TestFlight distribution remains limited to the approved internal group), preserves the exact Git-count build number, and embeds the full source SHA. The exported app and all approved extensions must match the expected source, build, version, platform, signing identity, profiles, and required entitlements. Current signing state, audience, and build availability are rechecked immediately before the sole binary upload.
 
@@ -9,13 +9,13 @@ Ownership was cleared on 2026-10-03. Main pushes automatically run the guarded i
 ## Local checks
 
 ```sh
-node --test .github/scripts/release-guard-tests.mjs
-PYTHONDONTWRITEBYTECODE=1 python3 .github/scripts/test_release.py
+python3 <release-tools>/ios/scripts/verify-release.py validate-policy --policy .github/scripts/release-policy.json
+node <release-tools>/ios/scripts/asc-readonly.mjs validate-policy --policy .github/scripts/release-policy.json
 actionlint .github/workflows/publish.yml
 git diff --check
 ```
 
-Tests use synthetic in-memory responses and temporary files. They neither read real private keys nor contact Apple. Passing these tests does not prove current Apple validity, accepted version-train status, successful signing, successful upload, tester availability, or device acceptance. The actual authenticated GET checks and final artifact verification must pass during release. A successful uploader response is followed by a separate processing/internal-group availability check; if that times out, inspect the existing Apple build before retrying.
+The engine's own guard tests run in release-tools CI against the pinned commit. They use synthetic in-memory responses and temporary files. They neither read real private keys nor contact Apple. Passing these tests does not prove current Apple validity, accepted version-train status, successful signing, successful upload, tester availability, or device acceptance. The actual authenticated GET checks and final artifact verification must pass during release. A successful uploader response is followed by a separate processing/internal-group availability check; if that times out, inspect the existing Apple build before retrying.
 
 ## Authentication and scope
 

@@ -1,0 +1,30 @@
+{
+  "app": "daily",
+  "image": "ghcr.io/jimgreco/daily-checklist",
+  "images": [
+    {
+      "context": "server",
+      "dockerfile": "server/Dockerfile",
+      "prebuild": "node -e 'require(\"node:fs\").writeFileSync(\"server/src/deployment.json\", JSON.stringify({ buildHash: process.env.GITHUB_SHA, deployedAt: new Date().toISOString() }) + \"\\n\")'"
+    }
+  ],
+  "profile": "daily",
+  "services": {
+    "daily": {
+      "health": [
+        "node",
+        "-e",
+        "const fs=require(\"node:fs\");const d=JSON.parse(fs.readFileSync(\"/app/src/deployment.json\",\"utf8\"));const b=(process.env.DEPLOYMENT_SHA||\"\").trim()||d.buildHash;if(b!==process.argv[1])process.exit(1);fetch(\"http://127.0.0.1:8787/health\").then(async r=>{const j=await r.json();process.exit(r.ok&&j.ok===true?0:1)}).catch(()=>process.exit(1))",
+        "{sha}"
+      ]
+    }
+  },
+  "legacy_overrides": [
+    "daily-image-[0-9a-f]{40}\\.json"
+  ],
+  "backup": {
+    "database": "daily_checklist",
+    "require_table": "daily_app_state",
+    "keep": 20
+  }
+}
