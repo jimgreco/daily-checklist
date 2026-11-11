@@ -43,7 +43,7 @@ jobs:
           ssh-keygen -y -P '' -f "$auth_dir/key" > "$auth_dir/client.pub" 2>/dev/null \
             || fail 'The configured client key cannot be used without a passphrase.'
           client_fingerprint=$(ssh-keygen -lf "$auth_dir/client.pub" -E sha256 | awk '{print $2}')
-          [[ "$client_fingerprint" == 'SHA256:aqFmJE+P63UxmrP+MnXpzVCd1yL7KoOgTRp2NWloLrg' ]] \
+          [[ "$client_fingerprint" == 'SHA256:eFv9kirClDwtcqJhkRr7nJNeP1wdX9xcoPaAv6OTqtk' ]] \
             || fail 'The configured client key is not the approved replacement key.'
 
           # This server key was obtained through the authenticated EC2 console session.
