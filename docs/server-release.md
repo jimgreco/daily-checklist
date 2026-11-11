@@ -1,6 +1,6 @@
 # Isolated Ritual Cue server release
 
-Every push to `main` validates and then releases the server; a manual Publish run with `deploy_server=true` does the same for the dispatched commit. The `deploy-server` job in `.github/workflows/publish.yml` calls the shared reusable workflow `jimgreco/release-tools/.github/workflows/server-release.yml`, pinned by commit (`ff61f1c6a6eb51ea982246473203bcc903ce8153`, also passed as `tools_ref`). The release manifest is `.github/release/server.json`; its format and the full procedure are documented in release-tools' `server/README.md`. App Store listing assets remain manual choices. Do not run the Production Monitor as a read-only smoke test: it performs a synthetic database mutation and can send an alert webhook.
+Every push to `main` validates and then releases the server; a manual Release run on `main` with the `server` checkbox does the same for the dispatched commit. The `server` job in `.github/workflows/release.yml` (after `verify`) calls the shared reusable workflow `jimgreco/release-tools/.github/workflows/server-release.yml`, pinned by commit (`ff61f1c6a6eb51ea982246473203bcc903ce8153`, also passed as `tools_ref`). The release manifest is `.github/release/server.json`; its format and the full procedure are documented in release-tools' `server/README.md`. App Store listing assets remain manual choices. Do not run the Production Monitor as a read-only smoke test: it performs a synthetic database mutation and can send an alert webhook.
 
 What a release does:
 
@@ -26,6 +26,6 @@ Enabling it is a separate owner step, not part of a release. Generate the token 
 
 ## Recovery
 
-A failed health check rolls back automatically. For a later manual rollback, inspect `~/deploy/release-records/daily-<sha>.json`: it records the previous container, image ID, rollback tag and the Compose file chain. Serialize with any other host release, then recreate `daily` from the recorded `previousFiles` chain with `up -d --no-deps --no-build daily`, or re-run the Publish workflow for the previous good commit. That restores only the prior app image; it does not restore or alter user data.
+A failed health check rolls back automatically. For a later manual rollback, inspect `~/deploy/release-records/daily-<sha>.json`: it records the previous container, image ID, rollback tag and the Compose file chain. Serialize with any other host release, then recreate `daily` from the recorded `previousFiles` chain with `up -d --no-deps --no-build daily`, or re-run the Release workflow for the previous good commit. That restores only the prior app image; it does not restore or alter user data.
 
 If the configuration guard fails or the live container changed during a release, stop and reconcile the host first. Do not bypass the checks or restart shared services to make a release proceed.

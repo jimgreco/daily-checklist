@@ -118,11 +118,11 @@ The **Remaining only** control on Today/Scheduled focuses the selected day on un
 
 ## Publishing
 
-Every push to `main` runs server tests, dependency audit, and a container build. The Web E2E workflow checks browser journeys.
+The Release workflow (`.github/workflows/release.yml`) runs `verify.yml` on every pull request and push to `main`: server tests, dependency audit, a container build, Playwright browser journeys, and iOS unit tests.
 
-A push to `main` releases everything: the server is deployed and the iOS app is uploaded to TestFlight as an App Store-eligible build, ready to select for review in App Store Connect. Manual Publish runs can still deploy the server (`deploy_server=true`) or upload iOS (`publish_testflight=true`) on their own; both default to false. Server deployment uses the shared release-tools workflow: it publishes an exact-commit image to GHCR, refuses on live configuration drift, backs up the database, retains a rollback image, and replaces only the `daily` service. It never updates runtime credentials, starts dependencies, migrates legacy JSON, creates databases, or prunes shared images. See [`docs/server-release.md`](docs/server-release.md).
+A push to `main` releases everything: the server is deployed and the iOS app is uploaded to TestFlight as an App Store-eligible build, ready to select for review in App Store Connect. Manual Release runs on `main` verify, then release what their `server` and `ios` checkboxes select (both default to true). Server deployment uses the shared release-tools workflow: it publishes an exact-commit image to GHCR, refuses on live configuration drift, backs up the database, retains a rollback image, and replaces only the `daily` service. It never updates runtime credentials, starts dependencies, migrates legacy JSON, creates databases, or prunes shared images. See [`docs/server-release.md`](docs/server-release.md).
 
-Native distribution signs with the pinned existing provisioning profiles through the shared release-tools iOS actions and uploads to TestFlight after its iOS tests pass. Manual Publish runs can separately upload source-controlled App Store listing metadata and deterministic screenshots. See [`docs/app-store-production.md`](docs/app-store-production.md).
+Native distribution signs with the pinned existing provisioning profiles through the shared release-tools iOS actions and uploads to TestFlight (`testflight.yml`) after verify, including the iOS tests, passes. The manual App Store workflow (`app-store.yml`) can separately upload source-controlled App Store listing metadata and deterministic screenshots. See [`docs/app-store-production.md`](docs/app-store-production.md).
 
 Production database protection includes daily encrypted S3 logical dumps, a separate freshness monitor, disposable restore drills, and daily EBS snapshots. See [`docs/database-backups.md`](docs/database-backups.md) for schedules, alerts, inspection, and recovery steps.
 

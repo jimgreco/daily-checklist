@@ -1,0 +1,140 @@
+name: App Store
+
+# Manual-only App Store tooling: listing metadata, screenshots and submit for
+# review. Releases (server and TestFlight) run from release.yml.
+on:
+  workflow_dispatch:
+    inputs:
+      update_app_store_metadata:
+        description: Upload source-controlled App Store listing metadata to the editable version
+        required: true
+        type: choice
+        default: "false"
+        options:
+          - "false"
+          - "true"
+      update_app_store_screenshots:
+        description: Generate screenshots and replace screenshots on the editable App Store version
+        required: true
+        type: choice
+        default: "false"
+        options:
+          - "false"
+          - "true"
+      submit_for_review:
+        description: Attach review_build to the editable App Store version (with source metadata) and submit it for review
+        required: true
+        type: choice
+        default: "false"
+        options:
+          - "false"
+          - "true"
+      review_build:
+        description: Exact uploaded build number to submit for review, e.g. 152
+        required: false
+        type: string
+      review_release:
+        description: After approval, release automatically or wait for a manual release
+        required: true
+        type: choice
+        default: manual
+        options:
+          - manual
+          - automatic
+      app_store_version:
+        description: Optional App Store version override; defaults to Xcode MARKETING_VERSION
+        required: false
+        type: string
+      screenshot_devices:
+        description: Comma-separated simulator names for screenshot capture
+        required: true
+        type: string
+        default: "iPhone 17 Pro Max,iPad Pro 13-inch (M5)"
+
+concurrency:
+  group: app-store-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  app-store-assets:
+    if: ${{ github.event_name == 'workflow_dispatch' && (inputs.update_app_store_metadata == 'true' || inputs.update_app_store_screenshots == 'true' || inputs.submit_for_review == 'true') }}
+    runs-on: macos-latest
+    environment: production
+    timeout-minutes: 45
+    env:
+      FASTLANE_SKIP_UPDATE_CHECK: "1"
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Validate App Store Connect configuration
+        env:
+          ASC_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          ASC_API_KEY: ${{ secrets.APP_STORE_CONNECT_API_KEY }}
+        run: |
+          set -euo pipefail
+          for name in ASC_KEY_ID ASC_ISSUER_ID ASC_API_KEY; do
+            test -n "${!name}" || { echo "Missing required secret: $name"; exit 1; }
+          done
+
+      - name: Select Xcode
+        run: |
+          set -euo pipefail
+          for path in /Applications/Xcode_26.2.app /Applications/Xcode_26.1.app /Applications/Xcode_26.0.app /Applications/Xcode_26.app /Applications/Xcode.app; do
+            if [ -d "$path" ]; then
+              sudo xcode-select -s "$path/Contents/Developer"
+              break
+            fi
+          done
+          xcodebuild -version
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.3"
+          bundler-cache: false
+
+      - name: Install Fastlane
+        run: bundle install
+
+      - name: Generate App Store screenshots
+        if: ${{ inputs.update_app_store_screenshots == 'true' }}
+        env:
+          SCREENSHOT_DEVICES: ${{ inputs.screenshot_devices }}
+        run: bundle exec fastlane ios screenshots
+
+      - name: Upload screenshot artifact
+        if: ${{ inputs.update_app_store_screenshots == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-store-screenshots
+          path: fastlane/screenshots
+          if-no-files-found: error
+
+      - name: Upload App Store metadata
+        if: ${{ inputs.update_app_store_metadata == 'true' }}
+        env:
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APP_STORE_CONNECT_API_KEY: ${{ secrets.APP_STORE_CONNECT_API_KEY }}
+          APP_STORE_VERSION: ${{ inputs.app_store_version }}
+        run: bundle exec fastlane ios upload_metadata
+
+      - name: Upload App Store screenshots
+        if: ${{ inputs.update_app_store_screenshots == 'true' }}
+        env:
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APP_STORE_CONNECT_API_KEY: ${{ secrets.APP_STORE_CONNECT_API_KEY }}
+          APP_STORE_VERSION: ${{ inputs.app_store_version }}
+        run: bundle exec fastlane ios upload_screenshots
+
+      - name: Submit build for App Store review
+        if: ${{ inputs.submit_for_review == 'true' }}
+        env:
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APP_STORE_CONNECT_API_KEY: ${{ secrets.APP_STORE_CONNECT_API_KEY }}
+          APP_STORE_VERSION: ${{ inputs.app_store_version }}
+          REVIEW_BUILD: ${{ inputs.review_build }}
+          REVIEW_RELEASE: ${{ inputs.review_release }}
+        run: bundle exec fastlane ios submit_review
