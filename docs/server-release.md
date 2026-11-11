@@ -1,6 +1,6 @@
 # Isolated Ritual Cue server release
 
-Every push to `main` validates and then releases the server; a manual Release run on `main` with the `server` checkbox does the same for the dispatched commit. The `server` job in `.github/workflows/release.yml` (after `verify`) calls the shared reusable workflow `jimgreco/release-tools/.github/workflows/server-release.yml`, pinned by commit (`ff61f1c6a6eb51ea982246473203bcc903ce8153`, also passed as `tools_ref`). The release manifest is `.github/release/server.json`; its format and the full procedure are documented in release-tools' `server/README.md`. App Store listing assets remain manual choices. Do not run the Production Monitor as a read-only smoke test: it performs a synthetic database mutation and can send an alert webhook.
+Every push to `main` validates and then releases the server; a manual Release run on `main` with the `server` checkbox does the same for the dispatched commit. The `server` job in `.github/workflows/release.yml` (after `verify`) calls the shared reusable workflow `jimgreco/release-tools/.github/workflows/server-release.yml`, pinned by commit (`082f38d35995b50526c43da11fa6a9e73300fd4d`, also passed as `tools_ref`). The release manifest is `.github/release/server.json`; its format and the full procedure are documented in release-tools' `server/README.md`. App Store listing assets remain manual choices. Do not run the Production Monitor as a read-only smoke test: it performs a synthetic database mutation and can send an alert webhook.
 
 What a release does:
 

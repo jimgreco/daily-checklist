@@ -28,7 +28,7 @@ jobs:
     - uses: actions/checkout@v5
       with:
         repository: jimgreco/release-tools
-        ref: ff61f1c6a6eb51ea982246473203bcc903ce8153
+        ref: 082f38d35995b50526c43da11fa6a9e73300fd4d
         path: .release-tools
         persist-credentials: false
     - uses: actions/setup-node@v5
