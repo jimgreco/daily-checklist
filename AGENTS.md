@@ -27,8 +27,13 @@
 - Server changes: `npm --prefix server test`; browser journeys:
   `npm --prefix server run test:e2e`; native changes use the Xcode targets in
   `project.yml`. Preserve cached tools and run only relevant local checks.
-- Publishing: `.github/workflows/publish.yml` and `docs/app-store-production.md`;
-  backup/recovery: `docs/database-backups.md`. A Publish result includes both
+- Publishing: `.github/workflows/release.yml` (standard release-tools template;
+  calls `verify.yml` then `testflight.yml`), manual `app-store.yml`, and
+  `docs/app-store-production.md`.
+  Server and TestFlight releases run through the shared `jimgreco/release-tools`
+  engines pinned by commit; this repo keeps only `.github/release/server.json`
+  (see `docs/server-release.md`) and `.github/scripts/release-policy.json`;
+  backup/recovery: `docs/database-backups.md`. A Release run includes both
   server deployment and iOS upload; inspect each applicable result.
 
 ## Database runtime and migration boundary

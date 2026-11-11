@@ -1,14 +1,13 @@
 # Production App Store Release
 
-Pushes to `main` run server tests, dependency audit, and a container build. The separate Web E2E workflow checks browser journeys. Main pushes also deploy the server and run the guarded iOS TestFlight path using existing signing assets. The uploaded build is App Store-eligible (`buildAudience` in `.github/scripts/release-policy.json`): it is distributed only to the approved internal TestFlight group and can be selected for App Store review. Submitting for review stays manual.
+The Release workflow (`.github/workflows/release.yml`) runs `verify.yml` (server tests, dependency audit, container build, Playwright browser journeys, iOS unit tests) on pull requests and pushes to `main`. Main pushes then deploy the server and run the guarded iOS TestFlight path using existing signing assets. The uploaded build is App Store-eligible (`buildAudience` in `.github/scripts/release-policy.json`): it is distributed only to the approved internal TestFlight group and can be selected for App Store review. Submitting for review stays manual.
 
-Manual Publish inputs default to validation only:
+A manual Release run on `main` verifies, then releases what its checkboxes select:
 
-- `deploy_server=false`: set true to deploy the server without a push, for example to redeploy an exact SHA with existing pinned SSH trust. This replaces only the existing `daily` service and preserves its effective runtime configuration. See [isolated server release](server-release.md).
-- `publish_testflight=false`: set true only after native distribution and signing/profile actions are approved. This runs iOS tests, validates the pinned existing profiles without changing Apple resources, archives the app, and uploads an App Store-eligible build to TestFlight for the approved internal group. See [existing-assets-only release](native-testflight-existing-assets.md). A successful upload does not mean an App Store release or device acceptance.
-- App Store listing and screenshot updates remain separate opt-in inputs.
+- `server` (default true): deploy the server without a push, for example to redeploy an exact SHA with existing pinned SSH trust. This replaces only the existing `daily` service and preserves its effective runtime configuration. See [isolated server release](server-release.md).
+- `ios` (default true): validate the pinned existing profiles without changing Apple resources, archive the app, and upload an App Store-eligible build to TestFlight for the approved internal group (iOS tests run first in verify). See [existing-assets-only release](native-testflight-existing-assets.md). A successful upload does not mean an App Store release or device acceptance.
 
-For a release-candidate build, set these manual inputs:
+App Store listing, screenshot and review submission are in the separate manual-only App Store workflow (`.github/workflows/app-store.yml`). For a release-candidate build, set these inputs there:
 
 - `update_app_store_metadata`: `true` when `fastlane/metadata` should replace the editable App Store Connect listing fields.
 - `update_app_store_screenshots`: `true` when screenshots should be regenerated from deterministic UI-test data and uploaded to App Store Connect.

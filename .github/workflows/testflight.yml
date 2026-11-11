@@ -1,0 +1,53 @@
+name: TestFlight
+
+# Reusable only: called by release.yml's `ios` job after `verify` passes.
+# The release guards and upload path live in jimgreco/release-tools/ios, pinned
+# by commit; this repository keeps only its policy,
+# .github/scripts/release-policy.json. iOS tests run in verify.yml.
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  testflight:
+    runs-on: macos-latest
+    timeout-minutes: 45
+    environment: production
+    permissions:
+      contents: read
+    steps:
+    - uses: actions/checkout@v5
+      with:
+        fetch-depth: 0
+    - uses: actions/setup-node@v5
+      with:
+        node-version: 22
+    - uses: jimgreco/release-tools/ios/prepare@ff61f1c6a6eb51ea982246473203bcc903ce8153
+      with:
+        policy: .github/scripts/release-policy.json
+        app-store-connect-key-id: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+        app-store-connect-issuer-id: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+        app-store-connect-private-key: ${{ secrets.APP_STORE_CONNECT_API_KEY }}
+        dist-cert-p12: ${{ secrets.IOS_DIST_CERT_P12 }}
+        dist-cert-password: ${{ secrets.IOS_DIST_CERT_PASSWORD }}
+        keychain-password: ${{ secrets.KEYCHAIN_PASSWORD }}
+    # No configure-plist step: Ritual Cue injects its values through build settings.
+    - uses: jimgreco/release-tools/ios/upload@ff61f1c6a6eb51ea982246473203bcc903ce8153
+      env:
+        API_BASE_URL: ${{ secrets.IOS_API_BASE_URL }}
+        GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_IOS_CLIENT_ID }}
+        GOOGLE_REVERSED_CLIENT_ID: ${{ secrets.GOOGLE_IOS_REVERSED_CLIENT_ID }}
+      with:
+        project: Daily.xcodeproj
+        scheme: Daily
+        extra-build-settings: |
+          IOS_PROFILE_NAME=@PROFILE_UUID:app@
+          IOS_WIDGET_PROFILE_NAME=@PROFILE_UUID:extension@
+          GIT_COMMIT_HASH=@GIT_SHA7@
+          API_BASE_URL=@ENV:API_BASE_URL@
+          GOOGLE_CLIENT_ID=@ENV:GOOGLE_CLIENT_ID@
+          GOOGLE_REVERSED_CLIENT_ID=@ENV:GOOGLE_REVERSED_CLIENT_ID@
+    - uses: jimgreco/release-tools/ios/cleanup@ff61f1c6a6eb51ea982246473203bcc903ce8153
+      if: always()

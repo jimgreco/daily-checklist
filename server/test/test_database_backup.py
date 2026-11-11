@@ -14,7 +14,6 @@ WORKFLOWS = {
     "production-backup.yml": "daily-backup",
     "production-backup-check.yml": "daily-backup",
     "production-restore-drill.yml": "daily-backup",
-    "publish.yml": "daily",
 }
 
 
@@ -59,21 +58,6 @@ class BackupSSHTests(unittest.TestCase):
                         self.assertEqual(known_hosts.read_text(), "synthetic-host-entry\n")
                         self.assertEqual(known_hosts.stat().st_mode & 0o777, 0o600)
                         self.assertEqual(result.stdout + result.stderr, b"")
-
-    def test_publish_rejects_unusable_keys_before_transfer_without_disclosure(self):
-        with tempfile.TemporaryDirectory() as temp:
-            encrypted = Path(temp) / "encrypted-synthetic-key"
-            subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "synthetic-passphrase",
-                            "-f", str(encrypted)], check=True)
-            for key in ("", "invalid-synthetic-key", encrypted.read_text()):
-                with self.subTest(encrypted=key.startswith("-----BEGIN"), empty=not key):
-                    env = os.environ | {"BACKUP_TEST_HOME": temp, "EC2_SSH_KEY": key,
-                                        "EC2_SSH_KNOWN_HOSTS": "synthetic-host-entry"}
-                    result = subprocess.run(["bash", "-c", run_block("publish.yml", "Prepare SSH")],
-                                            env=env, capture_output=True, timeout=10)
-                    self.assertNotEqual(result.returncode, 0)
-                    self.assertEqual(result.stdout + result.stderr,
-                                     b"::error::EC2_SSH_KEY cannot be parsed as an unencrypted SSH private key.\n")
 
     def test_manual_no_prune_value_reaches_remote_script(self):
         source = (ROOT / ".github/workflows/production-backup.yml").read_text()

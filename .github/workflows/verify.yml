@@ -1,0 +1,184 @@
+name: Verify
+
+# Every check that gates a merge or a release. Called by release.yml on pull
+# requests, pushes to main and manual runs (checks show as `verify / <job>`).
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-server:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+
+      - name: Install dependencies
+        working-directory: server
+        run: npm ci
+
+      - name: Test server
+        working-directory: server
+        run: npm test
+
+      - name: Test workflow SSH formatting and backup retention controls
+        run: python3 -m unittest discover -s server/test -p 'test_database_backup.py'
+
+      - name: Audit production dependencies
+        working-directory: server
+        run: npm audit --omit=dev
+
+      - name: Build server image
+        run: docker build -t daily-server-ci server
+
+  web-e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+
+      - name: Install dependencies
+        working-directory: server
+        run: npm ci
+
+      - name: Install Chromium
+        working-directory: server
+        run: npx playwright install --with-deps chromium
+
+      - name: Run Playwright tests
+        working-directory: server
+        run: npm run test:e2e
+
+  # iOS unit tests (formerly in the Publish testflight job). The test build
+  # settings come from production environment secrets.
+  ios-tests:
+    runs-on: macos-latest
+    timeout-minutes: 45
+    environment: production
+    permissions:
+      contents: read
+    steps:
+    - uses: actions/checkout@v5
+      with:
+        fetch-depth: 0
+    - uses: actions/setup-node@v5
+      with:
+        node-version: 22
+    - name: Select Xcode
+      run: |
+        set -euo pipefail
+        for path in /Applications/Xcode_26.2.app /Applications/Xcode_26.1.app /Applications/Xcode_26.0.app /Applications/Xcode_26.app /Applications/Xcode.app; do
+          if [ -d "$path" ]; then
+            sudo xcode-select -s "$path/Contents/Developer"
+            break
+          fi
+        done
+        xcodebuild -version
+    - name: Prepare iOS simulator
+      id: simulator
+      run: |
+        set -euo pipefail
+
+        simulator_sdk_version=$(xcrun --sdk iphonesimulator --show-sdk-version)
+        echo "iPhoneSimulator SDK version: $simulator_sdk_version"
+        if ! xcrun simctl list runtimes | grep -q "iOS $simulator_sdk_version"; then
+          echo "Matching iOS simulator runtime is missing; downloading iOS platform."
+          sudo xcodebuild -downloadPlatform iOS
+        fi
+        export SIMULATOR_SDK_VERSION="$simulator_sdk_version"
+
+        runtime=$(xcrun simctl list runtimes --json | ruby -rjson -e '
+          def version_key(value)
+            value.to_s.scan(/\d+/).map(&:to_i)
+          end
+
+          runtimes = JSON.parse(STDIN.read).fetch("runtimes").select do |candidate|
+            candidate["isAvailable"] && candidate["platform"] == "iOS"
+          end
+          matching = runtimes.select do |candidate|
+            candidate["version"].to_s == ENV.fetch("SIMULATOR_SDK_VERSION")
+          end
+          selected = matching.max_by { |candidate| version_key(candidate["version"]) }
+          selected ||= runtimes.max_by { |candidate| version_key(candidate["version"]) }
+          abort("No available iOS simulator runtime found") unless selected
+          puts selected.fetch("identifier")
+        ')
+
+        device_type=$(xcrun simctl list devicetypes --json | ruby -rjson -e '
+          types = JSON.parse(STDIN.read).fetch("devicetypes").select do |candidate|
+            candidate["name"].to_s.include?("iPhone")
+          end
+          preferred = [
+            "com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro",
+            "com.apple.CoreSimulator.SimDeviceType.iPhone-17",
+            "com.apple.CoreSimulator.SimDeviceType.iPhone-16-Pro",
+            "com.apple.CoreSimulator.SimDeviceType.iPhone-16",
+            "com.apple.CoreSimulator.SimDeviceType.iPhone-15-Pro",
+            "com.apple.CoreSimulator.SimDeviceType.iPhone-15"
+          ]
+          selected = preferred.map do |identifier|
+            types.find { |candidate| candidate["identifier"] == identifier }
+          end.compact.first
+          selected ||= types.reverse.find { |candidate| candidate["name"].to_s.include?("Pro") }
+          selected ||= types.last
+          abort("No iPhone simulator device type found") unless selected
+          puts selected.fetch("identifier")
+        ')
+
+        udid=$(xcrun simctl create "Ritual Cue CI" "$device_type" "$runtime")
+        xcrun simctl boot "$udid" || true
+        xcrun simctl bootstatus "$udid" -b
+        echo "destination=platform=iOS Simulator,id=$udid" >> "$GITHUB_OUTPUT"
+    - name: Validate release configuration
+      env:
+        API_BASE_URL: ${{ secrets.IOS_API_BASE_URL }}
+        GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_IOS_CLIENT_ID }}
+        GOOGLE_REVERSED_CLIENT_ID: ${{ secrets.GOOGLE_IOS_REVERSED_CLIENT_ID }}
+        CERT_P12: ${{ secrets.IOS_DIST_CERT_P12 }}
+        CERT_PASSWORD: ${{ secrets.IOS_DIST_CERT_PASSWORD }}
+        KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        ASC_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+        ASC_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+        ASC_API_KEY: ${{ secrets.APP_STORE_CONNECT_API_KEY }}
+      run: |
+        set -euo pipefail
+        for name in API_BASE_URL GOOGLE_CLIENT_ID GOOGLE_REVERSED_CLIENT_ID CERT_P12 CERT_PASSWORD KEYCHAIN_PASSWORD ASC_KEY_ID ASC_ISSUER_ID ASC_API_KEY; do
+          test -n "${!name}" || { echo "Missing required secret: $name"; exit 1; }
+        done
+        case "$API_BASE_URL" in
+          https://*/*) echo "IOS_API_BASE_URL must not include a path or trailing slash."; exit 1 ;;
+          https://*) ;;
+          *) echo "IOS_API_BASE_URL must be a production HTTPS origin."; exit 1 ;;
+        esac
+        [[ "$GOOGLE_CLIENT_ID" != *YOUR_* ]] || exit 1
+        [[ "$GOOGLE_REVERSED_CLIENT_ID" == com.googleusercontent.apps.* ]] || exit 1
+    - name: Run iOS unit tests
+      env:
+        API_BASE_URL: ${{ secrets.IOS_API_BASE_URL }}
+        GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_IOS_CLIENT_ID }}
+        GOOGLE_REVERSED_CLIENT_ID: ${{ secrets.GOOGLE_IOS_REVERSED_CLIENT_ID }}
+      run: |
+        set -euo pipefail
+        xcodebuild \
+          -project Daily.xcodeproj \
+          -scheme Daily \
+          -configuration Debug \
+          -sdk iphonesimulator \
+          -destination '${{ steps.simulator.outputs.destination }}' \
+          CODE_SIGNING_ALLOWED=NO \
+          API_BASE_URL="$API_BASE_URL" \
+          GOOGLE_CLIENT_ID="$GOOGLE_CLIENT_ID" \
+          GOOGLE_REVERSED_CLIENT_ID="$GOOGLE_REVERSED_CLIENT_ID" \
+          test
