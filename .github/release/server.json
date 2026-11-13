@@ -22,9 +22,5 @@
   "legacy_overrides": [
     "daily-image-[0-9a-f]{40}\\.json"
   ],
-  "backup": {
-    "database": "daily_checklist",
-    "require_table": "daily_app_state",
-    "keep": 20
-  }
+  "refuse_backwards": true
 }
