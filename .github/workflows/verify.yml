@@ -28,9 +28,6 @@ jobs:
         working-directory: server
         run: npm test
 
-      - name: Test workflow SSH formatting and backup retention controls
-        run: python3 -m unittest discover -s server/test -p 'test_database_backup.py'
-
       - name: Audit production dependencies
         working-directory: server
         run: npm audit --omit=dev

@@ -75,9 +75,7 @@ Keep App Store Connect privacy answers aligned with `Daily/PrivacyInfo.xcprivacy
 
 ## Monitoring
 
-`.github/workflows/monitor.yml` runs every five minutes and checks production `/health`, `/privacy.html`, and `/support.html`. The monitor uses `vars.DAILY_PRODUCTION_BASE_URL` when set, otherwise it checks `https://ritualcue.com`.
-
-Add `DAILY_MONITOR_WEBHOOK_URL` as a repository secret to send failure notifications to a Slack-compatible or Discord-compatible incoming webhook. GitHub Actions failure notifications still work without the webhook.
+Uptime is monitored by the shared check in `jimgreco/consolidated-deploy`, which polls `https://ritualcue.com/health` every 15 minutes and emails on failure.
 
 ## Offline and conflict behavior
 
@@ -124,7 +122,7 @@ A push to `main` releases everything: the server is deployed and the iOS app is 
 
 Native distribution signs with the pinned existing provisioning profiles through the shared release-tools iOS actions and uploads to TestFlight (`testflight.yml`) after verify, including the iOS tests, passes. The manual App Store workflow (`app-store.yml`) can separately upload source-controlled App Store listing metadata and deterministic screenshots. See [`docs/app-store-production.md`](docs/app-store-production.md).
 
-Production database protection includes daily encrypted S3 logical dumps, a separate freshness monitor, disposable restore drills, and daily EBS snapshots. See [`docs/database-backups.md`](docs/database-backups.md) for schedules, alerts, inspection, and recovery steps.
+Production database protection is the shared nightly off-server backup (with an hourly freshness check) plus daily EBS snapshots. See [`docs/database-backups.md`](docs/database-backups.md) for schedules, alerts, inspection, and recovery steps.
 
 Existing repository secrets for optional delivery:
 
