@@ -3,7 +3,8 @@ name: TestFlight
 # Reusable only: called by release.yml's `ios` job after `verify` passes.
 # The release guards and upload path live in jimgreco/release-tools/ios, pinned
 # by commit; this repository keeps only its policy,
-# .github/scripts/release-policy.json. iOS tests run in verify.yml.
+# .github/scripts/release-policy.json and a check that the release secrets are
+# set. iOS tests run in verify.yml, without secrets.
 on:
   workflow_call:
 
@@ -24,6 +25,29 @@ jobs:
     - uses: actions/setup-node@v5
       with:
         node-version: 22
+    - name: Validate release configuration
+      env:
+        API_BASE_URL: ${{ secrets.IOS_API_BASE_URL }}
+        GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_IOS_CLIENT_ID }}
+        GOOGLE_REVERSED_CLIENT_ID: ${{ secrets.GOOGLE_IOS_REVERSED_CLIENT_ID }}
+        CERT_P12: ${{ secrets.IOS_DIST_CERT_P12 }}
+        CERT_PASSWORD: ${{ secrets.IOS_DIST_CERT_PASSWORD }}
+        KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        ASC_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+        ASC_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+        ASC_API_KEY: ${{ secrets.APP_STORE_CONNECT_API_KEY }}
+      run: |
+        set -euo pipefail
+        for name in API_BASE_URL GOOGLE_CLIENT_ID GOOGLE_REVERSED_CLIENT_ID CERT_P12 CERT_PASSWORD KEYCHAIN_PASSWORD ASC_KEY_ID ASC_ISSUER_ID ASC_API_KEY; do
+          test -n "${!name}" || { echo "Missing required secret: $name"; exit 1; }
+        done
+        case "$API_BASE_URL" in
+          https://*/*) echo "IOS_API_BASE_URL must not include a path or trailing slash."; exit 1 ;;
+          https://*) ;;
+          *) echo "IOS_API_BASE_URL must be a production HTTPS origin."; exit 1 ;;
+        esac
+        [[ "$GOOGLE_CLIENT_ID" != *YOUR_* ]] || exit 1
+        [[ "$GOOGLE_REVERSED_CLIENT_ID" == com.googleusercontent.apps.* ]] || exit 1
     - uses: jimgreco/release-tools/ios/prepare@bfd9d14bb12907b74bceaa28b7c0382fb3549ea6
       with:
         policy: .github/scripts/release-policy.json

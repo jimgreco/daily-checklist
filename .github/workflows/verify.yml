@@ -58,12 +58,11 @@ jobs:
         working-directory: server
         run: npm run test:e2e
 
-  # iOS unit tests (formerly in the Publish testflight job). The test build
-  # settings come from production environment secrets.
+  # iOS unit tests. No secrets: the build uses the project's placeholder
+  # settings. Release values are checked in testflight.yml.
   ios-tests:
     runs-on: macos-latest
     timeout-minutes: 45
-    environment: production
     permissions:
       contents: read
     steps:
@@ -138,34 +137,7 @@ jobs:
         xcrun simctl boot "$udid" || true
         xcrun simctl bootstatus "$udid" -b
         echo "destination=platform=iOS Simulator,id=$udid" >> "$GITHUB_OUTPUT"
-    - name: Validate release configuration
-      env:
-        API_BASE_URL: ${{ secrets.IOS_API_BASE_URL }}
-        GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_IOS_CLIENT_ID }}
-        GOOGLE_REVERSED_CLIENT_ID: ${{ secrets.GOOGLE_IOS_REVERSED_CLIENT_ID }}
-        CERT_P12: ${{ secrets.IOS_DIST_CERT_P12 }}
-        CERT_PASSWORD: ${{ secrets.IOS_DIST_CERT_PASSWORD }}
-        KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
-        ASC_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
-        ASC_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
-        ASC_API_KEY: ${{ secrets.APP_STORE_CONNECT_API_KEY }}
-      run: |
-        set -euo pipefail
-        for name in API_BASE_URL GOOGLE_CLIENT_ID GOOGLE_REVERSED_CLIENT_ID CERT_P12 CERT_PASSWORD KEYCHAIN_PASSWORD ASC_KEY_ID ASC_ISSUER_ID ASC_API_KEY; do
-          test -n "${!name}" || { echo "Missing required secret: $name"; exit 1; }
-        done
-        case "$API_BASE_URL" in
-          https://*/*) echo "IOS_API_BASE_URL must not include a path or trailing slash."; exit 1 ;;
-          https://*) ;;
-          *) echo "IOS_API_BASE_URL must be a production HTTPS origin."; exit 1 ;;
-        esac
-        [[ "$GOOGLE_CLIENT_ID" != *YOUR_* ]] || exit 1
-        [[ "$GOOGLE_REVERSED_CLIENT_ID" == com.googleusercontent.apps.* ]] || exit 1
     - name: Run iOS unit tests
-      env:
-        API_BASE_URL: ${{ secrets.IOS_API_BASE_URL }}
-        GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_IOS_CLIENT_ID }}
-        GOOGLE_REVERSED_CLIENT_ID: ${{ secrets.GOOGLE_IOS_REVERSED_CLIENT_ID }}
       run: |
         set -euo pipefail
         xcodebuild \
@@ -175,7 +147,4 @@ jobs:
           -sdk iphonesimulator \
           -destination '${{ steps.simulator.outputs.destination }}' \
           CODE_SIGNING_ALLOWED=NO \
-          API_BASE_URL="$API_BASE_URL" \
-          GOOGLE_CLIENT_ID="$GOOGLE_CLIENT_ID" \
-          GOOGLE_REVERSED_CLIENT_ID="$GOOGLE_REVERSED_CLIENT_ID" \
           test
